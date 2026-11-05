@@ -6428,7 +6428,7 @@ upstream file, with whitespace ignored.
 | `hammer2_flush.c:858` `hammer2_flush_core()` | yes | carried |
 | `hammer2_flush.c:1058` `hammer2_flush_recurse()` | yes | carried |
 | `hammer2_inode.c:451` `hammer2_inode_chain_and_parent()` | yes | carried |
-| `hammer2_vfsops.c:400` `hammer2_pfsalloc()` | yes | carried |
+| `hammer2_vfsops.c:416` `hammer2_pfsalloc()` | yes | carried |
 | `hammer2_synchro.c:501` `hammer2_sync_slaves()` | yes | carried |
 | `hammer2_cluster.c:201` `hammer2_cluster_check()` | no | port text, upstream's logic |
 | `hammer2_synchro.c:828`, `:975`, `:1032` | yes | carried, layout only |
@@ -7654,7 +7654,7 @@ and the line above the trace names the workqueue:
 `Workqueue: events hammer2_sync_work`. `hammer2_pfsfree_scan` is not in
 the log at all, so the teardown the frames were attributed to is not on
 this path. What the shape is instead is this port's own syncer,
-`hammer2_sync_work` at `hammer2_vfsops.c:2101`, a delayed work that
+`hammer2_sync_work` at `hammer2_vfsops.c:2117`, a delayed work that
 reschedules itself every `HAMMER2_SYNC_INTERVAL` and calls
 `sync_filesystem()` from a workqueue thread. The flush that faults runs
 22 s after an unmount that left 2602 modified chains, on a workqueue
@@ -7734,11 +7734,11 @@ reading for a correct unmount, and the corrupting log's non-zero
 counts are still unexplained.
 
 `hammer2_unmount_scrap` is the port's own code at
-`hammer2_vfsops.c:2520-2530`, run at device teardown on the VOLUME and
+`hammer2_vfsops.c:2536-2546`, run at device teardown on the VOLUME and
 FREEMAP chains; the semantic index puts its only caller at
 `hammer2_unmount_helper`, and the graph puts
 `hammer2_pfsfree_scan -> hammer2_vfs_sync_pmp` at
-`hammer2_vfsops.c:671`, so the teardown does flush through the sync
+`hammer2_vfsops.c:687`, so the teardown does flush through the sync
 path. The scrap reports a failed flush rather than causing one.
 
 Not established: what stops those flushes completing, whether the
@@ -11765,7 +11765,7 @@ is created from:
                 bcmp(&pmp->pfs_clid, &ripdata->meta.pfs_clid,
                 sizeof(pmp->pfs_clid)) == 0)
                     break;
-    }                                       (hammer2_vfsops.c:301-313)
+    }                                       (hammer2_vfsops.c:317-329)
 
 The master's CL is created first, at the `/mnt/h2c` mount (`/dev/vdb@CL`), and
 gets a cluster id. The slave's CL is created with `-u "$clid"` -- the same id --
@@ -13871,7 +13871,7 @@ harness output of every run.
 **The counter that separates the two classes is `scrapped`, and it separates
 perfectly.** `hammer2_unmount_scrap()` prints one `scrapping unflushed` line per
 chain parked with `UPDATE` or `MODIFIED` after the final unmount sync
-(`hammer2_vfsops.c:835`), and the harness has read it as
+(`hammer2_vfsops.c:851`), and the harness has read it as
 `nothing the thread copied is scrapped unwritten` on every run. Across the 40 runs
 whose harness logs are on this machine:
 
@@ -14165,7 +14165,7 @@ run takes, and the kept images make it attributable.
 ## Why the unmount's final flush does not carry the element's copies, 2026-10-15
 
 The next fix needs to know why the copies survive to the unmount, and the unmount
-path answers it. `hammer2_vfs_sync_pmp()` (`hammer2_vfsops.c:2686`) flushes the
+path answers it. `hammer2_vfs_sync_pmp()` (`hammer2_vfsops.c:2702`) flushes the
 inodes on the PFS's **sync queue**: it moves inodes from `depq`/`sideq` to `syncq`
 and flushes those, one inode at a time. The synchronization thread's chains are
 not on that queue and have no inode on it at all, which is the port's own recorded
@@ -14173,9 +14173,9 @@ reason for `hammer2_sync_flush()` existing (`hammer2_synchro.c:100-108`: "This
 thread changes chains directly and puts no inode on the sync queue, so nothing
 bridged them").
 
-So the unmount's three `hammer2_vfs_sync_pmp()` calls (`hammer2_vfsops.c:3082-3084`)
+So the unmount's three `hammer2_vfs_sync_pmp()` calls (`hammer2_vfsops.c:3098-3100`)
 walk the inode queue and never reach the element's chains. The device teardown's
-own flush (`:2529-2537`) flushes `hmp->vchain` and `hmp->fchain` only, and it is
+own flush (`:2545-2553`) flushes `hmp->vchain` and `hmp->fchain` only, and it is
 gated on those two static chains' flags. The only thing in the tree that flushes
 the element's chains is the pass-end `hammer2_sync_flush()`, and a pass that is
 interrupted before its end never reaches it.
@@ -14760,7 +14760,7 @@ one shape:
 | `kern_dmsg.c:1117` `kdmsg_autorxmsg()`, deref at `:1105` | yes | carried |
 | `hammer2_iocom.c:231` `hammer2_autodmsg()`, deref at `:190` | yes | carried |
 
-All three, and the analyzer's `:1646`, read `msg->state->iocom` at the
+All three, and the analyzer's `:1632`, read `msg->state->iocom` at the
 top of a function that later tests `msg->state`. In kdmsg every message
 is made by `kdmsg_msg_alloc()` with a state argument it stores, and the
 read thread passes `&iocom->state0` for every frame it receives
@@ -16977,7 +16977,7 @@ at `3716052`, the counts above corrected from 28 and 26. Its low
 findings: the first three rounds' slot and figures carried no
 disclosure of their source, which the sentence on the first round now
 gives for every round; and a sentence of the note read the thread
-creation at `hammer2_vfsops.c:497` as skipped for every MASTER slot
+creation at `hammer2_vfsops.c:513` as skipped for every MASTER slot
 where the line skips it only at one master, now stated as what the line
 does and what P8 asks of it, at `3716052`. The seventh audit, of
 `3716052` with the entry and the row uncommitted
@@ -19930,7 +19930,7 @@ thread, a PFS created and written in one mount of its device and the
 power cut after a sync of it, is a `candidate` and is not read.
 
 A sibling is recorded and not fixed: `hammer2_fixup_pfses()`
-(`hammer2_vfsops.c:2064`) sets the blockref's `PFSROOT` on a cached chain
+(`hammer2_vfsops.c:2080`) sets the blockref's `PFSROOT` on a cached chain
 that an older implementation's defect left unflagged, without the chain's
 `PFSBOUNDARY`, so such a PFS is no PFS root to the `VOLHDR` test until
 the next mount of its device, as upstream has it. It is reached only on
@@ -21588,8 +21588,8 @@ terminated inside `DMSG_LABEL_SIZE`, 128 bytes, when the span is
 received (`hammer2_iocom.c:92`); 127 bytes and the 13 of
 `.h2sync-peer` with its terminator fit the 256-byte name. The remote
 snapshot's own PFS takes slot 0 on that device, named with the pass's
-name (`hammer2_vfsops.c:507`), up to 255 bytes; it is a lone MASTER, so
-it gets no sync thread (`:573-576`) and never carries the flag. The
+name (`hammer2_vfsops.c:523`), up to 255 bytes; it is a lone MASTER, so
+it gets no sync thread (`:589-592`) and never carries the flag. The
 1.0.80 plan's long-name arm would have stopped at the server's label
 test, which `s55g` reads. `8958fd4` puts a `static_assert` on the first
 bound beside the test, which stays so that a name from another source
@@ -22262,7 +22262,7 @@ serializes the seek with) and, on the child inode, across its unlink, link
 and rename (`vfs_unlink()`, `vfs_link()`, `vfs_rename()` in 7.3), each of
 which takes the module's locks below it; the module has no xattr or
 fileattr operations; its
-stated order puts `i_rwsem` above `ip->lock` (`hammer2_vfsops.c:3019`); the
+stated order puts `i_rwsem` above `ip->lock` (`hammer2_vfsops.c:3035`); the
 writeback takes folio locks, a `HAMMER2_TRANS_BUFCACHE` transaction and
 `ip->lock` and no `i_rwsem`; `hammer2_trans_init()` sleeps only for a flush
 against a flush; and `hammer2_fallocate_locked()` already wrote back under
@@ -22331,7 +22331,7 @@ written and requires the twin to hold more: at `e547227` on `h2debug-7.3tls`
 was not read on HAMMER2, where the margin is one compressed block.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
-(`hammer2_vnops.c:2428`), which still asks one bmap XOP per block and reads
+(`hammer2_vnops.c:2406`), which still asks one bmap XOP per block and reads
 `i_size` unlocked. Each of its XOPs is one lookup, not a scan restarted per
 block, and FIEMAP takes no lock that a writer waits on; it is a candidate for
 the same scan, not measured.

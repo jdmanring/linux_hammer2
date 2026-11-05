@@ -1640,9 +1640,10 @@ hammer2_seek_tagged(struct address_space *mapping, loff_t from, loff_t to)
 }
 
 /*
- * Linux: the order control's hold, between a seek's or a map's page cache
- * tag read and its tree read in whichever order its whence makes them, so
- * a writeback can be completed between the two.  Debug build only.
+ * Linux: debug-build holds (hammer2_debug_hold()).  The tag hold sits
+ * between a seek's or a map's page cache tag read and its tree read, so a
+ * writeback can complete between the two; the chunk hold sits between two
+ * chunks with i_rwsem let go, so a truncate can land there.
  */
 #if defined(HAMMER2_LOCKDEBUG)
 static unsigned int hammer2_seek_tag_hold_ms;
@@ -1650,18 +1651,6 @@ module_param_named(seek_tag_hold_ms, hammer2_seek_tag_hold_ms, uint, 0644);
 static unsigned int hammer2_seek_chunk_hold_ms;
 module_param_named(seek_chunk_hold_ms, hammer2_seek_chunk_hold_ms, uint, 0644);
 #endif
-
-static void
-hammer2_seek_tag_hold(void)
-{
-#if defined(HAMMER2_LOCKDEBUG)
-	if (READ_ONCE(hammer2_seek_tag_hold_ms)) {
-		pr_info_once("hammer2: seek tag held\n");
-		schedule_timeout_uninterruptible(
-		    msecs_to_jiffies(READ_ONCE(hammer2_seek_tag_hold_ms)));
-	}
-#endif
-}
 
 /*
  * Linux: between two chunks of a seek, let a writer waiting for i_rwsem
@@ -1703,13 +1692,8 @@ hammer2_seek_yield(struct inode *inode)
 	if (!hold && !rwsem_is_contended(&inode->i_rwsem))
 		return (false);
 	inode_unlock_shared(inode);
-#if defined(HAMMER2_LOCKDEBUG)
-	if (hold) {
-		pr_info_once("hammer2: seek chunk held\n");
-		schedule_timeout_uninterruptible(
-		    msecs_to_jiffies(READ_ONCE(hammer2_seek_chunk_hold_ms)));
-	}
-#endif
+	if (hold)
+		HAMMER2_DEBUG_HOLD(hammer2_seek_chunk_hold_ms, "seek chunk");
 	cond_resched();
 	inode_lock_shared(inode);
 	return (true);
@@ -1771,14 +1755,8 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 	 */
 	if (offset < 0 || offset >= isize)
 		return (-ENXIO);
-#if defined(HAMMER2_LOCKDEBUG)
 	/* Linux: the seek's race control; i_size is read, the scan not begun. */
-	if (READ_ONCE(hammer2_seek_hold_ms)) {
-		pr_info_once("hammer2: seek held\n");
-		schedule_timeout_uninterruptible(
-		    msecs_to_jiffies(READ_ONCE(hammer2_seek_hold_ms)));
-	}
-#endif
+	HAMMER2_DEBUG_HOLD(hammer2_seek_hold_ms, "seek");
 
 	/*
 	 * A file whose data lives in the inode has no blockref tree to scan.
@@ -1871,7 +1849,7 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 						    cur);
 					limit = pos - 1;
 				}
-				hammer2_seek_tag_hold();
+				HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
 			}
 			error = hammer2_bmap_next_key(inode,
 			    (hammer2_key_t)cur, (hammer2_key_t)limit, 0, &got);
@@ -1907,7 +1885,7 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 					break;
 				if (!tagged || pos == clean)
 					return (max(pos, offset));
-				hammer2_seek_tag_hold();
+				HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
 				while (pos <= end &&
 				    hammer2_seek_tagged(mapping, pos,
 				    pos + bsize - 1) >= 0)
@@ -2806,7 +2784,7 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		if (tagged) {
 			hammer2_fiemap_tags(mapping, cur, &cend, bsize, t,
 			    HAMMER2_FIEMAP_REFS, &nt);
-			hammer2_seek_tag_hold();
+			HAMMER2_DEBUG_HOLD(hammer2_seek_tag_hold_ms, "seek tag");
 		}
 		error = hammer2_fiemap_scan(inode, (hammer2_key_t)cur,
 		    (hammer2_key_t)cend, v, HAMMER2_FIEMAP_REFS, &n);

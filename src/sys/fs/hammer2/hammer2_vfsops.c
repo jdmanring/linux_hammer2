@@ -238,6 +238,22 @@ module_param_named(volconf_hold_ms, hammer2_volconf_hold_ms, uint, 0644);
  */
 unsigned int hammer2_seek_hold_ms;
 module_param_named(seek_hold_ms, hammer2_seek_hold_ms, uint, 0644);
+
+/*
+ * Linux: the hold behind every *_hold_ms parameter, so a test can aim
+ * a race at a named point, as XFS's xfs_errortag_delay() does under
+ * XFS_DEBUG.  The start and the end print, so a harness can count the
+ * holds and order other events against them.
+ */
+void
+hammer2_debug_hold(unsigned int ms, const char *what)
+{
+	if (ms == 0)
+		return;
+	pr_info("hammer2: %s held %u ms\n", what, ms);
+	schedule_timeout_uninterruptible(msecs_to_jiffies(ms));
+	pr_info("hammer2: %s hold ended\n", what);
+}
 static int hammer2_debug_syncs;
 /*
  * XXX Linux: the freemap allocator refuses every allocation past this

@@ -226,8 +226,8 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 		lines=$(printf '%s\n' "$out" | command grep '^seekm-race ')
 		n=$(printf '%s\n' "$lines" | command grep -c '^seekm-race ')
 		[ "$n" -eq "$REPEAT" ] || { echo "  FAIL  $n race line(s) for $REPEAT run(s)"; fail=$((fail + 1)); }
-		printf '%s\n' "$out" | command grep -q '^held 1$' || {
-			echo "  FAIL  the seek hold did not print once, so nothing held"; fail=$((fail + 1)); }
+		printf '%s\n' "$out" | command grep -q '^held [1-9][0-9]*$' || {
+			echo "  FAIL  the seek hold never printed, so nothing held"; fail=$((fail + 1)); }
 		short=$(printf '%s\n' "$lines" | awk '$5 < 250' | wc -l)
 		[ "$short" -eq 0 ] || { echo "  FAIL  $short seek(s) returned under 250 ms, so the hold did not run in them"; fail=$((fail + 1)); }
 		late=$(printf '%s\n' "$lines" | awk '$9 == "late"' | wc -l)
@@ -239,15 +239,15 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 		wb=$(printf '%s\n' "$out" | command grep '^seekm-wbrace ')
 		n=$(printf '%s\n' "$wb" | command grep -c '^seekm-wbrace ')
 		[ "$n" -eq $((REPEAT * 3)) ] || { echo "  FAIL  $n writeback race line(s) for $REPEAT run(s) of three"; fail=$((fail + 1)); }
-		printf '%s\n' "$out" | command grep -q '^tag-held 1$' || {
-			echo "  FAIL  the tag hold did not print once, so nothing held"; fail=$((fail + 1)); }
+		printf '%s\n' "$out" | command grep -q '^tag-held [1-9][0-9]*$' || {
+			echo "  FAIL  the tag hold never printed, so nothing held"; fail=$((fail + 1)); }
 		out_wb=$(printf '%s\n' "$wb" | awk '$12 != "inside"' | wc -l)
 		[ "$out_wb" -eq 0 ] || { echo "  FAIL  $out_wb writeback(s) returned after the seek, so they tested nothing"; fail=$((fail + 1)); }
 		cr=$(printf '%s\n' "$out" | command grep '^seekm-chunkrace ')
 		n=$(printf '%s\n' "$cr" | command grep -c '^seekm-chunkrace ')
 		[ "$n" -eq "$REPEAT" ] || { echo "  FAIL  $n chunk race line(s) for $REPEAT run(s)"; fail=$((fail + 1)); }
-		printf '%s\n' "$out" | command grep -q '^chunk-held 1$' || {
-			echo "  FAIL  the chunk hold did not print once, so nothing held"; fail=$((fail + 1)); }
+		printf '%s\n' "$out" | command grep -q '^chunk-held [1-9][0-9]*$' || {
+			echo "  FAIL  the chunk hold never printed, so nothing held"; fail=$((fail + 1)); }
 		out_cr=$(printf '%s\n' "$cr" | awk '$11 != "inside"' | wc -l)
 		[ "$out_cr" -eq 0 ] || { echo "  FAIL  $out_cr truncate(s) returned after the seek, so they tested nothing"; fail=$((fail + 1)); }
 		echo "  chunkrace: $(printf '%s\n' "$cr" | awk '{print $3"/"$5}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"

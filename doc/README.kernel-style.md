@@ -347,6 +347,14 @@ none of them pushed. No category is new.
 helper went and the helper that reads the tags came, one
 continuation-line indent fewer between them. No category is new.
 
+1,650 to 1,654 with one helper behind every debug-build hold,
+`hammer2_debug_hold()`: its prototype in `hammer2.h` leaves its two
+arguments unnamed, and `HAMMER2_DEBUG_HOLD()` outside a debug build is
+`((void)0)` with both arguments unused, since the parameter it names
+exists only in a debug build. That is the form of XFS's
+`XFS_ERRORTAG_DELAY()` outside `DEBUG`, `fs/xfs/xfs_error.h`. No category
+is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

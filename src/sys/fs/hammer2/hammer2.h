@@ -1233,6 +1233,10 @@ extern int hammer2_sync_collapse_parent;	/* Linux */
 extern int hammer2_sync_assert_cn;	/* Linux */
 extern int hammer2_sync_narrow_alter;	/* Linux */
 void hammer2_chain_dump_live(void);	/* Linux */
+void hammer2_debug_hold(unsigned int, const char *);	/* Linux */
+#define HAMMER2_DEBUG_HOLD(ms, what)	hammer2_debug_hold(READ_ONCE(ms), (what))
+#else
+#define HAMMER2_DEBUG_HOLD(ms, what)	((void)0)	/* Linux */
 #endif
 extern int hammer2_count_dio_allocated;
 extern int hammer2_dio_limit;

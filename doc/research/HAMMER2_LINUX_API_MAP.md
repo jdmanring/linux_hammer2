@@ -150,7 +150,7 @@ threads are the per-mount sync thread and the bulkfree thread, which are
    `hammer2_admin.c:325`): Linux has no `MAXPHYS`; the size becomes a port
    constant tied to the physical buffer size.
 4. **`nbuf`-derived sizing**: `hammer2_dio_limit = nbuf * 2`
-   (`hammer2_vfsops.c:283`). Re-derived from `totalram_pages` or a mount
+   (`hammer2_vfsops.c:299`). Re-derived from `totalram_pages` or a mount
    option.
 5. **64-bit on-disk types** (`hammer2_tid_t`, `hammer2_off_t`,
    `hammer2_key_t`, `hammer2_disk.h:427`): fine on 64-bit Linux; the port
