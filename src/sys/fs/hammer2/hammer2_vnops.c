@@ -1552,6 +1552,9 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 	r->found = 0;
 	r->n = 0;
 	for (;;) {
+		cond_resched();
+		if (fatal_signal_pending(current))
+			return (EINTR);
 		end = (r->key_end - cur < chunk) ? r->key_end : cur + chunk - 1;
 		held = false;
 		hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
