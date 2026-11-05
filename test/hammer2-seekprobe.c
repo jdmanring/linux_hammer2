@@ -47,6 +47,13 @@
  *                                             FIEMAP extents, one line
  *                                             each, for comparing two
  *                                             readers of the same file
+ *     hammer2-seekprobe cold <path> [MiB]     the dense file made, or one
+ *                                             SEEK_HOLE timed on it after
+ *                                             a cold mount, see cold()
+ *     hammer2-seekprobe refuse <path>         a file whose blockref tree
+ *                                             the module must refuse:
+ *                                             both seeks at 0 and FIEMAP
+ *                                             fail EIO, see refuse()
  *
  * The shape and bounds are hammer2-seek.c's, so the two answer to one
  * contract: one 64 KiB block of 'A', one of hole, one of 'A', and a
@@ -464,12 +471,17 @@ cmp_long(const void *a, const void *b)
  *           blocks, SEEK_DATA from inside the hole, so the seek crosses
  *           the hole the size gives and only one block of data
  *   dense   64 MiB of data, or the MiB given, SEEK_DATA and SEEK_HOLE in
- *           turn at offsets from a fixed sequence
+ *           turn at offsets from a fixed sequence; the sequence is 24 bits
+ *           wide, so every offset lies in the first 16 MiB and each
+ *           SEEK_HOLE crosses nearly the whole file
  *   dirty   the dense file, one byte written at a block from that
  *           sequence before each SEEK_DATA at 0, so each seek writes back
  *   deep    the dense file, SEEK_DATA at a block in its last sixteenth,
  *           so the seek starts above every indirect block it passes
- * Every answer is checked; one line per seek, then the median.
+ * Every answer is checked; one line per seek, then the median, which for
+ * dense is taken for each whence apart (dense-data, dense-hole): one
+ * median over both is the fastest SEEK_HOLE, since every SEEK_DATA on a
+ * dense file answers at once.
  */
 static long dense = 64L << 20;	/* the dense file's size, time and contend */
 
@@ -541,11 +553,73 @@ timing(const char *path, const char *kind, long n)
 		}
 		printf("seekm-time %s %ld %ld\n", kind, i, ns[i]);
 	}
+	if (k == 1 && n >= 2) {
+		/* even seeks were SEEK_DATA, odd ones SEEK_HOLE */
+		long *w = calloc(n, sizeof(*w)), nd = (n + 1) / 2, nh = n / 2;
+
+		if (w == NULL)
+			return (2);
+		for (i = 0; i < n; i++)
+			w[(i & 1) ? nd + i / 2 : i / 2] = ns[i];
+		qsort(w, nd, sizeof(*w), cmp_long);
+		qsort(w + nd, nh, sizeof(*w), cmp_long);
+		printf("seekm-time dense-data median-ns %ld n %ld\n", w[nd / 2], nd);
+		printf("seekm-time dense-hole median-ns %ld n %ld\n",
+		    w[nd + nh / 2], nh);
+		free(w);
+	}
 	qsort(ns, n, sizeof(*ns), cmp_long);
 	printf("seekm-time %s median-ns %ld n %ld\n", kind, ns[n / 2], n);
 	close(fd);
 	unlink(path);
 	free(ns);
+	free(buf);
+	return (fails ? 1 : 0);
+}
+
+/*
+ * A seek's cost with nothing in memory.  Given a size in MiB, the dense
+ * file is made as timing() makes it and synced.  Without one, a single
+ * SEEK_HOLE at 0 is timed on that file, which the caller has mounted
+ * after dropping the guest's caches and the host's copy of the image, so
+ * every indirect block the walk reads comes off the disk.
+ */
+static int
+cold(const char *path, long mib)
+{
+	char *buf = malloc(BSIZE);
+	struct stat st;
+	long i, t0, ns, size = mib << 20;
+	off_t got;
+	int fd;
+
+	if (buf == NULL)
+		return (2);
+	if (mib > 0) {
+		if ((fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644)) < 0)
+			return (2);
+		fill(buf, 1);
+		for (i = 0; i < size; i += BSIZE)
+			if (pwrite(fd, buf, BSIZE, i) != BSIZE)
+				return (2);
+		if (fsync(fd) != 0 || close(fd) != 0)
+			return (2);
+		printf("seekm-ok   cold: %ld MiB made and synced\n", mib);
+		free(buf);
+		return (0);
+	}
+	if ((fd = open(path, O_RDONLY)) < 0 || fstat(fd, &st) != 0)
+		return (2);
+	t0 = now_ns();
+	got = lseek(fd, 0, SEEK_HOLE);
+	ns = now_ns() - t0;
+	if (got != st.st_size) {
+		printf("seekm-fail cold: SEEK_HOLE 0 got %ld, want %ld\n",
+		    (long)got, (long)st.st_size);
+		fails++;
+	}
+	printf("seekm-cold ns %ld size %ld\n", ns, (long)st.st_size);
+	close(fd);
 	free(buf);
 	return (fails ? 1 : 0);
 }
@@ -748,6 +822,51 @@ layout(const char *path)
 	return (0);
 }
 
+/*
+ * A file whose blockref tree the module must refuse, with the debug
+ * build's seek_depth_max at 0 or with an indirect block altered on media:
+ * SEEK_DATA and SEEK_HOLE at 0 and FIEMAP from 0 each fail EIO, the errno
+ * a block that failed its check is to every Linux filesystem.  An answer
+ * or any other errno fails, EDOM among them, which is what the core's
+ * error mapping gives a check failure before the VFS boundary converts it.
+ */
+static int
+refuse(const char *path)
+{
+	static const int whence[] = { SEEK_DATA, SEEK_HOLE };
+	static const char *const name[] = { "SEEK_DATA", "SEEK_HOLE" };
+	struct fiemap fm;
+	off_t got;
+	int fd, i, r, e;
+
+	if ((fd = open(path, O_RDONLY)) < 0)
+		return (2);
+	for (i = 0; i < 2; i++) {
+		got = lseek(fd, 0, whence[i]);
+		e = errno;
+		if (got == -1 && e == EIO) {
+			printf("seekm-ok   refuse, %s: EIO\n", name[i]);
+		} else {
+			printf("seekm-fail refuse, %s: %s %ld\n", name[i],
+			    got == -1 ? strerror(e) : "answered", (long)got);
+			fails++;
+		}
+	}
+	memset(&fm, 0, sizeof(fm));
+	fm.fm_length = FIEMAP_MAX_OFFSET;
+	r = ioctl(fd, FS_IOC_FIEMAP, &fm);
+	e = errno;
+	if (r == -1 && e == EIO) {
+		printf("seekm-ok   refuse, FIEMAP: EIO\n");
+	} else {
+		printf("seekm-fail refuse, FIEMAP: %s\n",
+		    r == -1 ? strerror(e) : "answered");
+		fails++;
+	}
+	close(fd);
+	return (fails ? 1 : 0);
+}
+
 static int
 dump(const char *path)
 {
@@ -804,6 +923,13 @@ main(int argc, char **argv)
 		return (layout(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "dump") == 0)
 		return (dump(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "refuse") == 0)
+		return (refuse(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "cold") == 0)
+		return (cold(argv[2], 0));
+	if (argc == 4 && strcmp(argv[1], "cold") == 0 &&
+	    strtol(argv[3], NULL, 10) > 0)
+		return (cold(argv[2], strtol(argv[3], NULL, 10)));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "wbrace") == 0)
@@ -825,8 +951,8 @@ main(int argc, char **argv)
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | corrupt <path> | layout|dump <path> | "
-	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | contend|contendgap <path> <n> [MiB]\n",
+	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole|map | corrupt|refuse <path> | layout|dump <path> | "
+	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | cold <path> [MiB] | contend|contendgap <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);
 }

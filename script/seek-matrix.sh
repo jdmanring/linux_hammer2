@@ -27,7 +27,7 @@
 #             shape's three, because a first file costing one block makes
 #             the rule pass without the sharing being measured.
 #
-# Three modes replace the three cases and stop no guest:
+# Four modes replace the three cases and stop no guest:
 #
 #   H2_SEEK_RACE=1  a truncate aimed inside a held SEEK_HOLE (seekprobe
 #                   race). The module is built with HAMMER2_LOCKDEBUG=1
@@ -51,14 +51,36 @@
 #                   answer must still call it data. The hold's klog line
 #                   must print, and a writeback returning after the seek
 #                   fails, since it tested nothing.
+#                   Then a file dumped by the walk and by the forced scan
+#                   must match, and the module's seek_walked counter must
+#                   move on the first dump and stay on the second, or
+#                   both dumps came from one reader. Then seek_depth_max=0
+#                   refuses the walk's first indirect block, and both
+#                   seeks and FIEMAP must fail EIO (seekprobe refuse).
+#                   Last, after the fsck, a second boot of the module: one
+#                   byte of a file's first indirect block, found by
+#                   `hammer2 show`, is flipped on the device, the volume
+#                   mounted read-only, and the seeks and FIEMAP must fail
+#                   EIO, as a block failing its check is to the VFS, and
+#                   the read must fail too.
 #   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense,
 #                   dirty and hole, each H2_REPEAT times (5 by default) on a
 #                   file made once per repeat, H2_SEEK_TIME_N seeks each
 #                   (100 by default); raw lines and medians,
 #                   H2_SEEK_DENSE_MB sizing the dense file (64 MiB by
 #                   default) for this mode and the next,
-#                   checked only for right answers. A rate, so run it on
+#                   checked for right answers, and with H2_SEEK_RULE_MS
+#                   set, failed when the dense kind's median of medians
+#                   passes that many milliseconds. A rate, so run it on
 #                   h2release-7.3tls.
+#   H2_SEEK_COLD=1  a SEEK_HOLE at 0 across a dense file of
+#                   H2_SEEK_DENSE_MB (64 by default) with nothing in
+#                   memory, H2_REPEAT times (5 by default): before each,
+#                   the guest unmounts and drops its caches, the host
+#                   syncs the image and drops its pages
+#                   (POSIX_FADV_DONTNEED, resident pages printed after),
+#                   and the guest mounts. Medians as the time mode's,
+#                   H2_SEEK_RULE_MS applying to them.
 #   H2_SEEK_CONTEND=1  what a seek costs a writer (seekprobe contend):
 #                   H2_SEEK_TIME_N one-block writes to a 64 MiB file,
 #                   timed alone and beside a SEEK_HOLE loop, H2_REPEAT
@@ -85,16 +107,21 @@ VIRSH="virsh --connect ${H2_LIBVIRT_URI:-qemu:///system}"
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2}
 FSCK=${H2_FSCK:-$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2}
+H2=${H2_HAMMER2:-$HOME/Projects/hammer2-utils-upstream/target/release/hammer2}
 KO=src/sys/fs/hammer2/hammer2.ko
 RACE=${H2_SEEK_RACE:-0}
 TIME=${H2_SEEK_TIME:-0}
 CONTEND=${H2_SEEK_CONTEND:-0}
-case "$RACE$TIME$CONTEND" in
-000) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE, H2_SEEK_TIME or H2_SEEK_CONTEND" >&2; exit 2; } ;;
-100|010|001|00gap) ;;
-*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE, H2_SEEK_TIME and H2_SEEK_CONTEND are 0 or 1 (H2_SEEK_CONTEND also gap), one at a time" >&2; exit 2 ;;
+COLD=${H2_SEEK_COLD:-0}
+case "$RACE$TIME$CONTEND$COLD" in
+0000) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE, H2_SEEK_TIME, H2_SEEK_CONTEND or H2_SEEK_COLD" >&2; exit 2; } ;;
+1000|0100|0010|00gap0|0001) ;;
+*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE, H2_SEEK_TIME, H2_SEEK_CONTEND and H2_SEEK_COLD are 0 or 1 (H2_SEEK_CONTEND also gap), one at a time" >&2; exit 2 ;;
 esac
-REPEAT=${H2_REPEAT:-$( [ "$TIME" = 1 ] && echo 5 || { [ "$CONTEND" != 0 ] && echo 3 || echo 1; } )}
+REPEAT=${H2_REPEAT:-$( [ "$TIME$COLD" != 00 ] && echo 5 || { [ "$CONTEND" != 0 ] && echo 3 || echo 1; } )}
+RULE=${H2_SEEK_RULE_MS:-}
+case "$RULE" in ''|*[!0-9]*|0) [ -z "$RULE" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RULE_MS=$RULE is not a count of ms" >&2; exit 2; } ;; esac
+[ -z "$RULE" ] || [ "$TIME$COLD" != 00 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RULE_MS needs H2_SEEK_TIME=1 or H2_SEEK_COLD=1" >&2; exit 2; }
 case "$REPEAT" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT=$REPEAT is not a count" >&2; exit 2 ;; esac
 NSEEK=${H2_SEEK_TIME_N:-100}
 case "$NSEEK" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_TIME_N=$NSEEK is not a count" >&2; exit 2 ;; esac
@@ -104,12 +131,15 @@ case "$WANT" in ''|inside|after) ;; *) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK
 [ -z "${H2_SEEK_TIME_N:-}" ] || [ "$TIME$CONTEND" != 00 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_TIME_N needs H2_SEEK_TIME=1 or H2_SEEK_CONTEND=1" >&2; exit 2; }
 DMB=${H2_SEEK_DENSE_MB:-}
 case "$DMB" in ''|*[!0-9]*|0) [ -z "$DMB" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_DENSE_MB=$DMB is not a count of MiB" >&2; exit 2; } ;; esac
-[ -z "$DMB" ] || [ "$TIME$CONTEND" != 00 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_DENSE_MB needs H2_SEEK_TIME=1 or H2_SEEK_CONTEND=1" >&2; exit 2; }
+[ -z "$DMB" ] || [ "$TIME$CONTEND$COLD" != 000 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_DENSE_MB needs H2_SEEK_TIME=1, H2_SEEK_CONTEND=1 or H2_SEEK_COLD=1" >&2; exit 2; }
 # The scratch volume holds the dense file twice over, and 1 GiB at least.
 IMGMB=1024; [ -n "$DMB" ] && [ $((DMB * 2)) -gt $IMGMB ] && IMGMB=$((DMB * 2))
 
 [ -x "$NEWFS" ] || { echo "seek-matrix: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
 [ -x "$FSCK" ] || { echo "seek-matrix: COULD-NOT-RUN: no fsck_hammer2 at $FSCK" >&2; exit 2; }
+[ "$RACE" = 0 ] || [ -x "$H2" ] || { echo "seek-matrix: COULD-NOT-RUN: no hammer2 at $H2 to find an indirect block" >&2; exit 2; }
+[ "$COLD" = 0 ] || { command -v python3 >/dev/null 2>&1 && command -v fincore >/dev/null 2>&1; } || {
+	echo "seek-matrix: COULD-NOT-RUN: the cold mode drops the host's pages with python3 and reads them with fincore" >&2; exit 2; }
 [ -d "$FIXDIR" ] || { echo "seek-matrix: COULD-NOT-RUN: no $FIXDIR" >&2; exit 2; }
 [ -f "$KDIR/Makefile" ] || { echo "seek-matrix: COULD-NOT-RUN: KDIR=$KDIR is not a kernel tree" >&2; exit 2; }
 command -v virsh >/dev/null 2>&1 || { echo "seek-matrix: COULD-NOT-RUN: no virsh" >&2; exit 2; }
@@ -186,16 +216,65 @@ i=0; while [ $i -lt $REPEAT ]; do for w in hole data map; do /tmp/h2seekprobe wb
 echo 0 > $T
 echo "tag-held $(dmesg | grep -c "hammer2: seek tag held")"
 S=/sys/module/hammer2/parameters/seek_scanall
-[ -e $S ] || { echo "SETUP knob failed: no seek_scanall"; umount /mnt/sm; rmmod hammer2; exit 0; }
+W=/sys/module/hammer2/parameters/seek_walked
+D=/sys/module/hammer2/parameters/seek_depth_max
+[ -e $S ] && [ -e $W ] && [ -e $D ] || { echo "SETUP knob failed: no seek_scanall, seek_walked or seek_depth_max"; umount /mnt/sm; rmmod hammer2; exit 0; }
 /tmp/h2seekprobe layout /mnt/sm/lay
+w0=$(cat $W)
 /tmp/h2seekprobe dump /mnt/sm/lay > /tmp/h2dump-walk; echo "dump walk exit $?"
+w1=$(cat $W)
 echo 1 > $S
 /tmp/h2seekprobe dump /mnt/sm/lay > /tmp/h2dump-scan; echo "dump scanall exit $?"
+w2=$(cat $W)
 echo 0 > $S
 echo "dump lines $(wc -l < /tmp/h2dump-walk) extents $(grep -c "^seekm-dump extent " /tmp/h2dump-walk) differ $(cmp -s /tmp/h2dump-walk /tmp/h2dump-scan && echo 0 || echo 1) forced $(dmesg | grep -c "hammer2: seek scanall forced")"
+echo "dump walked $((w1 - w0)) forced $((w2 - w1))"
 diff /tmp/h2dump-walk /tmp/h2dump-scan | head -5 | sed "s/^/dump diff /"
+d0=$(cat $D)
+echo 0 > $D
+/tmp/h2seekprobe refuse /mnt/sm/lay; echo "refuse depth exit $?"
+echo $d0 > $D
 rm -f /mnt/sm/lay /tmp/h2dump-walk /tmp/h2dump-scan
+head -c 4194304 /dev/urandom > /mnt/sm/ind && sync -f /mnt/sm && echo "ind inum $(stat -c %i /mnt/sm/ind)"
 '
+# The corrupt pass, after the fsck: OFF is the byte the host chose inside
+# the file's first indirect block. The byte is flipped through the block
+# device before the module loads, and the device's buffers dropped, so
+# the mount reads what the device holds.
+corrupt_body='
+dmesg -C
+v=$(dd if=/dev/vdb bs=1 skip=$OFF count=1 2>/dev/null | od -An -tu1 | tr -d " ")
+printf "\\$(printf %o $((v ^ 255)))" | dd of=/dev/vdb bs=1 seek=$OFF count=1 conv=notrunc,fsync 2>/dev/null
+blockdev --flushbufs /dev/vdb
+w=$(dd if=/dev/vdb bs=1 skip=$OFF count=1 2>/dev/null | od -An -tu1 | tr -d " ")
+echo "corrupt flipped $v to $w at $OFF"
+insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
+mount -t hammer2 -o ro /dev/vdb@SM /mnt/sm || { echo "SETUP corrupt mount failed"; rmmod hammer2; exit 0; }
+/tmp/h2seekprobe refuse /mnt/sm/ind; echo "refuse corrupt exit $?"
+e=$(dd if=/mnt/sm/ind of=/dev/null bs=65536 2>&1); s=$?
+echo "corrupt read exit $s eio $(printf "%s\n" "$e" | grep -c "Input/output error")"
+umount /mnt/sm; echo "corrupt umount exit $?"
+rmmod hammer2; echo "corrupt rmmod exit $?"
+echo "corrupt log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+echo "corrupt debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null || echo none)"
+'
+cold_drop='
+umount /mnt/sm; echo "cold umount exit $?"
+echo 3 > /proc/sys/vm/drop_caches
+'
+cold_seek='
+mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP cold mount failed"; exit 0; }
+/tmp/h2seekprobe cold /mnt/sm/c
+'
+# The host's copy of the image, synced and dropped, so the guest's read
+# reaches the disk; the resident page count after says whether it did.
+hostdrop() {
+	python3 -c 'import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+os.fsync(fd)
+os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)' "$IMG" || return 1
+	echo "cold host-resident $(fincore -nb -o RES "$IMG" 2>/dev/null | tr -d ' ')"
+}
 time_body='
 for k in sparse dense dirty hole deep; do
 	i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe time /mnt/sm/t $k $NSEEK $DMB; i=$((i + 1)); done
@@ -204,13 +283,48 @@ done
 contend_body='
 i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe $CVERB /mnt/sm/c $NSEEK $DMB; i=$((i + 1)); done
 '
-if [ "$RACE$TIME$CONTEND" != 000 ]; then
-	if [ "$RACE" = 1 ]; then body=$race_body; elif [ "$TIME" = 1 ]; then body=$time_body; else body=$contend_body; fi
-	CVERB=contend; [ "$CONTEND" = gap ] && CVERB=contendgap
-	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; DMB=$DMB; CVERB=$CVERB; $mode_open $body $mode_close" 2>&1)
+if [ "$RACE$TIME$CONTEND$COLD" != 0000 ]; then
+	if [ "$COLD" = 1 ]; then
+		out=$(ssh "$GUEST_SSH" "$mode_open /tmp/h2seekprobe cold /mnt/sm/c ${DMB:-64}" 2>&1)
+		i=0
+		while [ "$i" -lt "$REPEAT" ]; do
+			o1=$(ssh "$GUEST_SSH" "$cold_drop" 2>&1)
+			o2=$(hostdrop 2>&1) || o2="$o2
+SETUP cold host drop failed"
+			o3=$(ssh "$GUEST_SSH" "$cold_seek" 2>&1)
+			out=$(printf '%s\n%s\n%s\n%s' "$out" "$o1" "$o2" "$o3")
+			i=$((i + 1))
+		done
+		out=$(printf '%s\n%s' "$out" "$(ssh "$GUEST_SSH" "$mode_close" 2>&1)")
+	else
+		if [ "$RACE" = 1 ]; then body=$race_body; elif [ "$TIME" = 1 ]; then body=$time_body; else body=$contend_body; fi
+		CVERB=contend; [ "$CONTEND" = gap ] && CVERB=contendgap
+		out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; DMB=$DMB; CVERB=$CVERB; $mode_open $body $mode_close" 2>&1)
+	fi
 	printf '%s\n' "$out" | command grep -v '^seekm-time [a-z]* [0-9]* ' | sed 's/^/  /'
 	detach
 	"$FSCK" "$IMG" >/dev/null 2>&1; fsck_rc=$?
+	if [ "$RACE" = 1 ]; then
+		# The file's inode names its first indirect block in `hammer2
+		# show`; the low six bits of its data_off are the block's radix,
+		# and 64 bytes in is inside the first blockref of its array.
+		inum=$(printf '%s\n' "$out" | sed -n 's/^ind inum \([0-9][0-9]*\)$/\1/p')
+		ioff=
+		[ -n "$inum" ] && ioff=$("$H2" show "$IMG" 2>/dev/null | awk -v want="\"0x$(printf %016x "$inum")\"" '
+		    $1 == "filename" && $2 == want { f = 1; next }
+		    f && $1 ~ /^indirect\./ { print $2; exit }
+		    f && /\(inode\./ { exit }')
+		if [ -n "$ioff" ] && attach; then
+			OFF=$(( (0x$ioff & ~63) + 64 ))
+			echo "  corrupt: inode $inum, indirect data_off $ioff, byte $OFF"
+			out2=$(ssh "$GUEST_SSH" "OFF=$OFF; $corrupt_body" 2>&1)
+			detach
+		else
+			out2="SETUP corrupt failed: inode ${inum:-none}, indirect ${ioff:-none}"
+		fi
+		printf '%s\n' "$out2" | sed 's/^/  /'
+		out=$(printf '%s\n%s' "$out" "$out2")
+	fi
 	fail=0
 	case $out in *SETUP*failed*) echo "  FAIL  $(printf '%s\n' "$out" | command grep -m1 'SETUP.*failed')"; fail=$((fail + 1)) ;; esac
 	for want in "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0$" "^debug_locks [1n]"; do
@@ -255,6 +369,29 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 		else
 			echo "  ok    walk and scanall dumps identical: $1 lines, $2 extent(s), scanall forced"
 		fi
+		# Which reader answered each dump: the walk's counter moves on
+		# the first and not on the forced one, or the comparison is of
+		# one reader with itself.
+		wk=$(printf '%s\n' "$out" | sed -n 's/^dump walked \([0-9]*\) forced \([0-9]*\)$/\1 \2/p')
+		set -- $wk
+		if [ $# -eq 2 ] && [ "$1" -gt 0 ] && [ "$2" -eq 0 ]; then
+			echo "  ok    the walk answered $1 tree read(s) of the first dump and none of the forced one"
+		else
+			echo "  FAIL  seek_walked: ${wk:-no line} (walk dump, forced dump)"; fail=$((fail + 1))
+		fi
+		for want in "^refuse depth exit 0$" "^refuse corrupt exit 0$" \
+		    "^corrupt read exit [1-9][0-9]* eio [1-9]" "^corrupt umount exit 0$" \
+		    "^corrupt rmmod exit 0$" "^corrupt log: bug 0 oops 0 " "^corrupt debug_locks [1n]"; do
+			printf '%s\n' "$out" | command grep -q "$want" || {
+				echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
+		done
+		fl=$(printf '%s\n' "$out" | sed -n 's/^corrupt flipped \([0-9]*\) to \([0-9]*\) at [0-9]*$/\1 \2/p')
+		set -- $fl
+		if [ $# -eq 2 ] && [ "$2" -eq $(($1 ^ 255)) ]; then
+			echo "  ok    the indirect block's byte was flipped on the device ($1 to $2)"
+		else
+			echo "  FAIL  the flip: ${fl:-no line}, so the corrupt pass read an unaltered block"; fail=$((fail + 1))
+		fi
 		echo "  wbrace: $(printf '%s\n' "$wb" | awk '{print $2"="$4}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 	elif [ "$CONTEND" != 0 ]; then
@@ -264,12 +401,33 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 			echo "  contend $ph: median-ns $(printf '%s\n' "$out" | sed -n "s/^seekm-contend $ph median-ns \([0-9]*\) .*/\1/p" | tr '\n' ' ')max-ns $(printf '%s\n' "$out" | sed -n "s/^seekm-contend $ph median-ns [0-9]* max-ns \([0-9]*\) .*/\1/p" | tr '\n' ' ')"
 		done
 		echo "  contend seeks begun: $(printf '%s\n' "$out" | sed -n 's/^seekm-contend seeking .* seeks \([0-9]*\)$/\1/p' | tr '\n' ' ')"
+	elif [ "$COLD" = 1 ]; then
+		m=$(printf '%s\n' "$out" | sed -n 's/^seekm-cold ns \([0-9]*\) size .*/\1/p')
+		c=$(printf '%s\n' "$m" | command grep -c .)
+		[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c cold seek(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
+		mm=$(printf '%s\n' "$m" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')
+		echo "  cold SEEK_HOLE ns: $(printf '%s\n' "$m" | tr '\n' ' ')median ${mm:-none}"
+		echo "  cold host-resident pages after each drop: $(printf '%s\n' "$out" | sed -n 's/^cold host-resident //p' | tr '\n' ' ')"
+		if [ -n "$RULE" ]; then
+			if [ -n "$mm" ] && [ "$mm" -le $((RULE * 1000000)) ]; then
+				echo "  ok    the cold SEEK_HOLE median is within $RULE ms"
+			else
+				echo "  FAIL  the cold SEEK_HOLE median ${mm:-none} ns passes $RULE ms"; fail=$((fail + 1))
+			fi
+		fi
 	else
-		for k in sparse dense dirty hole deep; do
+		for k in sparse dense dense-data dense-hole dirty hole deep; do
 			m=$(printf '%s\n' "$out" | sed -n "s/^seekm-time $k median-ns \([0-9]*\) n .*/\1/p")
 			c=$(printf '%s\n' "$m" | command grep -c .)
 			[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c $k median(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
-			echo "  time $k median-ns per repeat: $(printf '%s\n' "$m" | tr '\n' ' ')median of medians $(printf '%s\n' "$m" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')"
+			mm=$(printf '%s\n' "$m" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')
+			echo "  time $k median-ns per repeat: $(printf '%s\n' "$m" | tr '\n' ' ')median of medians $mm"
+			[ "$k" = dense-hole ] && [ -n "$RULE" ] && {
+				if [ -n "$mm" ] && [ "$mm" -le $((RULE * 1000000)) ]; then
+					echo "  ok    the dense SEEK_HOLE median of medians is within $RULE ms"
+				else
+					echo "  FAIL  the dense SEEK_HOLE median of medians ${mm:-none} ns passes $RULE ms"; fail=$((fail + 1))
+				fi; }
 		done
 		raw=$(printf '%s\n' "$out" | command grep -c '^seekm-time [a-z]* [0-9]* ')
 		echo "  time: $raw raw seek line(s) kept below"
@@ -277,7 +435,7 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 	fi
 	[ "$fsck_rc" -eq 0 ] && echo "  ok    fsck_hammer2 clean" || {
 		echo "  FAIL  fsck_hammer2 exit $fsck_rc"; fail=$((fail + 1)); }
-	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || { [ "$TIME" = 1 ] && echo time || echo contend; }), $REPEAT repeat(s), $fail failure(s)"
+	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || { [ "$TIME" = 1 ] && echo time || { [ "$COLD" = 1 ] && echo cold || echo contend; }; }), $REPEAT repeat(s), $fail failure(s)"
 	rm -f "$IMG"
 	[ "$fail" -eq 0 ]
 	exit
