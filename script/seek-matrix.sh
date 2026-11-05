@@ -43,7 +43,8 @@
 #                   and the scan, so "after" shows the lock spans the
 #                   hold; that it spans the scan too is the code's scope.
 #                   Then a writeback aimed inside a held seek (seekprobe
-#                   wbrace, hole and data, H2_REPEAT times each):
+#                   wbrace, hole, data and map, H2_REPEAT times each;
+#                   map asks FIEMAP held the same way):
 #                   seek_tag_hold_ms=300 holds the seek between its page
 #                   cache tag read and its tree read, a block moves from
 #                   a dirty folio into the tree inside the hold, and the
@@ -68,7 +69,10 @@
 #                   timed alone and beside a SEEK_HOLE loop, H2_REPEAT
 #                   times (3 by default); median and worst of each, and a
 #                   run whose seek loop began after the first write fails. A
-#                   rate, so h2release-7.3tls too.
+#                   rate, so h2release-7.3tls too. H2_SEEK_CONTEND=gap
+#                   puts a hole of the same size before the data and loops
+#                   SEEK_DATA at 0 instead, so each seek crosses the hole
+#                   and its last chunk lands in the data.
 #
 # H2_KO loads a module built elsewhere instead of building one. H2_REPEAT
 # repeats the race too (1 by default); the three cases ignore it, so it is
@@ -92,10 +96,10 @@ TIME=${H2_SEEK_TIME:-0}
 CONTEND=${H2_SEEK_CONTEND:-0}
 case "$RACE$TIME$CONTEND" in
 000) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE, H2_SEEK_TIME or H2_SEEK_CONTEND" >&2; exit 2; } ;;
-100|010|001) ;;
-*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE, H2_SEEK_TIME and H2_SEEK_CONTEND are 0 or 1, one at a time" >&2; exit 2 ;;
+100|010|001|00gap) ;;
+*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE, H2_SEEK_TIME and H2_SEEK_CONTEND are 0 or 1 (H2_SEEK_CONTEND also gap), one at a time" >&2; exit 2 ;;
 esac
-REPEAT=${H2_REPEAT:-$( [ "$TIME" = 1 ] && echo 5 || { [ "$CONTEND" = 1 ] && echo 3 || echo 1; } )}
+REPEAT=${H2_REPEAT:-$( [ "$TIME" = 1 ] && echo 5 || { [ "$CONTEND" != 0 ] && echo 3 || echo 1; } )}
 case "$REPEAT" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT=$REPEAT is not a count" >&2; exit 2 ;; esac
 NSEEK=${H2_SEEK_TIME_N:-100}
 case "$NSEEK" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_TIME_N=$NSEEK is not a count" >&2; exit 2 ;; esac
@@ -183,7 +187,7 @@ echo "held $(dmesg | grep -c "hammer2: seek held")"
 T=/sys/module/hammer2/parameters/seek_tag_hold_ms
 [ -e $T ] || { echo "SETUP knob failed: no seek_tag_hold_ms"; umount /mnt/sm; rmmod hammer2; exit 0; }
 echo 300 > $T
-i=0; while [ $i -lt $REPEAT ]; do for w in hole data; do /tmp/h2seekprobe wbrace /mnt/sm/wb $w; rm -f /mnt/sm/wb; done; i=$((i + 1)); done
+i=0; while [ $i -lt $REPEAT ]; do for w in hole data map; do /tmp/h2seekprobe wbrace /mnt/sm/wb $w; rm -f /mnt/sm/wb; done; i=$((i + 1)); done
 echo 0 > $T
 echo "tag-held $(dmesg | grep -c "hammer2: seek tag held")"
 H=/sys/module/hammer2/parameters/seek_chunk_hold_ms
@@ -199,11 +203,12 @@ for k in sparse dense dirty hole; do
 done
 '
 contend_body='
-i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe contend /mnt/sm/c $NSEEK $DMB; i=$((i + 1)); done
+i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe $CVERB /mnt/sm/c $NSEEK $DMB; i=$((i + 1)); done
 '
 if [ "$RACE$TIME$CONTEND" != 000 ]; then
 	if [ "$RACE" = 1 ]; then body=$race_body; elif [ "$TIME" = 1 ]; then body=$time_body; else body=$contend_body; fi
-	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; DMB=$DMB; $mode_open $body $mode_close" 2>&1)
+	CVERB=contend; [ "$CONTEND" = gap ] && CVERB=contendgap
+	out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; DMB=$DMB; CVERB=$CVERB; $mode_open $body $mode_close" 2>&1)
 	printf '%s\n' "$out" | command grep -v '^seekm-time [a-z]* [0-9]* ' | sed 's/^/  /'
 	detach
 	"$FSCK" "$IMG" >/dev/null 2>&1; fsck_rc=$?
@@ -233,7 +238,7 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 		fi
 		wb=$(printf '%s\n' "$out" | command grep '^seekm-wbrace ')
 		n=$(printf '%s\n' "$wb" | command grep -c '^seekm-wbrace ')
-		[ "$n" -eq $((REPEAT * 2)) ] || { echo "  FAIL  $n writeback race line(s) for $REPEAT run(s) of two"; fail=$((fail + 1)); }
+		[ "$n" -eq $((REPEAT * 3)) ] || { echo "  FAIL  $n writeback race line(s) for $REPEAT run(s) of three"; fail=$((fail + 1)); }
 		printf '%s\n' "$out" | command grep -q '^tag-held 1$' || {
 			echo "  FAIL  the tag hold did not print once, so nothing held"; fail=$((fail + 1)); }
 		out_wb=$(printf '%s\n' "$wb" | awk '$12 != "inside"' | wc -l)
@@ -248,7 +253,7 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 		echo "  chunkrace: $(printf '%s\n' "$cr" | awk '{print $3"/"$5}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  wbrace: $(printf '%s\n' "$wb" | awk '{print $2"="$4}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
-	elif [ "$CONTEND" = 1 ]; then
+	elif [ "$CONTEND" != 0 ]; then
 		for ph in alone seeking; do
 			c=$(printf '%s\n' "$out" | command grep -c "^seekm-contend $ph ")
 			[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c $ph line(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }

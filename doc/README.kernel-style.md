@@ -343,6 +343,10 @@ the arguments' names as words; those comments were rewritten as
 failed on both moves from the commit that made each until this one,
 none of them pushed. No category is new.
 
+1,651 to 1,650 with FIEMAP's tags read before the tree: the DELALLOC
+helper went and the helper that reads the tags came, one
+continuation-line indent fewer between them. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

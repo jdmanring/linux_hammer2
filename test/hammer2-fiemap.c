@@ -38,14 +38,15 @@
  * the test was.  Every blocking call here is therefore in a child and
  * every thaw is reached by the parent that cannot block.
  *
- * THE COUNT.  Sixteen checks on a HAMMER2 volume that answers; eleven
+ * THE COUNT.  Nineteen checks on a HAMMER2 volume that answers; eleven
  * until the map moved onto the scan, which added the sector alignment,
- * two DELALLOC maps and the two compression checks.  The count is
+ * two DELALLOC maps and the two compression checks, and sixteen until the
+ * direct-data file and the two chunk-edge checks.  The count is
  * what carries the verdict here, because a volume that refuses FIEMAP or
  * FIFREEZE prints a LOW count and zero failures rather than a failure:
  * the assertion that the file is really sparse runs before the call is
  * made, so a run that answered nothing at all still prints a count of
- * one.  `test-enospc.sh` pins the count at sixteen for that reason and
+ * one.  `test-enospc.sh` pins the count at nineteen for that reason and
  * fails any other value, and the refusal is visible twice over, in the
  * count and in the fiemap-skip lines it prints.
  *
@@ -267,6 +268,112 @@ comp_file(const char *dir, const char *sub, const char *algo,
 	return ((long)st.st_blocks);
 }
 
+/*
+ * The map runs the seek's scan a chunk of key space at a time, the first
+ * chunk sixteen blocks, and merges an extent across the chunk's edge.  A
+ * 40-block file written in one pass in the uncompressed directory: every
+ * block mapped, no two neighbouring extents that should have been one,
+ * and one extent spanning block 16, which is what makes the second check
+ * mean something.  Without it, blocks 15 and 16 apart on the media pass
+ * the merge check whatever the map does, so that precondition fails
+ * rather than passing vacuously.
+ */
+#define EDGE_BLOCKS	40
+#define EDGE_AT		16
+
+static void
+chunk_edge(const char *dir, const char *buf, size_t blk)
+{
+	char path[4096 + 32], b[65536];
+	unsigned long long edge = (unsigned long long)EDGE_AT * blk, sum = 0;
+	unsigned int i, merge = 0, span = 0;
+	int fd, ok = blk <= sizeof(b);
+
+	/* each block its own bytes, so no write is a duplicate of another */
+	snprintf(path, sizeof(path), "%s/.h2fiemap-none/edge", dir);
+	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+	for (i = 0; fd >= 0 && i < EDGE_BLOCKS && ok; ++i) {
+		memcpy(b, buf, blk);
+		memcpy(b, &i, sizeof(i));
+		ok = pwrite(fd, b, blk, (off_t)i * blk) == (ssize_t)blk;
+	}
+	if (fd < 0 || !ok || fsync(fd) != 0 || close(fd) != 0 ||
+	    get_map(path) != 0) {
+		checks += 2;
+		fails += 2;
+		printf("fiemap-fail the %d-block file could not be written or "
+		    "mapped\n", EDGE_BLOCKS);
+		unlink(path);
+		return;
+	}
+	for (i = 0; i < nexts; ++i) {
+		const struct fiemap_extent *e = &exts[i], *p = e - 1;
+
+		sum += e->fe_length;
+		if (e->fe_logical < edge && edge < e->fe_logical + e->fe_length)
+			++span;
+		if (i > 0 && p->fe_flags == (e->fe_flags & ~FIEMAP_EXTENT_LAST) &&
+		    !(e->fe_flags & FIEMAP_EXTENT_ENCODED) &&
+		    p->fe_logical + p->fe_length == e->fe_logical &&
+		    p->fe_physical + p->fe_length == e->fe_physical)
+			++merge;
+	}
+	checks++;
+	if (sum != (unsigned long long)EDGE_BLOCKS * blk || merge != 0) {
+		printf("fiemap-fail the %d-block file: %llu bytes mapped of "
+		    "%llu, %u neighbouring extent(s) left unmerged\n",
+		    EDGE_BLOCKS, sum, (unsigned long long)EDGE_BLOCKS * blk,
+		    merge);
+		fails++;
+	} else {
+		printf("fiemap-ok   the %d-block file: every block mapped in %u "
+		    "extent(s), none left unmerged\n", EDGE_BLOCKS, nexts);
+	}
+	checks++;
+	if (span != 1) {
+		printf("fiemap-fail no extent spans the first chunk's edge at "
+		    "block %d, so the merge across it was not driven\n",
+		    EDGE_AT);
+		fails++;
+	} else {
+		printf("fiemap-ok   an extent spans the first chunk's edge at "
+		    "block %d\n", EDGE_AT);
+	}
+	unlink(path);
+}
+
+/*
+ * A file of 512 bytes or less keeps its data in its inode, and the map
+ * reported no extent for it.  One extent at 0, FIEMAP_EXTENT_DATA_INLINE,
+ * covering the file, as btrfs reports its inline extents.
+ */
+static void
+direct_data(const char *dir)
+{
+	char path[4096 + 16];
+	int fd;
+
+	snprintf(path, sizeof(path), "%s/fiemap-small", dir);
+	checks++;
+	fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+	if (fd < 0 || pwrite(fd, "a small file\n", 13, 0) != 13 ||
+	    fsync(fd) != 0 || close(fd) != 0 || get_map(path) != 0 ||
+	    nexts != 1 || exts[0].fe_logical != 0 ||
+	    exts[0].fe_length < 13 ||
+	    !(exts[0].fe_flags & FIEMAP_EXTENT_DATA_INLINE)) {
+		printf("fiemap-fail a 13-byte file: %u extent(s), the first at "
+		    "%llu for %llu, flags 0x%x, want one inline extent at 0\n",
+		    nexts, nexts ? (unsigned long long)exts[0].fe_logical : 0,
+		    nexts ? (unsigned long long)exts[0].fe_length : 0,
+		    nexts ? exts[0].fe_flags : 0);
+		fails++;
+	} else {
+		printf("fiemap-ok   a 13-byte file: one extent at 0, "
+		    "DATA_INLINE\n");
+	}
+	unlink(path);
+}
+
 static void
 encoded(const char *dir, const char *buf, size_t blk)
 {
@@ -280,6 +387,7 @@ encoded(const char *dir, const char *buf, size_t blk)
 		return;
 	}
 	checks++;
+	direct_data(dir);
 	bn = comp_file(dir, ".h2fiemap-none", "none", buf, blk, pn,
 	    sizeof(pn));
 	for (i = 0, enc = 0; bn >= 0 && i < nexts; ++i)
@@ -308,6 +416,7 @@ encoded(const char *dir, const char *buf, size_t blk)
 	}
 	unlink(pn);
 	unlink(pz);
+	chunk_edge(dir, buf, blk);
 	snprintf(d, sizeof(d), "%s/.h2fiemap-none", dir);
 	rmdir(d);
 	snprintf(d, sizeof(d), "%s/.h2fiemap-zlib", dir);

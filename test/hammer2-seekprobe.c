@@ -30,7 +30,9 @@
  *                                             timing()
  *     hammer2-seekprobe contend <path> <n>    n timed writes alone and
  *                                             beside a SEEK_HOLE loop,
- *                                             see contend()
+ *                                             see contend(); contendgap
+ *                                             beside SEEK_DATA across a
+ *                                             hole into the data
  *
  * The shape and bounds are hammer2-seek.c's, so the two answer to one
  * contract: one 64 KiB block of 'A', one of hole, one of 'A', and a
@@ -42,6 +44,7 @@
  * because the script counts it from inside a quoted ssh command.
  */
 #define _GNU_SOURCE
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <fcntl.h>
@@ -50,6 +53,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <linux/fiemap.h>
+#include <linux/fs.h>
 
 #define BSIZE	65536L
 #define NBYTES	(3 * BSIZE + BSIZE / 2)
@@ -343,18 +348,46 @@ race(const char *path)
  * accepted a hole the tags cleared without reading the tree again, calls
  * block 1 a hole.  The line says whether the writeback returned inside the
  * seek, which is the only case that tests anything.
+ *
+ * "map" asks FIEMAP of the "data" file instead, held the same way between
+ * its tag read and its tree read: block 1 must be in some extent, as
+ * DELALLOC or as written, and a map that read the tags after the tree
+ * reports it as neither.  The answer printed is 65536 when it is mapped
+ * and -1 when it is not.
  */
+static long
+mapped(int fd, long off)
+{
+	struct {
+		struct fiemap fm;
+		struct fiemap_extent fe[16];
+	} m;
+	unsigned int i;
+
+	memset(&m, 0, sizeof(m));
+	m.fm.fm_length = FIEMAP_MAX_OFFSET;
+	m.fm.fm_extent_count = 16;
+	if (ioctl(fd, FS_IOC_FIEMAP, &m.fm) != 0)
+		return (-2);
+	for (i = 0; i < m.fm.fm_mapped_extents && i < 16; i++)
+		if ((long)m.fe[i].fe_logical <= off &&
+		    off < (long)(m.fe[i].fe_logical + m.fe[i].fe_length))
+			return (off);
+	return (-1);
+}
+
 static int
 wbrace(const char *path, const char *kind)
 {
 	volatile long *tt;
 	char *buf = malloc(BSIZE);
-	int hole = strcmp(kind, "hole") == 0, fd, st;
+	int hole = strcmp(kind, "hole") == 0, map = strcmp(kind, "map") == 0;
+	int fd, st;
 	long t0, t1, want = hole ? 2 * BSIZE : BSIZE;
 	off_t got;
 	pid_t pid;
 
-	if (!hole && strcmp(kind, "data") != 0)
+	if (!hole && !map && strcmp(kind, "data") != 0)
 		return (2);
 	tt = mmap(NULL, sizeof(*tt), PROT_READ | PROT_WRITE,
 	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -376,7 +409,7 @@ wbrace(const char *path, const char *kind)
 		*tt = now_ns();
 		_exit(0);
 	}
-	got = lseek(fd, 0, hole ? SEEK_HOLE : SEEK_DATA);
+	got = map ? mapped(fd, BSIZE) : lseek(fd, 0, hole ? SEEK_HOLE : SEEK_DATA);
 	t1 = now_ns();
 	waitpid(pid, &st, 0);
 	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0 || *tt == 0) {
@@ -576,13 +609,21 @@ timing(const char *path, const char *kind, long n)
  * first seek began before the first write did; a run where it did not
  * fails rather than reads.  It counts the seeks it began, not the ones it
  * finished: one seek of seconds can outlast every write.
+ *
+ * With gap set (contendgap) the data begins after a hole of the same size
+ * and the child loops SEEK_DATA at 0: each seek crosses the hole in
+ * growing chunks and its last chunk lands in the data, where the chunk
+ * held no chain before and may be the largest a chunk gets, so the write
+ * reads what that transition holds the lock for.
  */
+static int gap;
+
 static int
 contend(const char *path, long n)
 {
 	volatile long *stop, *seeks, *first;
 	unsigned int seed = 777;
-	long *ns, i, ph, w0;
+	long *ns, i, ph, w0, base = gap ? dense : 0;
 	char *buf = malloc(BSIZE);
 	pid_t pid = -1;
 	int fd, st;
@@ -597,7 +638,7 @@ contend(const char *path, long n)
 		return (2);
 	fill(buf, 1);
 	for (i = 0; i < dense; i += BSIZE)
-		if (pwrite(fd, buf, BSIZE, i) != BSIZE)
+		if (pwrite(fd, buf, BSIZE, base + i) != BSIZE)
 			return (2);
 	if (fsync(fd) != 0)
 		return (2);
@@ -615,7 +656,8 @@ contend(const char *path, long n)
 					__atomic_store_n(first, now_ns(),
 					    __ATOMIC_RELEASE);
 				__atomic_add_fetch(seeks, 1, __ATOMIC_RELEASE);
-				if (lseek(sfd, 0, SEEK_HOLE) != dense)
+				if (gap ? lseek(sfd, 0, SEEK_DATA) != base :
+				    lseek(sfd, 0, SEEK_HOLE) != dense)
 					_exit(1);
 			}
 			_exit(0);
@@ -629,7 +671,7 @@ contend(const char *path, long n)
 			seed = seed * 1103515245u + 12345u;
 			off = ((long)(seed >> 8) % (dense / BSIZE)) * BSIZE;
 			t0 = now_ns();
-			if (pwrite(fd, buf, BSIZE, off) != BSIZE)
+			if (pwrite(fd, buf, BSIZE, base + off) != BSIZE)
 				return (2);
 			ns[i] = now_ns() - t0;
 		}
@@ -683,6 +725,10 @@ main(int argc, char **argv)
 	if (argc == 4 && strcmp(argv[1], "wbrace") == 0)
 		return (wbrace(argv[2], argv[3]));
 	/* A trailing count of MiB sizes the dense file, a block multiple. */
+	if (argc >= 2 && strcmp(argv[1], "contendgap") == 0) {
+		gap = 1;
+		argv[1] = "contend";
+	}
 	if ((argc == 5 && strcmp(argv[1], "contend") == 0) ||
 	    (argc == 6 && strcmp(argv[1], "time") == 0)) {
 		dense = strtol(argv[argc - 1], NULL, 10) << 20;
@@ -696,7 +742,7 @@ main(int argc, char **argv)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
 	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | chunkrace <path> | "
-	    "time <path> sparse|dense|dirty|hole <n> [MiB] | contend <path> <n> [MiB]\n",
+	    "time <path> sparse|dense|dirty|hole <n> [MiB] | contend|contendgap <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);
 }

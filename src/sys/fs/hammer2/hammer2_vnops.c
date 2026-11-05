@@ -1640,9 +1640,9 @@ hammer2_seek_tagged(struct address_space *mapping, loff_t from, loff_t to)
 }
 
 /*
- * Linux: the order control's hold, between a seek's page cache tag read and
- * its tree read in whichever order its whence makes them, so a writeback
- * can be completed between the two.  Debug build only.
+ * Linux: the order control's hold, between a seek's or a map's page cache
+ * tag read and its tree read in whichever order its whence makes them, so
+ * a writeback can be completed between the two.  Debug build only.
  */
 #if defined(HAMMER2_LOCKDEBUG)
 static unsigned int hammer2_seek_tag_hold_ms;
@@ -1805,11 +1805,12 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 	 * trusts that writes zeroes where the data was.  It is the defect
 	 * upstream disabled FIOSEEKHOLE for in 0d0182bdb4.  So a block
 	 * holding such a folio is data, at block granularity, since its
-	 * writeback writes the whole block.  This is the page cache answer
-	 * iomap gives through mapping_seek_hole_data(), which is not
-	 * exported to modules, read here with filemap_get_folios_tag().  It
-	 * replaced writing the file back from the offset, which made
-	 * lseek(2) start and wait for I/O under i_rwsem.
+	 * writeback writes the whole block.  iomap reads the page cache the
+	 * same way for an unwritten extent, through mapping_seek_hole_data(),
+	 * which is not exported to modules; this reads the tags with
+	 * filemap_get_folios_tag(), since here no extent records a block
+	 * before its writeback.  It replaced writing the file back from the
+	 * offset, which made lseek(2) start and wait for I/O under i_rwsem.
 	 *
 	 * The tags may make a block data and never a hole, and the order of
 	 * the two reads keeps that true while writeback runs.  A folio
@@ -2710,27 +2711,29 @@ hammer2_fiemap_add(struct fiemap_extent_info *fieinfo,
 }
 
 /*
- * Linux: the blocks in [from, to] whose folios are tagged dirty or under
- * writeback and the tree does not hold, as DELALLOC extents.
+ * Linux: the blocks in [from, *top] whose folios are tagged dirty or
+ * under writeback, at most max of them, into t; *np is how many.  When t
+ * fills, *top is lowered to just before the first block left out, so the
+ * caller scans the tree no further than the tags it read.
  */
-static int
-hammer2_fiemap_delalloc(struct fiemap_extent_info *fieinfo,
-    struct hammer2_fiemap_run *r, struct address_space *mapping, loff_t from,
-    loff_t to, u32 bsize)
+static void
+hammer2_fiemap_tags(struct address_space *mapping, loff_t from, loff_t *top,
+    u32 bsize, loff_t *t, int max, int *np)
 {
 	loff_t pos;
-	int ret;
+	int n = 0;
 
-	while (from <= to &&
-	    (pos = hammer2_seek_tagged(mapping, from, to)) >= 0) {
+	while (from <= *top &&
+	    (pos = hammer2_seek_tagged(mapping, from, *top)) >= 0) {
 		pos &= ~((loff_t)bsize - 1);
-		ret = hammer2_fiemap_add(fieinfo, r, pos, 0, bsize,
-		    FIEMAP_EXTENT_MERGED | FIEMAP_EXTENT_DELALLOC);
-		if (ret != 0)
-			return (ret);
+		if (n == max) {
+			*top = pos - 1;
+			break;
+		}
+		t[n++] = pos;
 		from = pos + bsize;
 	}
-	return (0);
+	*np = n;
 }
 
 static int
@@ -2740,22 +2743,41 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	struct address_space *mapping = inode->i_mapping;
 	struct hammer2_fiemap_run run = { 0 };
 	struct hammer2_fiemap_ref *v;
+	loff_t *t;
 	u32 bsize = i_blocksize(inode);
 	loff_t isize, cur, end, cend, chunk = HAMMER2_SEEK_CHUNK, next;
 	u64 llen, plen;
 	u32 flags;
 	bool tagged;
-	int error, ret = 0, i, n;
+	int error, ret = 0, i, j, n, nt;
 
 	error = fiemap_prep(inode, fieinfo, start, &len, 0);
 	if (error)
 		return (error);
 	v = kvmalloc_array(HAMMER2_FIEMAP_REFS, sizeof(*v), GFP_KERNEL);
-	if (v == NULL)
+	t = kvmalloc_array(HAMMER2_FIEMAP_REFS, sizeof(*t), GFP_KERNEL);
+	if (v == NULL || t == NULL) {
+		kvfree(v);
+		kvfree(t);
 		return (-ENOMEM);
+	}
 
 	inode_lock_shared(inode);
 	isize = i_size_read(inode);
+	/*
+	 * A file of HAMMER2_EMBEDDED_BYTES or less keeps its data in the
+	 * inode, and the scan feeds the inode itself, no data chain: the
+	 * map reported nothing for such a file.  As the seek answers it
+	 * whole, it is one extent from 0, reported as btrfs reports an
+	 * inline extent, FIEMAP_EXTENT_DATA_INLINE at physical 0.
+	 */
+	if (VTOI(inode)->meta.op_flags & HAMMER2_OPFLAG_DIRECTDATA) {
+		if (start < (u64)isize)
+			ret = fiemap_fill_next_extent(fieinfo, 0, 0, isize,
+			    FIEMAP_EXTENT_DATA_INLINE | FIEMAP_EXTENT_LAST);
+		error = 0;
+		goto out;
+	}
 	cur = (loff_t)start & ~((loff_t)bsize - 1);
 	end = (start + len > (u64)isize || start + len < start) ? isize :
 	    (loff_t)(start + len);
@@ -2764,13 +2786,21 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		tagged = mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
 		    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK);
 		/*
-		 * The tags are read before the tree, as SEEK_DATA reads them:
-		 * a writeback ending between the two leaves its block in the
-		 * tree, and a block may then read both as tagged and as held,
-		 * where the tree's answer is the one reported.  So the
-		 * DELALLOC extents are taken per gap between the tree's
-		 * chains, and a gap's tags were read before the chain after it.
+		 * The tags are read before the tree, as SEEK_DATA reads them.
+		 * A folio leaves its tags only after its chain is in the
+		 * tree, so a block tagged here is either in the tree read
+		 * that follows, which is the answer reported, or DELALLOC; a
+		 * tag read after the tree read could find a writeback that
+		 * ended between the two and call its block neither.  At most
+		 * HAMMER2_FIEMAP_REFS tagged blocks are kept, and the chunk
+		 * ends before the first one left out.
 		 */
+		nt = 0;
+		if (tagged) {
+			hammer2_fiemap_tags(mapping, cur, &cend, bsize, t,
+			    HAMMER2_FIEMAP_REFS, &nt);
+			hammer2_seek_tag_hold();
+		}
 		error = hammer2_fiemap_scan(inode, (hammer2_key_t)cur,
 		    (hammer2_key_t)cend, v, HAMMER2_FIEMAP_REFS, &n);
 		if (error != 0)
@@ -2778,12 +2808,16 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		next = (n == HAMMER2_FIEMAP_REFS) ?
 		    (loff_t)(v[n - 1].key + ((hammer2_key_t)1 << v[n - 1].keybits)) :
 		    cend + 1;
-		for (i = 0; i <= n && ret == 0; ++i) {
+		for (i = 0, j = 0; i <= n && ret == 0; ++i) {
 			loff_t gap_end = (i < n) ? (loff_t)v[i].key - 1 : next - 1;
 
-			if (tagged)
-				ret = hammer2_fiemap_delalloc(fieinfo, &run,
-				    mapping, cur, gap_end, bsize);
+			/* a tag under a chain read below cur is the chain's */
+			for (; j < nt && t[j] <= gap_end && ret == 0; ++j)
+				if (t[j] >= cur)
+					ret = hammer2_fiemap_add(fieinfo, &run,
+					    t[j], 0, bsize,
+					    FIEMAP_EXTENT_MERGED |
+					    FIEMAP_EXTENT_DELALLOC);
 			if (ret != 0 || i == n)
 				break;
 			llen = (u64)1 << v[i].keybits;
@@ -2817,7 +2851,9 @@ hammer2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	if (error == 0 && ret == 0)
 		ret = hammer2_fiemap_flush(fieinfo, &run,
 		    run.logical + run.len >= (u64)isize ? FIEMAP_EXTENT_LAST : 0);
+out:
 	inode_unlock_shared(inode);
+	kvfree(t);
 	kvfree(v);
 	if (error != 0)
 		return (-error);
