@@ -49,7 +49,12 @@
 #                   a dirty folio into the tree inside the hold, and the
 #                   answer must still call it data. The hold's klog line
 #                   must print, and a writeback returning after the seek
-#                   fails, since it tested nothing.
+#                   fails, since it tested nothing. Then a truncate aimed
+#                   between two chunks of a seek (seekprobe chunkrace,
+#                   H2_REPEAT times): seek_chunk_hold_ms=300 lets i_rwsem
+#                   go at each chunk boundary and sleeps, and the answer
+#                   must lie within the size the file has after the
+#                   truncate, which returned inside the seek.
 #   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense,
 #                   dirty and hole, each H2_REPEAT times (5 by default) on a
 #                   file made once per repeat, H2_SEEK_TIME_N seeks each
@@ -181,6 +186,12 @@ echo 300 > $T
 i=0; while [ $i -lt $REPEAT ]; do for w in hole data; do /tmp/h2seekprobe wbrace /mnt/sm/wb $w; rm -f /mnt/sm/wb; done; i=$((i + 1)); done
 echo 0 > $T
 echo "tag-held $(dmesg | grep -c "hammer2: seek tag held")"
+H=/sys/module/hammer2/parameters/seek_chunk_hold_ms
+[ -e $H ] || { echo "SETUP knob failed: no seek_chunk_hold_ms"; umount /mnt/sm; rmmod hammer2; exit 0; }
+echo 300 > $H
+i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe chunkrace /mnt/sm/cr; rm -f /mnt/sm/cr; i=$((i + 1)); done
+echo 0 > $H
+echo "chunk-held $(dmesg | grep -c "hammer2: seek chunk held")"
 '
 time_body='
 for k in sparse dense dirty hole; do
@@ -227,6 +238,14 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 			echo "  FAIL  the tag hold did not print once, so nothing held"; fail=$((fail + 1)); }
 		out_wb=$(printf '%s\n' "$wb" | awk '$12 != "inside"' | wc -l)
 		[ "$out_wb" -eq 0 ] || { echo "  FAIL  $out_wb writeback(s) returned after the seek, so they tested nothing"; fail=$((fail + 1)); }
+		cr=$(printf '%s\n' "$out" | command grep '^seekm-chunkrace ')
+		n=$(printf '%s\n' "$cr" | command grep -c '^seekm-chunkrace ')
+		[ "$n" -eq "$REPEAT" ] || { echo "  FAIL  $n chunk race line(s) for $REPEAT run(s)"; fail=$((fail + 1)); }
+		printf '%s\n' "$out" | command grep -q '^chunk-held 1$' || {
+			echo "  FAIL  the chunk hold did not print once, so nothing held"; fail=$((fail + 1)); }
+		out_cr=$(printf '%s\n' "$cr" | awk '$11 != "inside"' | wc -l)
+		[ "$out_cr" -eq 0 ] || { echo "  FAIL  $out_cr truncate(s) returned after the seek, so they tested nothing"; fail=$((fail + 1)); }
+		echo "  chunkrace: $(printf '%s\n' "$cr" | awk '{print $3"/"$5}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  wbrace: $(printf '%s\n' "$wb" | awk '{print $2"="$4}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 	elif [ "$CONTEND" = 1 ]; then

@@ -399,6 +399,76 @@ fail:
 	return (1);
 }
 
+/*
+ * A truncate between two chunks of a held seek.  64 blocks of data,
+ * synced, in a file 80 blocks long, so SEEK_HOLE at 0 runs past its first
+ * chunk of 16 blocks.  The module's seek_chunk_hold_ms (a
+ * HAMMER2_LOCKDEBUG build) lets i_rwsem go at each chunk boundary and
+ * sleeps; a child truncates the file to half a block 50 ms in, inside the
+ * first sleep.  The seek reads i_size again when it takes the lock back,
+ * so it answers within the size the file now has; one that kept the size
+ * it began with answers past it.  The line says whether the truncate
+ * returned inside the seek, which is the only case that tests anything.
+ */
+static int
+chunkrace(const char *path)
+{
+	volatile long *tt;
+	char *buf = malloc(BSIZE);
+	long t0, t1, i, after;
+	off_t got;
+	pid_t pid;
+	int fd, st;
+
+	tt = mmap(NULL, sizeof(*tt), PROT_READ | PROT_WRITE,
+	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	if (buf == NULL || tt == MAP_FAILED ||
+	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
+		goto fail;
+	fill(buf, 0);
+	if (ftruncate(fd, 80L * BSIZE) != 0)
+		goto fail;
+	for (i = 0; i < 64; i++)
+		if (pwrite(fd, buf, BSIZE, i * BSIZE) != BSIZE)
+			goto fail;
+	if (fsync(fd) != 0)
+		goto fail;
+	*tt = 0;
+	t0 = now_ns();
+	if ((pid = fork()) == 0) {
+		int fd2 = open(path, O_RDWR);
+
+		usleep(50000);
+		if (fd2 < 0 || ftruncate(fd2, BSIZE / 2) != 0)
+			_exit(1);
+		*tt = now_ns();
+		_exit(0);
+	}
+	got = lseek(fd, 0, SEEK_HOLE);
+	t1 = now_ns();
+	waitpid(pid, &st, 0);
+	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0 || *tt == 0) {
+		printf("seekm-fail chunkrace: the truncate failed\n");
+		return (1);
+	}
+	after = (long)lseek(fd, 0, SEEK_END);
+	printf("seekm-chunkrace answer %ld size-after %ld seek-ms %ld "
+	    "truncate-ms %ld truncate %s\n", (long)got, after,
+	    (t1 - t0) / 1000000, (*tt - t0) / 1000000,
+	    *tt < t1 ? "inside" : "after");
+	if (got < 0 || (long)got > after) {
+		printf("seekm-fail chunkrace: answered %ld past the size %ld\n",
+		    (long)got, after);
+		fails++;
+	}
+	close(fd);
+	free(buf);
+	return (fails ? 1 : 0);
+fail:
+	printf("seekm-fail chunkrace: the file could not be built\n");
+	return (1);
+}
+
 static int
 cmp_long(const void *a, const void *b)
 {
@@ -608,6 +678,8 @@ main(int argc, char **argv)
 		return (agree(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "chunkrace") == 0)
+		return (chunkrace(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "wbrace") == 0)
 		return (wbrace(argv[2], argv[3]));
 	/* A trailing count of MiB sizes the dense file, a block multiple. */
@@ -623,7 +695,7 @@ main(int argc, char **argv)
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | "
+	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | chunkrace <path> | "
 	    "time <path> sparse|dense|dirty|hole <n> [MiB] | contend <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);
