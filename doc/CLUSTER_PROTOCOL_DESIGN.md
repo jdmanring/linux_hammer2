@@ -190,12 +190,15 @@ pointers: the inode's key, the directory's key, `lkey` and `rkey` and
 `key_end`, `resolve_flags` and `lookup_flags` for `scanall`, `lbase` for
 `strategy_read`, `lbn` for `bmap`, the name as aux where the XOP carries
 one. The lock modes a scan runs under come from no frame: `scanall` runs
-shared, resolving data, as the slave's own source scans do, and the
-request's `lookup_flags` contribute `HAMMER2_LOOKUP_NODIRECT` alone,
-whether a direct-data inode answers a scan beneath it as itself;
-`NODATA` would change nothing, since the server's scan runs with
-`HAMMER2_LOOKUP_ALWAYS`, which resolves data whatever else is asked, and
-is not carried. The first version carried `NODATA` alone, and the first wire run read the consequence: the
+shared, as the slave's own source scans do, and the request's
+`lookup_flags` contribute `HAMMER2_LOOKUP_NODIRECT` and
+`HAMMER2_LOOKUP_NODATA` alone (`HAMMER2_REMOTE_LOOKUPF`). `NODIRECT` is
+whether a direct-data inode answers a scan beneath it as itself.
+`NODATA` is what the seek and the extent map ask: the server then scans
+without `HAMMER2_LOOKUP_ALWAYS` and feeds each data chain with `bytes`
+0 and no aux, its size in the blockref's radix; without it the scan runs
+with `ALWAYS`, which resolves data whatever else is asked, and the
+slave's pass, which copies what it is fed, never asks it. The first version carried `NODATA` alone, and the first wire run read the consequence: the
 slave's pass asks for `NODIRECT`, the server's scan of a direct-data file
 fed the file's own inode as its child, the pass inserted inode 0x405
 beneath itself 1091 times ("parent set for direct-data pkey
@@ -234,26 +237,24 @@ a scan of leaves feeds them, which with the hash range check bounds a
 a peer past any of these is refused like a frame that is not a proxy.
 The server holds a peer's `nmax` to between 1 and 255, the frontend's
 own bound, since a count of 0 or less would never stop its scan. A
-`scanall` has no count but its range: the seek scan
-(`hammer2_bmap_next_key()`) feeds every block from the offset to the
-end of the file, on a local element as on a remote one, and over the
-wire each block is a transfer with its data under the bound. SEEK_DATA
-runs it once; SEEK_HOLE runs it once per block until a hole, so a
-dense file of n blocks costs about n²/2 block feeds. Whether a large
-remote file's seek outruns the bound is a candidate, unmeasured; its
-trigger is the first SEEK_DATA or SEEK_HOLE through a remote element.
-The scan needs only keys, but asking for none is not yet an upgrade:
-the server's scan runs with `HAMMER2_LOOKUP_ALWAYS`, which resolves
-data whatever else is asked, its feed ships every chain's data, and a
-proxy needs data to be fed, so the request carries no `NODATA` and the
-upgrade is those three together. A request the server will not serve is closed
+`scanall` has no count but its range: the seek and the extent map
+(`hammer2_bmap_next_key()`) bound theirs to a chunk of key space that
+`hammer2_seek_data_hole()` sizes, at most 1024 blocks after a chunk
+holding data, and ask `NODATA`, so over the wire each block is a frame
+carrying a blockref alone. The client accepts a data chain with no
+bytes only from a `scanall` that asked `NODATA` (`hammer2_remote_proxy()`);
+from any other call it is not a proxy. Both directions of a mixed pair
+keep answering: a server that predates the flag masks it out, its
+`HAMMER2_REMOTE_LOOKUPF` being `NODIRECT` alone, and ships each block's
+data, which the newer client takes as it did before, and a client that
+predates it never asks. A request the server will not serve is closed
 by kern_dmsg's own `LNK_ERROR` reply carrying `DMSG_ERR_NOSUPP`, so the
 peer tells a served request from a refused one by the closing frame's
 command, and a served scan that found nothing reads as zero feeds and
 error zero rather than as a refusal, which the client reads as its
 master unreachable and never as an empty answer. A reply
-frame with no data for a type that has data is a protocol error and ends
-the connection.
+frame with no data for a type that has data, other than that data chain
+of a `NODATA` scan, is a protocol error and ends the connection.
 
 Every reply frame names its call and its place in it. The request
 carries an eight-byte `tag` from a per-connection counter, each feed
@@ -630,7 +631,10 @@ block, one block up and signs the frame again, and the slave refuses
 that feed and fails the call `ENOTCONN`, so fiemap reports the error and
 `filefrag` lists no extent, every file still reading equal to the
 master's (`wire-run-20261024-202905`); a check refusing nothing
-would have listed the block as an extent. Under `H2_WIRE_DIRENT=1` the
+would have listed the block as an extent. Since fiemap and the seek ask
+`NODATA` their feeds carry no data, so the first block fed with its
+data is FIBMAP's `bmap`, which the harness asks first with `filefrag -B`,
+and FIEMAP then answers in the same run. Under `H2_WIRE_DIRENT=1` the
 relay turns the inode answering the first `nresolve`, the slave's stat of
 a file, into a directory entry with no bytes, and the slave refuses that
 feed and fails that one lookup `ENOTCONN`, every file then reading equal
@@ -667,7 +671,7 @@ in progress", the element counted in progress
 `H2_WIRE_END=lost` the relay sets the closing frames' byte count
 instead, a closing feed carrying a chain, a shape the protocol gives no
 meaning; the slave does not take it and ends the link at that frame
-(`hammer2_remote.c:1363-1364`, `:1449-1455`), as it does for any frame it
+(`hammer2_remote.c:1380-1381`, `:1466-1472`), as it does for any frame it
 cannot take, so no later frame is fed past the key the lost one held,
 and the second call's request never reaches the wire, ending `ENOTCONN`
 at the slave with no frame; the listing fails not connected, the first
@@ -1919,7 +1923,7 @@ delayed work of the device, on `system_dfl_long_wq`
 (`include/linux/workqueue.h:476`), since its wait for the lock can
 outlast a bulkfree run; `system_unbound_wq` is deprecated in 7.3 and
 warns on first use (`kernel/workqueue.c:2333-2336, 8229`), and the
-device's `rm->wq` is flushed by the quiesce (`hammer2_remote.c:197`).
+device's `rm->wq` is flushed by the quiesce (`hammer2_remote.c:203`).
 The work, the device's spinlock and its mutex (both below) are
 initialized with the device once its volumes are read, before the first
 failure path that tears it down (`hammer2_vfsops.c:1435`),
@@ -1928,18 +1932,18 @@ mount-failure paths before `hammer2_iocom_init()` (`:1438, 1547, 1559`).
 For a successful attempt, in this order, the work takes `hammer2_mntlk`
 by try-lock in a loop that sleeps 10 ms and leaves when no attempt is
 hooked on the device, as the server's lookup does
-(`hammer2_remote.c:771-781`); claims the attempt; waits on its
+(`hammer2_remote.c:784-794`); claims the attempt; waits on its
 completion, signaled already for a plaintext attempt; calls the quiesce
 with the lock held; and drops the lock. As built,
 `hammer2_remote_conn_end()` lost its `final` argument, which had meant
 both "closed" and "held", and neither takes nor drops the lock, since
 both callers of the quiesce hold it, `hammer2_iocom_uninit()` and this
-work (`hammer2_remote.c:2889-2900`). Claiming before
+work (`hammer2_remote.c:2913-2924`). Claiming before
 the quiesce means a teardown that unhooks the attempt first leaves the
 old link alone. The rest of the tail takes no `hammer2_mntlk`: a server
-request leaves its try-lock loop once the state is not open (`:771-773`)
+request leaves its try-lock loop once the state is not open (`:784-786`)
 and the quiesce has flushed their queue, and registration, the other
-taker (`:2844`), is disabled in `conn_end` (`:2914-2915`) until
+taker (`:2868`), is disabled in `conn_end` (`:2938-2939`) until
 `hammer2_remote_connected()` enables it again. The intake returns once
 the request is submitted or, in plaintext, once the work is queued, so a
 return from `RECLUSTER` no longer means `LNK_CONN` is queued. The
@@ -2200,11 +2204,11 @@ The rules, audited before any code:
    the hook against the old record, or the new connection's, running
    after it against the new one: no frame is read, and no span or
    request is admitted, against a record that is empty or another
-   connection's. The quiesce's comment (`hammer2_remote.c:168-183`)
+   connection's. The quiesce's comment (`hammer2_remote.c:174-189`)
    says only the new connection's peer lifts QUIESCED, but today the
    CONN callback calls `hammer2_remote_resume()` on every `PROTO_2`
    CREATE (`hammer2_iocom.c:389-393`), lifting QUIESCED to OPEN
-   (`hammer2_remote.c:226-240`). The old peer can send such a CONN
+   (`hammer2_remote.c:232-246`). The old peer can send such a CONN
    between the quiesce (`hammer2_iocom.c:966`) and the reap, whether or
    not its connection announced `PROTO_2` before, and a SNAPSHOT
    admitted then is served after `:981` and lands in `rm->snaps` after
@@ -2241,7 +2245,7 @@ The rules, audited before any code:
    reader takes `link_spin` and compares inside it. `link_spin` and
    `rm->lock` are never held together: the hook takes `rm->lock` to set
    AWAITING and releases it before it takes `link_spin`, and admission
-   (`hammer2_remote.c:382`) reads no record under `rm->lock`.
+   (`hammer2_remote.c:388`) reads no record under `rm->lock`.
    Nothing clears the record when a link ends, since a peer's close or
    the keepalive's kill runs no hook that could. It names a connection
    that is gone until the next swap replaces it, and no frame can arrive
@@ -2285,7 +2289,7 @@ The rules, audited before any code:
    `hammer2_remote_admitted()`, in `hammer2_remote_pfs()`. An unmounted
    PFS is served only as a snapshot this link took, found in `rm->snaps`
    by the cluster id its entry now records (`spmp->pfs_clid`, written at
-   the entry's insert, `hammer2_remote.c:686`, before the root is fed,
+   the entry's insert, `hammer2_remote.c:699`, before the root is fed,
    and read under `rm->lock`); a snapshot carries a cluster id of its own
    that no row names. The name no longer admits anything to serving.
    Registration also requires the row's `remote_pfs_type` to be MASTER,
@@ -2311,7 +2315,7 @@ The rules, audited before any code:
    `pfs_subtype` is SNAPSHOT (the root's `meta`, copied at
    `hammer2_vfsops.c:462`), as every snapshot this code makes is
    (`hammer2_ioctl.c:1111`). The lines naming what each deleted stay as
-   they are (`hammer2_remote.c:662`, `hammer2_synchro.c:1216`, under
+   they are (`hammer2_remote.c:675`, `hammer2_synchro.c:1216`, under
    `hammer2_debug` `0x8000`), unlimited, since `cluster-wire.sh` counts
    them exactly (`:1028`). A PFS of that name of any other subtype is
    kept, and the SNAPSHOT, or the local pass, is refused with a line
@@ -2322,13 +2326,13 @@ The rules, audited before any code:
    finds its entry by the cluster id the request names and deletes by
    the name the entry records, ignoring the peer's. The client still
    sends its own name, so the request's shape is unchanged; its check of
-   the fed root (`hammer2_remote.c:2348-2355`) compares the root's name
+   the fed root (`hammer2_remote.c:2372-2379`) compares the root's name
    exactly with `<label>.h2sync-peer`, the label being the `peer_label`
    of the master's span, where today it compares the name it sent, and
    its local proxy on the connection device keeps `.h2sync-src`. The
    suffix test splits in two: `.h2sync-src` for the local pass and the
    client's proxy, `.h2sync-peer` for a server's snapshot. The mount
-   gate (`hammer2_remote_is_source()`, `:2746`, called at
+   gate (`hammer2_remote_is_source()`, `:2770`, called at
    `hammer2_vfsops.c:1859`) refuses both, so neither is ever mounted;
    `pfs-create` and the snapshot ioctl (`hammer2_ioctl.c:504`, `:844`)
    refuse a name ending in either (XXX). What remains is a PFS with such
@@ -2496,7 +2500,7 @@ below.
   committed, rule 4 refuses it before SNAPDEL's body runs and the decoy
   is kept. With rule 4's unmounted gate removed, the body finds no entry
   for that cluster id and prints the not-ours line
-  (`hammer2_remote.c:617`), the decoy kept. With SNAPDEL's scope removed
+  (`hammer2_remote.c:630`), the decoy kept. With SNAPDEL's scope removed
   alone (`HAMMER2_NOSNAPSCOPE=1`, now deleting the PFS the request
   resolved, by its own name), rule 4 refuses as committed. With both
   removed, the decoy is deleted. So behind rule 4 the scope check is
@@ -2521,7 +2525,7 @@ to 2069):
 - The klog patterns on `CL.h2sync-src` (`:782` to `:1003`) match the
   client's prints, `syncsnap: snapshot ... error` (`:782`, `:784`;
   `hammer2_synchro.c:1233`) and `syncsnap: remote snapshot ... tid`
-  (`hammer2_remote.c:2388`), which keep the name the client sends, and
+  (`hammer2_remote.c:2412`), which keep the name the client sends, and
   stay.
 - The SNAPDEL decoy (`cluster-wire.sh:147-151`, `:557`, `:1255-1256`,
   `:1442`, `:2061-2071`): the server now ignores the name the relay's

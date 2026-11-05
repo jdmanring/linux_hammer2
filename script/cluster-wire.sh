@@ -23,16 +23,15 @@
 # moves the key of the first data block fed with its data one block up and
 # signs the frame again, so it passes both CRCs and only B's check of what
 # a feed can answer refuses it. That block is the bmap of the 512 KiB
-# file's first block, fiemap being the run's first read of file data, and
-# bmap takes the data arm a read takes. The run must then read one rekey
-# line in the trace and that one bmap feed refused, the FIEMAP call failing
-# so that filefrag falls back to FIBMAP (e2fsprogs misc/filefrag.c, "FIEMAP
-# failed, try FIBMAP instead") and lists no extent and no unknown_loc, and
-# every file's digest still equal to A's, warm and cold, since the knob
-# fires once; a check that refused nothing would list the one unknown_loc
-# extent the plain run reads. The same fallback is why the plain run's
-# fiemap check reads unknown_loc, which only FIEMAP reports, and not
-# filefrag's status alone.
+# file's first block, FIBMAP (filefrag -B) being the run's first read of a
+# data block with its data aboard, and bmap takes the data arm a read
+# takes; FIEMAP and the seek ask NODATA and their feeds carry none. The run
+# must then read one rekey line in the trace and that one bmap feed
+# refused, and every file's digest still equal to A's, warm and cold,
+# since the knob fires once. The plain run's fiemap check reads
+# unknown_loc, which only FIEMAP reports, and not filefrag's status alone,
+# since filefrag falls back to FIBMAP when FIEMAP fails (e2fsprogs
+# misc/filefrag.c).
 #
 # H2_WIRE_DIRENT=1 is the control on what a lookup takes: the relay turns
 # the inode answering the first nresolve, B's stat of small.txt, into a
@@ -761,6 +760,10 @@ mkdir -p $C/dir1
 printf 'the remote element reads this line\n' > $C/small.txt
 head -c 524288 /dev/urandom > $C/big.bin
 head -c 262144 /dev/zero > $C/zeros.bin
+# a sparse file, 1 MiB with data only at 0 and at 512 KiB, which B seeks
+truncate -s 1048576 $C/sparse.bin
+head -c 65536 /dev/urandom | dd of=$C/sparse.bin bs=65536 conv=notrunc 2>/dev/null
+head -c 65536 /dev/urandom | dd of=$C/sparse.bin bs=65536 seek=8 conv=notrunc 2>/dev/null
 head -c 70000 /dev/urandom > $C/dir1/inner.bin
 echo long > "$C/a-name-longer-than-the-sixty-four-bytes-a-blockref-embeds-for-a-dirent.txt"
 # More entries than one readdir XOP takes (HAMMER2_READDIR_NMAX, 255), so
@@ -1143,7 +1146,11 @@ if [ "${1:-0}" != 0 ]; then
 	echo 10000 > $P
 fi
 echo "many $(find $C/many -mindepth 1 2>/dev/null | grep -c .)"
-# fiemap is the bmap XOP over the wire, past the first block
+# FIBMAP is the bmap XOP over the wire, the run's first read of a data
+# block with its data aboard, the one the rekey control moves
+filefrag -B -v $C/big.bin > /tmp/h2wire.fibmap 2>&1; echo "fibmap-rc $?"
+sed 's/^/fibmap /' /tmp/h2wire.fibmap
+# fiemap and the seek are scanalls asking NODATA, served without data
 filefrag -v $C/big.bin > /tmp/h2wire.frag 2>&1; echo "fiemap-rc $?"
 echo "fiemap-extents $(grep -c '^ *[0-9][0-9]*:' /tmp/h2wire.frag)"
 echo "fiemap-unknown $(grep '^ *[0-9][0-9]*:' /tmp/h2wire.frag | grep -c unknown_loc)"
@@ -1153,6 +1160,18 @@ filefrag -v $C/dir1/inner.bin > /tmp/h2wire.frag2 2>&1; echo "fiemap2-rc $?"
 echo "fiemap2-extents $(grep -c '^ *[0-9][0-9]*:' /tmp/h2wire.frag2)"
 echo "fiemap2-unknown $(grep '^ *[0-9][0-9]*:' /tmp/h2wire.frag2 | grep -c unknown_loc)"
 sed 's/^/frag2 /' /tmp/h2wire.frag2
+python3 - $C/sparse.bin <<'PY' 2>&1
+import errno, os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+out = []
+for off, wh in ((0, os.SEEK_HOLE), (65536, os.SEEK_DATA),
+    (524288, os.SEEK_HOLE), (589824, os.SEEK_DATA)):
+    try:
+        out.append(str(os.lseek(fd, off, wh)))
+    except OSError as e:
+        out.append(errno.errorcode.get(e.errno, str(e.errno)))
+print("seek-wire " + " ".join(out))
+PY
 # a soft lockup in the digests is read against cpu0's hardirq and steal
 # ticks and the interrupts behind them, before and after
 irqs() { echo "$1 $(awk '/^cpu0 / { print "irq", $7, "softirq", $8, "steal", $9 }' /proc/stat) $(awk '/ttyS0|^ *(CAL|LOC):/ { printf "%s %s ", $1, $2 }' /proc/interrupts)"; }
@@ -2033,7 +2052,14 @@ if [ "$STALE" = 1 ]; then
 elif [ "$WRITTEN" = 1 ]; then
 	[ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ]; check "pass: fiemap of a 512 KiB file reports the slave's own address once the pass has written it" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
 else
-[ "$REKEY" = 1 ] || [ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs bmap over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
+[ "$LINKLOST" = 1 ] || { [ "$(num "$(val B fiemap-rc)" 1)" = 0 ] && [ "$fx" -ge 1 ] && [ "$(num "$(val B fiemap-unknown)" 0)" = "$fx" ]; check "remote: fiemap of a 512 KiB file runs a scanall over the wire and claims no address" $? "rc $(val B fiemap-rc), $fx extent(s), $(val B fiemap-unknown) unknown_loc"; }
+[ "$LINKLOST" = 1 ] || { [ "$(val B seek-wire)" = "65536 524288 589824 ENXIO" ]; check "remote: SEEK_HOLE and SEEK_DATA on a sparse file over the wire answer its layout" $? "answers $(val B seek-wire), want 65536 524288 589824 ENXIO"; }
+# The seek's and the map's scanalls ask NODATA; A's server says so on each
+# serve, and one that honours it ships no data. An older server, or one
+# that ignores the flag, prints no such serve.
+nd=$(grep 'H2 SERVE scanall' "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null | grep -c ' nodata')
+ndb=$(grep 'H2 SERVE scanall' "$FIXDIR/wire-run-$stamp-a.klog" 2>/dev/null | grep ' nodata' | grep -vc ' bytes=0 ')
+[ "$LINKLOST" = 1 ] || { [ "$(num "$nd" 0)" -ge 2 ] && [ "$(num "$ndb" 1)" = 0 ]; check "remote: A serves the seek's and the map's scanalls without their data" $? "NODATA serves $nd, of which with data $ndb"; }
 fi
 if [ "$RETYPE" = 1 ]; then
 	rt=$(grep -c ' retype ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
@@ -2045,7 +2071,7 @@ if [ "$SNAPROOT" = 1 ]; then
 fi
 if [ "$REKEY" = 1 ]; then
 	rk=$(grep -c ' rekey ' "$FIXDIR/wire-run-$stamp.trace" 2>/dev/null)
-	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ "$(num "$(val B fiemap-extents)" 1)" = 0 ] && [ "$(num "$(val B fiemap-unknown)" 1)" = 0 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-bmap-notconn)" 0)" -ge 1 ]; check "control: a data feed moved off its key passes the CRCs and B refuses it" $? "rekey lines $(num "$rk" 0), bmap ended ENOTCONN $(val B log-bmap-notconn), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), peer-sent $(val B log-peer-sent), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
+	[ "$(num "$rk" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy)" 0)" = 1 ] && [ "$(num "$(val B log-not-proxy-bmap)" 0)" = 1 ] && [ -n "$(sums A sum)" ] && [ "$(sums A sum)" = "$(sums B sum)" ] && [ "$(sums A sum)" = "$(sums B cold)" ] && [ "$(num "$(val B log-peer-sent)" 1)" = 0 ] && [ "$(num "$(val B log-bmap-notconn)" 0)" -ge 1 ]; check "control: a data feed moved off its key passes the CRCs and B refuses it" $? "rekey lines $(num "$rk" 0), bmap ended ENOTCONN $(val B log-bmap-notconn), not-proxy $(val B log-not-proxy) of which bmap $(val B log-not-proxy-bmap), peer-sent $(val B log-peer-sent), fiemap $(val B fiemap-extents) extent(s) $(val B fiemap-unknown) unknown_loc, $(sums B sum | grep -c .) warm and $(sums B cold | grep -c .) cold of $(sums A sum | grep -c .) equal"
 else
 # under STALE A's digest of the rewritten file is the one taken after it
 asums() { if [ "$STALE" = 1 ]; then sums A sum | sed "s|^\./big\.bin .*|$(val A stalesum)|" | sort; else sums A sum; fi; }

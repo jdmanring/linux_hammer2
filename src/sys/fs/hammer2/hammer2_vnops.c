@@ -1550,9 +1550,9 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * position is in the bref, as the carried scans that want positions alone
  * ask with HAMMER2_LOOKUP_NODATA.  A data block's check error therefore no
  * longer reaches the seek as EIO; the read reports it.  A remote element
- * passes only NODIRECT on (HAMMER2_REMOTE_LOOKUPF), and its server scans
- * with LOOKUP_ALWAYS and ships each chain's data in the feed, so there a
- * seek still reads every block it passes.
+ * passes NODATA on (HAMMER2_REMOTE_LOOKUPF), and its server then scans
+ * without LOOKUP_ALWAYS and feeds each data chain with no data; a server
+ * that predates the flag still ships every block the seek passes.
  *
  * One call scans [key_beg, key_end], and hammer2_seek_data_hole() bounds
  * that range to a chunk of key space.  This port runs a XOP's storage

@@ -657,7 +657,7 @@ hold, and the carried round runs otherwise:
   the argument below needs;
 - a remote element is registered on the PFS when the pass starts and
   again when round 2 is chosen, a per-PFS count of slot detaches,
-  raised in `hammer2_remote_detach()` (`hammer2_remote.c:2680`), the
+  raised in `hammer2_remote_detach()` (`hammer2_remote.c:2704`), the
   one function that clears a slot, reads the same at both, and
   `HAMMER2_CTL_NOROGATE` is off.
 
@@ -695,7 +695,7 @@ can write the PFS: a read-write mount and a read-write remount are
 refused (`hammer2_vfsops.c:1844-1850`, `:2770`), the vnode operations
 refuse a write on a read-only PFS (`hammer2_vnops.c:374`, `:500`,
 `:1431`), and the registration itself refuses a PFS mounted read-write
-(`hammer2_remote.c:2619-2623`). A mapping a read-write mount dirtied before a read-only remount leaves no
+(`hammer2_remote.c:2643-2647`). A mapping a read-write mount dirtied before a read-only remount leaves no
 gap: the write fault stamps the inode through `->update_time`, which
 queues it (`hammer2_vnops.c:2918`), so the remount's sync walks it, and
 since 1.0.65 the remount also calls `sync_filesystem()`
@@ -703,14 +703,14 @@ since 1.0.65 the remount also calls `sync_filesystem()`
 candidate is refuted on its path, with its probe kept in
 `script/test-enospc.sh`. A slot can also be detached while the link stays up, when the
 peer's span goes, and the pass's reads of its source snapshot continue
-(`hammer2_remote.c:2851-2860`); the read-write gates open while it is
+(`hammer2_remote.c:2875-2884`); the read-write gates open while it is
 detached and the slot can be registered again later, which is why the
 condition reads the detach count and not two samples of the slot.
 Another element's sync thread reaches only chains of its own element,
 each found by its `clindex` (`hammer2_synchro.c:307`, `:1911`, `:2065`),
 and the pass's own snapshot, other threads' syncs and the remote
-server's snapshot commands (`hammer2_remote.c:106-108`) touch the slave's
-root chain (`:676`, `hammer2_ioctl.c:1024-1029`) and no root key. Under these a key round 1 found equal is still
+server's snapshot commands (`hammer2_remote.c:112-114`) touch the slave's
+root chain (`:689`, `hammer2_ioctl.c:1024-1029`) and no root key. Under these a key round 1 found equal is still
 equal: the source is the snapshot, and the thread's round-1 writes touch
 the keys it acted on and the indirect blocks and root above them, while
 a move of a key between indirect blocks keeps the leaf's bref, its
@@ -743,7 +743,7 @@ snapshot is taken on the peer by the peer's server
 The refusal is built by name rather than by the server's list of the
 snapshots it holds: a PFS whose name carries the pass's suffix,
 `<pfs>.h2sync-src`, is refused any mount (`hammer2_remote_is_source()`,
-`hammer2_remote.c:2746`, tested at `hammer2_vfsops.c:1859` under
+`hammer2_remote.c:2770`, tested at `hammer2_vfsops.c:1859` under
 `hammer2_mntlk`). The name covers the local pass's own source, which 1a's
 resume and 1b's narrowing also take as immutable, and a crash's leftover,
 which the next pass deletes by that name; a list would cover only a
@@ -1007,7 +1007,7 @@ source before it was applied, and no lever-2 code precedes it.
 3. *Which caller captures.* Adds what the 2026-10-30 text left out.
    `hammer2_pfs_snapshot()` has four callers: the user ioctl
    (`hammer2_ioctl.c:861`), the server for a remote slave
-   (`hammer2_remote.c:676`), and the thread's source and target calls
+   (`hammer2_remote.c:689`), and the thread's source and target calls
    (`hammer2_synchro.c:1229, 1264`). It gains an out-parameter beside
    `mtidp` for the candidate and its validity; the ioctl and the target
    call pass NULL and capture nothing, so a target call, which reads
@@ -1022,14 +1022,14 @@ source before it was applied, and no lever-2 code precedes it.
    element changes". A module-wide 64-bit counter is drawn once for
    every element a PFS gains: at the local join
    (`pmp->pfs_hmps[j] = chain->hmp`, `hammer2_vfsops.c:515`) and at a
-   remote registration (`hammer2_remote.c:2650`), into a per-slot field
+   remote registration (`hammer2_remote.c:2674`), into a per-slot field
    beside `pfs_hmps[]`. The candidate records the source slot's and the
    slave slot's values; `last_gen` is used only while both slots still
    carry them, and is zeroed otherwise, as it is at thread start
    (beside `thr->snap_cut = 0`, `hammer2_synchro.c:1561`). A volume
    cannot be replaced under a mounted device, so an older image swapped
    in for either element, flushed past `last_gen` or not, arrives
-   through a detach (`hammer2_vfsops.c:917`, `hammer2_remote.c:2697`)
+   through a detach (`hammer2_vfsops.c:917`, `hammer2_remote.c:2721`)
    and a new join, and a new value. A field every attach initializes
    alike, or the `hmp` pointer, which a later allocation can reuse,
    would match across that detach. The below-`last_gen` test is kept as
@@ -1122,7 +1122,7 @@ source before it was applied, and no lever-2 code precedes it.
 
 6. *The remote veto.* Replaces "travels on the snapshot reply's closing
    frame", which named no field. Over the wire the capture and every
-   leg run in the master's server call (`hammer2_remote.c:676`), on the
+   leg run in the master's server call (`hammer2_remote.c:689`), on the
    master's device. The snapshot reply's closing frame, `dmsg_hm2_feed`
    (`src/sys/sys/dmsg.h:599-610`), whose `tid` already carries the
    snapshot's transaction id (1.0.49), carries the candidate in eight
@@ -1385,8 +1385,8 @@ with pruning on, since no run has produced one.
 refuses today, so the feed type, the client's shape test and the version
 gate move together. The generation does not fit `dmsg_hm2_xop.reserved`
 (`dmsg.h:594`, size pinned at
-`hammer2_remote.c:123-124, 356`, the new-type gate at `:349-353`, PROTO2
-gates at `:284-285, 1497, 2776`, unknown-feed refusal at `:2097-2102`);
+`hammer2_remote.c:129-130, 362`, the new-type gate at `:355-359`, PROTO2
+gates at `:290-291, 1514, 2800`, unknown-feed refusal at `:2121-2126`);
 the request grows behind the version while `dmsg_hm2_feed` has room for
 the record (`dmsg.h:599, 609`). A remote source's generation travels on
 the snapshot reply's closing frame from the master's device, in the

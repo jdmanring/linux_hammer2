@@ -87,19 +87,25 @@ struct hammer2_remote_req {
 	int			window;		/* feeds the peer has allowed so far */
 	int			cancelled;	/* the peer's DELETE arrived */
 	uint32_t		nsent;		/* feeds sent, each frame's seq */
+	uint64_t		nbytes;		/* data sent in those feeds */
 	unsigned long		deadline;	/* the whole request's bound */
 };
 
 /*
- * The lookup flag a scanall request carries: whether a direct-data inode
- * answers as itself.  The slave's pass asks for NODIRECT; without it a
- * direct-data file's scan fed the file's own inode, the pass inserted it
- * beneath itself, and the flush recursed to its limit.  NODATA is not
- * carried: the server's scan runs with LOOKUP_ALWAYS, which resolves data
- * whatever else is asked, and every feed ships its chain's data.  The lock
- * modes stay the server's.
+ * The lookup flags a scanall request carries.  NODIRECT: whether a
+ * direct-data inode answers as itself.  The slave's pass asks for it;
+ * without it a direct-data file's scan fed the file's own inode, the pass
+ * inserted it beneath itself, and the flush recursed to its limit.
+ * NODATA: the seek and the extent map ask for chains' positions alone,
+ * and the server then scans without LOOKUP_ALWAYS and sends each chain
+ * with no data, its bytes 0, which the requester accepts for a data
+ * chain of that request alone (hammer2_remote_proxy()).  Without it the
+ * server resolved and shipped every block a seek passed.  A peer that
+ * predates the flag masks it out, so an older server ships data a newer
+ * requester takes as before, and an older requester never sends it.  The
+ * lock modes stay the server's.
  */
-#define HAMMER2_REMOTE_LOOKUPF	HAMMER2_LOOKUP_NODIRECT
+#define HAMMER2_REMOTE_LOOKUPF	(HAMMER2_LOOKUP_NODIRECT | HAMMER2_LOOKUP_NODATA)
 
 /*
  * The read set of the command table: the descriptor at each index the
@@ -451,8 +457,10 @@ hammer2_remote_handle(hammer2_pfs_t *pmp, hammer2_chain_t *chain, int clindex)
  * One reply frame: the fed chain's blockref, bytes and error, its data as
  * aux.  The chain is held, so its data is resident; it is locked shared
  * for the copy so a writer on this host cannot change the block under it.
- * The first frame of the reply direction carries CREATE, as kern_dmsg's
- * own result does.
+ * A data chain of a scanall that asked NODATA goes with bytes 0 and no
+ * data, unresolved, since the scan did not load it; its blockref carries
+ * the size.  The first frame of the reply direction carries CREATE, as
+ * kern_dmsg's own result does.
  */
 static void
 hammer2_remote_feed(struct hammer2_remote_req *req, hammer2_chain_t *chain,
@@ -461,22 +469,27 @@ hammer2_remote_feed(struct hammer2_remote_req *req, hammer2_chain_t *chain,
 	kdmsg_msg_t *msg;
 	uint32_t cmd = DMSG_HM2_FEED | DMSGF_REPLY;
 	size_t abytes;
+	int nodata = req->idx == 6 &&
+	    (req->req.lookup_flags & HAMMER2_LOOKUP_NODATA) &&
+	    chain->bref.type == HAMMER2_BREF_TYPE_DATA;
 
 	if ((req->state->txcmd & DMSGF_CREATE) == 0)
 		cmd |= DMSGF_CREATE;
 	msg = kdmsg_msg_alloc(req->state, cmd, NULL, NULL);
-	hammer2_chain_lock(chain, HAMMER2_RESOLVE_ALWAYS | HAMMER2_RESOLVE_SHARED);
+	hammer2_chain_lock(chain, (nodata ? HAMMER2_RESOLVE_NEVER :
+	    HAMMER2_RESOLVE_ALWAYS) | HAMMER2_RESOLVE_SHARED);
 	memcpy(msg->any.hm2_feed.bref, &chain->bref, sizeof(chain->bref));
-	msg->any.hm2_feed.bytes = chain->bytes;
+	msg->any.hm2_feed.bytes = nodata ? 0 : chain->bytes;
 	msg->any.hm2_feed.error = error ? error : chain->error;
 	msg->any.hm2_feed.seq = req->nsent++;
 	memcpy(msg->any.hm2_feed.tag, req->req.tag, sizeof(req->req.tag));
-	if (chain->bytes && chain->data && chain->error == 0) {
+	if (!nodata && chain->bytes && chain->data && chain->error == 0) {
 		abytes = DMSG_DOALIGN(chain->bytes);
 		msg->aux_data = hmalloc(abytes, req->hmp->mmsg, M_WAITOK | M_ZERO);
 		memcpy(msg->aux_data, chain->data, chain->bytes);
 		msg->aux_size = chain->bytes;
 		msg->flags |= KDMSG_FLAG_AUXALLOC;
+		req->nbytes += chain->bytes;
 	}
 	hammer2_chain_unlock(chain);
 	kdmsg_msg_write(msg);
@@ -931,9 +944,10 @@ hammer2_remote_serve(struct work_struct *work)
 		xop->xop_scanall.key_end = req->req.key_end;
 		xop->xop_scanall.resolve_flags = HAMMER2_RESOLVE_ALWAYS |
 		    HAMMER2_RESOLVE_SHARED;
-		xop->xop_scanall.lookup_flags = HAMMER2_LOOKUP_ALWAYS |
-		    HAMMER2_LOOKUP_SHARED |
+		xop->xop_scanall.lookup_flags = HAMMER2_LOOKUP_SHARED |
 		    (req->req.lookup_flags & HAMMER2_REMOTE_LOOKUPF);
+		if ((req->req.lookup_flags & HAMMER2_LOOKUP_NODATA) == 0)
+			xop->xop_scanall.lookup_flags |= HAMMER2_LOOKUP_ALWAYS;
 		break;
 	case 7:
 		xop->xop_lookup.lhc = req->req.key_beg;
@@ -999,10 +1013,13 @@ out:
 	if (pmp)
 		hammer2_lk_unlock(&hammer2_mntlk);
 	if (hammer2_debug & 0x0100)
-		kprintf("H2 SERVE %s inum=%016llx fed=%d error=%08x%s%s ms=%u\n",
+		kprintf("H2 SERVE %s inum=%016llx fed=%d bytes=%llu error=%08x%s%s%s ms=%u\n",
 		    hammer2_remote_cmd_name(req->idx),
-		    (unsigned long long)req->req.inum, fed, error,
+		    (unsigned long long)req->req.inum, fed,
+		    (unsigned long long)req->nbytes, error,
 		    eof ? " eof" : "", refused ? " refused" : "",
+		    req->idx == 6 && (req->req.lookup_flags &
+		    HAMMER2_LOOKUP_NODATA) ? " nodata" : "",
 		    jiffies_to_msecs(jiffies - t0));
 
 	/*
@@ -1890,7 +1907,7 @@ hammer2_remote_in_range(int idx, const struct hammer2_rframe *f,
 static hammer2_chain_t *
 hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
     struct hammer2_rframe *f, const struct uuid *clid, uint64_t parent_inum,
-    unsigned int level)
+    unsigned int level, int nodata)
 {
 	hammer2_blockref_t bref = f->bref;
 	hammer2_chain_t *chain;
@@ -1924,6 +1941,12 @@ hammer2_remote_proxy(hammer2_dev_t *cdev, hammer2_pfs_t *pmp,
 		} else {
 			bref.data_off = radix;	/* no block to load */
 		}
+	} else if (nodata && f->error == 0 &&
+	    bref.type == HAMMER2_BREF_TYPE_DATA) {
+		/* a position alone, asked for: its size, no block to load */
+		if (radix < HAMMER2_RADIX_MIN || radix > HAMMER2_PBUFRADIX)
+			return (NULL);
+		bref.data_off = radix;
 	} else {
 		/* only a dirent's name fits in its blockref */
 		if (f->error == 0 && bref.type != HAMMER2_BREF_TYPE_DIRENT)
@@ -2093,7 +2116,8 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		    hammer2_remote_in_range(idx, f, key_beg,
 		    key_end, ip1, lookup_flags))
 			chain = hammer2_remote_proxy(cdev, pmp, f,
-			    &pmp->pfs_clid, ip1->meta.inum, level);
+			    &pmp->pfs_clid, ip1->meta.inum, level,
+			    idx == 6 && (lookup_flags & HAMMER2_LOOKUP_NODATA));
 		if (chain == NULL) {
 			pr_warn_ratelimited("hammer2: HM2 %s feed of type %d not a proxy\n",
 			    xop->desc->id, f->bref.type);
@@ -2330,7 +2354,7 @@ hammer2_remote_snapshot_take(hammer2_pfs_t *pmp, int clindex,
 			memcpy(&clid, &((const hammer2_inode_data_t *)f->data)->
 			    meta.pfs_clid, sizeof(clid));
 			chain = hammer2_remote_proxy(cdev, NULL, f, &clid, 1,
-			    1);	/* a PFS root's level, hammer2_pfsalloc() */
+			    1, 0);	/* a PFS root's level, hammer2_pfsalloc() */
 		}
 		hammer2_rframe_free_on(cdev->rconn, f);
 	}
@@ -2479,7 +2503,7 @@ hammer2_remote_root(hammer2_dev_t *cdev, struct hammer2_rcand *c)
 	while ((error = hammer2_rcall_next(call, deadline, &f)) == 0) {
 		if (chain == NULL && f->bref.type == HAMMER2_BREF_TYPE_INODE)
 			chain = hammer2_remote_proxy(cdev, NULL, f, &c->peer_id,
-			    1, 1);	/* a PFS root's level, hammer2_pfsalloc() */
+			    1, 1, 0);	/* a PFS root's level, hammer2_pfsalloc() */
 		hammer2_rframe_free_on(cdev->rconn, f);
 	}
 	if (error == HAMMER2_ERROR_EOF)
