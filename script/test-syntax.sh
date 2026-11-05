@@ -596,7 +596,15 @@ if command -v sparse >/dev/null 2>&1; then
 	SPFLAGS+=(-O2 -D__CHECKER__ -D__linux__ -Dlinux -D__STDC__ -Dunix -D__unix__
 		-Wbitwise -Wno-return-void -Wno-unknown-attribute
 		--arch=x86 -m64 -D__x86_64__)
-	sp() { sparse "${SPFLAGS[@]}" "$@" 2>&1 | command grep -E 'warning:|error:' || true; }
+	# sparse exits 0 on the diagnostics it prints and 1 when it cannot read
+	# its input or a flag, and that failure may print no "error:" line, so
+	# a file sparse never read would read clean. Its status is kept and a
+	# nonzero one reported as an error.
+	sp() {
+		spo=$(sparse "${SPFLAGS[@]}" "$@" 2>&1); sps=$?
+		printf '%s\n' "$spo" | command grep -E 'warning:|error:' || true
+		[ "$sps" = 0 ] || echo "$*: error: sparse exited $sps"
+	}
 	# What a file's sparse pass fails on, defined once for the files and
 	# the control below.
 	spkeep() { command grep -E ' error:|^src/.* warning:' || true; }
@@ -612,6 +620,14 @@ if command -v sparse >/dev/null 2>&1; then
 		echo "  ok    negative control: an error outside src/ is kept (fail)"
 	else
 		echo "  FAIL  negative control: an error outside src/ was not kept, so a header's would pass"
+		fail=$((fail + 1))
+	fi
+	ran=$((ran + 1))
+	# ctl-sparse-absent.c does not exist, and that is the control.
+	if sp test/contract/ctl-sparse-absent.c | spkeep | command grep -q 'error: sparse exited [1-9]'; then
+		echo "  ok    negative control: a file sparse cannot read fails on its status (fail)"
+	else
+		echo "  FAIL  negative control: sparse's status on an unread file was not kept, so it would pass"
 		fail=$((fail + 1))
 	fi
 	# The files are the module's, read from hammer2-y: a list written
@@ -639,6 +655,20 @@ if command -v sparse >/dev/null 2>&1; then
 			echo "  ok    sparse: $(basename "$f") (pass)"
 		else
 			echo "  FAIL  sparse: $(basename "$f")"
+			printf '%s\n' "$out" | sed 's/^/        /' | head -6
+			fail=$((fail + 1))
+		fi
+	done
+	# The debug build's code, read again with HAMMER2_LOCKDEBUG as the
+	# second compiler reads it, since the parameters and holds under it
+	# are compiled out of the pass above.
+	for f in $(command grep -l 'HAMMER2_LOCKDEBUG' $spfiles); do
+		ran=$((ran + 1))
+		out=$(sp -DHAMMER2_LOCKDEBUG "$f" | spkeep)
+		if [ -z "$out" ]; then
+			echo "  ok    sparse: $(basename "$f") lockdebug (pass)"
+		else
+			echo "  FAIL  sparse: $(basename "$f") lockdebug"
 			printf '%s\n' "$out" | sed 's/^/        /' | head -6
 			fail=$((fail + 1))
 		fi

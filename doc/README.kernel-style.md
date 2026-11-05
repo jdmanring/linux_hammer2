@@ -954,7 +954,10 @@ syntax gate runs that pass when sparse is present, over the files
 `hammer2-y` builds, with kbuild's flags including `-O2`; until N10.6 it
 named 19 of the 22 and kept only lines on a `src/` path, so neither the
 cluster transport's three files nor an error raised inside a kernel
-header could fail it. Without `-O2` the kernel's `string.h`
+header could fail it. It also fails on a nonzero exit from sparse, which
+is how sparse reports a file it could not read, often with no `error:`
+line, and reads the files carrying `HAMMER2_LOCKDEBUG` again with it
+defined. Without `-O2` the kernel's `string.h`
 takes the out-of-line `memset()` and sparse sizes the bulkfree scan's
 6 MiB heap bitmap clear against its stack heuristic, a finding the
 kbuild pass never shows.
