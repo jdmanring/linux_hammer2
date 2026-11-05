@@ -1773,7 +1773,7 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 		r.key_beg = (hammer2_key_t)cur;
 		error = hammer2_seek_tree(inode, &r);
 		if (error != 0)
-			return (-error);
+			return (hammer2_vfs_errno(error));
 		if (r.found)
 			return (max_t(loff_t, (loff_t)r.key, offset));
 		return (pos >= 0 ? pos : -ENXIO);
@@ -1784,7 +1784,7 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 		r.key_beg = (hammer2_key_t)cur;
 		error = hammer2_seek_tree(inode, &r);
 		if (error != 0)
-			return (-error);
+			return (hammer2_vfs_errno(error));
 		if (r.key >= (hammer2_key_t)isize)
 			return (isize);
 		pos = (loff_t)r.key;
@@ -2648,7 +2648,7 @@ out:
 	kvfree(t);
 	kvfree(v);
 	if (error != 0)
-		return (-error);
+		return (hammer2_vfs_errno(error));
 	return (ret < 0 ? ret : 0);
 }
 
