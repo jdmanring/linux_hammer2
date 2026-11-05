@@ -1619,11 +1619,14 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
  * under cluster_spin, which the inode lock does not exclude.  The debug
  * build's seek_scanall parameter sends every seek and map to
  * hammer2_seek_scanall(), so a test can compare the two readers on one
- * file.
+ * file, and its seek_walked counts the tree reads the walk answered, so
+ * the test knows which reader each answer came from.
  */
 #if defined(HAMMER2_LOCKDEBUG)
 static unsigned int hammer2_seek_force_scanall;
 module_param_named(seek_scanall, hammer2_seek_force_scanall, uint, 0644);
+static unsigned int hammer2_seek_walked;
+module_param_named(seek_walked, hammer2_seek_walked, uint, 0444);
 #endif
 
 static bool
@@ -1634,9 +1637,16 @@ hammer2_seek_walks(hammer2_xop_seek_t *xop)
 		pr_info_once("hammer2: seek scanall forced\n");
 		return (false);
 	}
-#endif
+	if (xop->head.cluster.nchains == 1 &&
+	    !hammer2_remote_has_slot(xop->head.ip1->pmp)) {
+		WRITE_ONCE(hammer2_seek_walked, hammer2_seek_walked + 1);
+		return (true);
+	}
+	return (false);
+#else
 	return (xop->head.cluster.nchains == 1 &&
 	    !hammer2_remote_has_slot(xop->head.ip1->pmp));
+#endif
 }
 
 /*
