@@ -1678,6 +1678,11 @@ hammer2_seek_tag_hold(void)
  * HAMMER2_SEEK_HOLE_MAX, since an empty range costs one lookup however
  * large; one that held a chain doubles only to HAMMER2_SEEK_DATA_MAX,
  * since every chain in a chunk is fed before the first is collected.
+ * Across a very large hole that is an XOP per GiB, about 131072 across
+ * generic/490's 128 TiB.
+ * DEFER(a SEEK_DATA across a hole read above 100 ms on h2release-7.3tls):
+ * a scan the XOP layer can stop at its first chain and resume would need
+ * no key-space cap.
  */
 static loff_t
 hammer2_seek_next_chunk(loff_t chunk, bool empty)
@@ -1948,12 +1953,14 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
  *
  * The lock is held for the whole seek unless a writer waits for it.  A
  * file has a chain per block and no extents, so SEEK_HOLE through dense
- * data costs a chain per block: 367 ms through half of a 16 GiB file on
- * h2release-7.3tls, and with the lock held across all of it a write
- * beside a SEEK_HOLE loop waited 494 ms, where ext4 answers from one
- * extent.  Letting a waiting writer in took that to 6 ms, the rwsem's
- * 4 ms handoff and a chunk, whatever the size.  So between two chunks of
- * the scan
+ * data costs a chain per block: about 240 ms through nearly all of a
+ * 16 GiB file on h2release-7.3tls, and with the lock held across all of
+ * it a write beside a SEEK_HOLE loop waited 494 ms, where ext4 answers from
+ * one extent.  Letting a waiting writer in took that to 6 ms at 16 GiB,
+ * the rwsem's 4 ms handoff and a chunk.
+ * DEFER(a dense SEEK_HOLE read above 500 ms on h2release-7.3tls):
+ * walking the indirect blocks' blockref arrays would skip instantiating
+ * a chain per block.  So between two chunks of the scan
  * the seek lets a waiting writer have the lock, then reads i_size again;
  * an offset the file no longer reaches answers ENXIO, or i_size for
  * SEEK_HOLE past the offset.  Each chunk is classified under one hold,
