@@ -211,6 +211,11 @@
 # the link. The plain run reads "connection ended" and no other path
 # prints "unmount".
 #
+# H2_WIRE_SEEKTIME=1 times the seek a remote element serves: A writes a
+# 1 GiB file with every block written, seekdense.bin, and B asks SEEK_HOLE
+# at 0 on it three times, each through hammer2_seek_scanall(), whose DEFER
+# trigger names this reading. The digests read the file too, warm and
+# cold, so each guest phase is given 900 s.
 # H2_WIRE_STALE=1 reads bmap's answer with a local element behind the focus.
 # It runs the pass, then B's device is opened again read-only and both sides
 # dial again, so B's pass refuses and the slave keeps what it copied; A then
@@ -294,6 +299,7 @@ SRCGATE=${H2_WIRE_SRCGATE:-0}
 SNAPDEL=${H2_WIRE_SNAPDEL:-0}; ADMIT=${H2_WIRE_ADMIT:-0}; CONNWAIT=${H2_WIRE_CONNWAIT:-0}
 LINKDEV=${H2_WIRE_LINKDEV:-0}
 STALE=${H2_WIRE_STALE:-0}
+SEEKTIME=${H2_WIRE_SEEKTIME:-0}
 RETYPE=${H2_WIRE_RETYPE:-0}
 SNAPROOT=${H2_WIRE_SNAPROOT:-0}
 TLS=${H2_WIRE_TLS:-0}; RAW=${H2_WIRE_RAW:-0}; TLSWRONG=${H2_WIRE_TLS_WRONG:-0}
@@ -372,6 +378,7 @@ done
 [ "$TLSWRONG" = 0 ] || [ "$TLS" = 1 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_TLS_WRONG rides H2_WIRE_TLS=1" >&2; exit 2; }
 [ "$TLS" = 0 ] || RAW=1
 case $STALE in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_STALE is 1" >&2; exit 2;; esac
+case $SEEKTIME in 0|1) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SEEKTIME is 1" >&2; exit 2;; esac
 case $SILENCE in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_SILENCE is 1 or control" >&2; exit 2;; esac
 case $DETACHWRITE in 0) ;; 1) [ "$SILENCE" = 1 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_DETACHWRITE rides H2_WIRE_SILENCE=1" >&2; exit 2; };; *) echo "wire: COULD-NOT-RUN: H2_WIRE_DETACHWRITE is 1" >&2; exit 2;; esac
 case $WINDOW in 0|1|control) ;; *) echo "wire: COULD-NOT-RUN: H2_WIRE_WINDOW is 1 or control" >&2; exit 2;; esac
@@ -451,7 +458,7 @@ FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/ha
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 # a power cut's reads cross 5310 files over the wire, warm and cold; the
 # bound scales on a KASAN tree, as cluster-sync.sh's does
-RUNSECS=300; [ "$POWER" = 1 ] && RUNSECS=900
+RUNSECS=300; [ "$POWER" = 1 ] || [ "$SEEKTIME" = 1 ] && RUNSECS=900
 grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
 RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} $SSH"
 W=$(mktemp -d) || exit 2
@@ -786,6 +793,11 @@ if [ "${1:-}" = bulk ]; then
 	head -c 5120000 /dev/urandom | (cd $C/bulk && split -b 1024 -a 4 -d - b)
 	echo "bulk $(find $C/bulk -type f | grep -c .)"
 fi
+# with "seektime", 1 GiB with every block written, which B seeks across
+case " $* " in *" seektime "*)
+	head -c 1073741824 /dev/urandom > $C/seekdense.bin
+	echo "seekdense-size $(stat -c %s $C/seekdense.bin)";;
+esac
 sync
 echo "many $(find $C/many -mindepth 1 | grep -c .)"
 # the pattern B's empty slave is read with, matched on the master's media
@@ -1181,6 +1193,20 @@ for off, wh in ((0, os.SEEK_HOLE), (65536, os.SEEK_DATA),
     except OSError as e:
         out.append(errno.errorcode.get(e.errno, str(e.errno)))
 print("seek-wire " + " ".join(out))
+PY
+# under H2_WIRE_SEEKTIME, SEEK_HOLE at 0 across 1 GiB of data, each
+# through the remote element's scanall
+[ -f $C/seekdense.bin ] && python3 - $C/seekdense.bin <<'PY' 2>&1
+import os, sys, time
+fd = os.open(sys.argv[1], os.O_RDONLY)
+size = os.fstat(fd).st_size
+ns, right = [], 0
+for i in range(3):
+    t = time.monotonic_ns()
+    right += os.lseek(fd, 0, os.SEEK_HOLE) == size
+    ns.append(time.monotonic_ns() - t)
+ns.sort()
+print("seekdense-hole median-ns %d max-ns %d n 3 right %d size %d" % (ns[1], ns[2], right, size))
 PY
 # a soft lockup in the digests is read against cpu0's hardirq and steal
 # ticks and the interrupts behind them, before and after
@@ -1581,7 +1607,7 @@ clid=$(val A clid)
 [ -n "$clid" ] || { echo "wire: COULD-NOT-RUN: A's CL has no cluster id" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 phase B setup.sh slave "$clid" $([ "$PASSREFUSE" = control ] && echo 0 || echo 1) || { guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 [ -z "$WALKS" ] || phase B walks.sh "$WALKS"
-phase A fill.sh $([ "$POWER" = 1 ] && echo bulk)
+phase A fill.sh $([ "$POWER" = 1 ] && echo bulk) $([ "$SEEKTIME" = 1 ] && echo seektime)
 phase B lone.sh
 if [ "$TLS" = 1 ]; then
 	# the payload lives in these variables and the ssh pipes alone
@@ -2099,6 +2125,7 @@ if [ "$REKEY" = 1 ] || [ "$STRIP" = 1 ]; then
 else
 # under STALE A's digest of the rewritten file is the one taken after it
 asums() { if [ "$STALE" = 1 ]; then sums A sum | sed "s|^\./big\.bin .*|$(val A stalesum)|" | sort; else sums A sum; fi; }
+[ "$SEEKTIME" = 0 ] || [ "$LINKLOST" = 1 ] || { sd=$(val B seekdense-hole); [ "$(val A seekdense-size)" = 1073741824 ] && [ "$(printf '%s\n' "$sd" | sed -n 's/.* right \([0-9]*\) size 1073741824$/\1/p')" = 3 ]; check "seektime: SEEK_HOLE at 0 on a 1 GiB file over the wire answers its size" $? "A wrote $(val A seekdense-size), B: $sd"; }
 [ "$STALE" = 0 ] || { [ "$(num "$(val A stale-write-rc)" 1)" = 0 ] && [ -n "$(val A stalesum)" ] && [ "$(val A stalesum)" != "$(sums A sum | grep '^\./big\.bin ')" ]; check "stale: A's rewrite of the file's first block changed its digest" $? "dd rc $(val A stale-write-rc), $(sums A sum | grep '^\./big\.bin ' | cut -c1-28) then $(val A stalesum | cut -c1-28)"; }
 [ "$LINKLOST" = 1 ] || { [ -n "$(asums)" ] && [ "$(asums)" = "$(sums B sum)" ]; check "remote: every file's digest on B equals A's" $? "$(sums B sum | grep -c .) of $(asums | grep -c .) equal by sha256, blocks read in folios larger than the block A $(val A io-large-folios) B $(val B io-large-folios)"; }
 [ "$LINKLOST" = 1 ] || { [ -n "$(asums)" ] && [ "$(asums)" = "$(sums B cold)" ]; check "remote: the same digests after B drops its caches" $? "$(sums B cold | grep -c .) read cold, cpu0 $(val B digest-irqs-before) then $(val B digest-irqs-after)"; }
