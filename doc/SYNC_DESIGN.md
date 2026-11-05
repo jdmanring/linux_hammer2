@@ -697,7 +697,7 @@ refuse a write on a read-only PFS (`hammer2_vnops.c:374`, `:500`,
 `:1431`), and the registration itself refuses a PFS mounted read-write
 (`hammer2_remote.c:2619-2623`). A mapping a read-write mount dirtied before a read-only remount leaves no
 gap: the write fault stamps the inode through `->update_time`, which
-queues it (`hammer2_vnops.c:2638`), so the remount's sync walks it, and
+queues it (`hammer2_vnops.c:2707`), so the remount's sync walks it, and
 since 1.0.65 the remount also calls `sync_filesystem()`
 (`hammer2_vfsops.c:2749`), as ext4 does on that transition. The fifth
 candidate is refuted on its path, with its probe kept in
@@ -1100,7 +1100,7 @@ source before it was applied, and no lever-2 code precedes it.
    skip by its tid. Under the knob they skip the slave whoever starts
    them, and the pass copies the change, data included. Twenty-one
    allocation sites carry the flag, the strategy write
-   (`hammer2_vnops.c:2376`) among them; the reads, lookups and readdirs
+   (`hammer2_vnops.c:2445`) among them; the reads, lookups and readdirs
    still run on every element. The shape also reads both queues empty
    at every sync the thread starts while the knob is armed, so a stage
    1 that found work there is a reading, not an assumption. The shape has one slave; with two, the thread's

@@ -39,9 +39,17 @@
 #                   the reading. H2_SEEK_RACE_WANT=inside|after makes
 #                   the ordering a check. A truncate that began after
 #                   the seek returned reads "late" and fails. The hold
-#                   sits after the i_size read and before the writeback
+#                   sits after the i_size read and before the tag read
 #                   and the scan, so "after" shows the lock spans the
 #                   hold; that it spans the scan too is the code's scope.
+#                   Then a writeback aimed inside a held seek (seekprobe
+#                   wbrace, hole and data, H2_REPEAT times each):
+#                   seek_tag_hold_ms=300 holds the seek between its page
+#                   cache tag read and its tree read, a block moves from
+#                   a dirty folio into the tree inside the hold, and the
+#                   answer must still call it data. The hold's klog line
+#                   must print, and a writeback returning after the seek
+#                   fails, since it tested nothing.
 #   H2_SEEK_TIME=1  the cost of a seek (seekprobe time), sparse, dense,
 #                   dirty and hole, each H2_REPEAT times (5 by default) on a
 #                   file made once per repeat, H2_SEEK_TIME_N seeks each
@@ -167,6 +175,12 @@ echo 300 > $K
 i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe race /mnt/sm/race; rm -f /mnt/sm/race; i=$((i + 1)); done
 echo 0 > $K
 echo "held $(dmesg | grep -c "hammer2: seek held")"
+T=/sys/module/hammer2/parameters/seek_tag_hold_ms
+[ -e $T ] || { echo "SETUP knob failed: no seek_tag_hold_ms"; umount /mnt/sm; rmmod hammer2; exit 0; }
+echo 300 > $T
+i=0; while [ $i -lt $REPEAT ]; do for w in hole data; do /tmp/h2seekprobe wbrace /mnt/sm/wb $w; rm -f /mnt/sm/wb; done; i=$((i + 1)); done
+echo 0 > $T
+echo "tag-held $(dmesg | grep -c "hammer2: seek tag held")"
 '
 time_body='
 for k in sparse dense dirty hole; do
@@ -206,6 +220,14 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 			off=$(printf '%s\n' "$lines" | awk -v w="$WANT" '$9 != w' | wc -l)
 			[ "$off" -eq 0 ] || { echo "  FAIL  $off of $n truncate(s) not $WANT the seek"; fail=$((fail + 1)); }
 		fi
+		wb=$(printf '%s\n' "$out" | command grep '^seekm-wbrace ')
+		n=$(printf '%s\n' "$wb" | command grep -c '^seekm-wbrace ')
+		[ "$n" -eq $((REPEAT * 2)) ] || { echo "  FAIL  $n writeback race line(s) for $REPEAT run(s) of two"; fail=$((fail + 1)); }
+		printf '%s\n' "$out" | command grep -q '^tag-held 1$' || {
+			echo "  FAIL  the tag hold did not print once, so nothing held"; fail=$((fail + 1)); }
+		out_wb=$(printf '%s\n' "$wb" | awk '$12 != "inside"' | wc -l)
+		[ "$out_wb" -eq 0 ] || { echo "  FAIL  $out_wb writeback(s) returned after the seek, so they tested nothing"; fail=$((fail + 1)); }
+		echo "  wbrace: $(printf '%s\n' "$wb" | awk '{print $2"="$4}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 	elif [ "$CONTEND" = 1 ]; then
 		for ph in alone seeking; do

@@ -331,6 +331,74 @@ race(const char *path)
 	return (0);
 }
 
+/*
+ * A writeback against a held seek.  Four blocks; for "hole" block 0 is
+ * synced data and block 1 written and not synced, for "data" block 2 is
+ * synced and block 1 written and not synced, the rest holes.  The module's
+ * seek_tag_hold_ms (a HAMMER2_LOCKDEBUG build) holds the seek between its
+ * page cache tag read and its tree read; a child writes the file back with
+ * sync_file_range() 50 ms in, so block 1 moves from a tagged folio into
+ * the tree inside the hold.  SEEK_HOLE at 0 must answer block 2 and
+ * SEEK_DATA at 0 block 1, either way: a seek that read the tree first, or
+ * accepted a hole the tags cleared without reading the tree again, calls
+ * block 1 a hole.  The line says whether the writeback returned inside the
+ * seek, which is the only case that tests anything.
+ */
+static int
+wbrace(const char *path, const char *kind)
+{
+	volatile long *tt;
+	char *buf = malloc(BSIZE);
+	int hole = strcmp(kind, "hole") == 0, fd, st;
+	long t0, t1, want = hole ? 2 * BSIZE : BSIZE;
+	off_t got;
+	pid_t pid;
+
+	if (!hole && strcmp(kind, "data") != 0)
+		return (2);
+	tt = mmap(NULL, sizeof(*tt), PROT_READ | PROT_WRITE,
+	    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	if (buf == NULL || tt == MAP_FAILED ||
+	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
+		goto fail;
+	fill(buf, 0);
+	if (ftruncate(fd, 4 * BSIZE) != 0 ||
+	    pwrite(fd, buf, BSIZE, hole ? 0 : 2 * BSIZE) != BSIZE ||
+	    fsync(fd) != 0 || pwrite(fd, buf, BSIZE, BSIZE) != BSIZE)
+		goto fail;
+	*tt = 0;
+	t0 = now_ns();
+	if ((pid = fork()) == 0) {
+		usleep(50000);
+		if (sync_file_range(fd, 0, 0, SYNC_FILE_RANGE_WAIT_BEFORE |
+		    SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER) != 0)
+			_exit(1);
+		*tt = now_ns();
+		_exit(0);
+	}
+	got = lseek(fd, 0, hole ? SEEK_HOLE : SEEK_DATA);
+	t1 = now_ns();
+	waitpid(pid, &st, 0);
+	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0 || *tt == 0) {
+		printf("seekm-fail wbrace %s: the writeback failed\n", kind);
+		return (1);
+	}
+	printf("seekm-wbrace %s answer %ld want %ld seek-ms %ld sync-ms %ld "
+	    "sync %s\n", kind, (long)got, want, (t1 - t0) / 1000000,
+	    (*tt - t0) / 1000000, *tt < t1 ? "inside" : "after");
+	if (got != (off_t)want) {
+		printf("seekm-fail wbrace %s: answered %ld, want %ld\n", kind,
+		    (long)got, want);
+		fails++;
+	}
+	close(fd);
+	free(buf);
+	return (fails ? 1 : 0);
+fail:
+	printf("seekm-fail wbrace %s: the file could not be built\n", kind);
+	return (1);
+}
+
 static int
 cmp_long(const void *a, const void *b)
 {
@@ -540,6 +608,8 @@ main(int argc, char **argv)
 		return (agree(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
+	if (argc == 4 && strcmp(argv[1], "wbrace") == 0)
+		return (wbrace(argv[2], argv[3]));
 	/* A trailing count of MiB sizes the dense file, a block multiple. */
 	if ((argc == 5 && strcmp(argv[1], "contend") == 0) ||
 	    (argc == 6 && strcmp(argv[1], "time") == 0)) {
@@ -553,7 +623,7 @@ main(int argc, char **argv)
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what> | race <path> | "
+	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole | "
 	    "time <path> sparse|dense|dirty|hole <n> [MiB] | contend <path> <n> [MiB]\n",
 	    argv[0]);
 	return (2);

@@ -1632,6 +1632,59 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
 }
 
 /*
+ * Linux: the first byte from from to to, inclusive, held by a folio tagged
+ * dirty or under writeback, or -1.  Such a folio holds data the blockref
+ * tree does not have yet; hammer2_seek_data_hole() says why that order of
+ * reading is safe.
+ */
+static loff_t
+hammer2_seek_tagged(struct address_space *mapping, loff_t from, loff_t to)
+{
+	static const xa_mark_t tags[] = {
+	    PAGECACHE_TAG_DIRTY, PAGECACHE_TAG_WRITEBACK
+	};
+	struct folio_batch fbatch;
+	loff_t first = -1, pos;
+	pgoff_t index;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(tags); ++i) {
+		index = from >> PAGE_SHIFT;
+		folio_batch_init(&fbatch);
+		if (filemap_get_folios_tag(mapping, &index, to >> PAGE_SHIFT,
+		    tags[i], &fbatch)) {
+			pos = max(folio_pos(fbatch.folios[0]), from);
+			if (first < 0 || pos < first)
+				first = pos;
+		}
+		folio_batch_release(&fbatch);
+	}
+	return (first);
+}
+
+/*
+ * Linux: the order control's hold, between a seek's page cache tag read and
+ * its tree read in whichever order its whence makes them, so a writeback
+ * can be completed between the two.  Debug build only.
+ */
+#if defined(HAMMER2_LOCKDEBUG)
+static unsigned int hammer2_seek_tag_hold_ms;
+module_param_named(seek_tag_hold_ms, hammer2_seek_tag_hold_ms, uint, 0644);
+#endif
+
+static void
+hammer2_seek_tag_hold(void)
+{
+#if defined(HAMMER2_LOCKDEBUG)
+	if (READ_ONCE(hammer2_seek_tag_hold_ms)) {
+		pr_info_once("hammer2: seek tag held\n");
+		schedule_timeout_uninterruptible(
+		    msecs_to_jiffies(READ_ONCE(hammer2_seek_tag_hold_ms)));
+	}
+#endif
+}
+
+/*
  * Linux: SEEK_DATA and SEEK_HOLE, which FreeBSD's port answers through
  * FIOSEEKDATA and FIOSEEKHOLE on the kernel's vn_bmap_seekhole(), and
  * DragonFly's, NetBSD's and OpenBSD's refuse.  Linux has no such ioctl: they
@@ -1645,8 +1698,9 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
  * what hammer2_xop_bmap() answers with ENOENT.  FreeBSD's port asks it one
  * block at a time through vn_bmap_seekhole(); here one forward scan of the
  * blockref tree answers it, hammer2_bmap_next_key().  There is no freelist
- * or extent map to consult instead, and the blockref tree is the only
- * record of what is allocated.
+ * or extent map to consult instead: the blockref tree is the only record
+ * of what is allocated on the media, and the page cache holds what is
+ * written and not yet in it.
  *
  * A file's last block may be allocated and hold data only to i_size.
  * The bytes past i_size are a hole by definition, so the scan stops
@@ -1661,8 +1715,12 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 	struct inode *inode = file->f_mapping->host;
 	loff_t isize = i_size_read(inode);
 	unsigned int bsize = i_blocksize(inode);
-	bool seek_data = (whence == SEEK_DATA);
+	bool seek_data = (whence == SEEK_DATA), tagged;
+	struct address_space *mapping = file->f_mapping;
+	loff_t base = offset & ~((loff_t)bsize - 1), cur = base, clean = -1;
+	hammer2_key_t got = 0;
 	loff_t pos;
+	int error;
 
 	/*
 	 * Before the start or at or past the end of the file both whences
@@ -1689,42 +1747,6 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 #endif
 
 	/*
-	 * The blockref tree is the only record the scan below reads, and a
-	 * written block enters it at writeback, in hammer2_xop_strategy_write(),
-	 * not at write(2).  Until then a dirty folio holds data the tree calls
-	 * a hole: measured on the guest, SEEK_DATA at 0 on a file written and
-	 * not yet synced answered ENXIO, and a copy that trusts that writes
-	 * zeroes where the data was.  It is the defect upstream disabled
-	 * FIOSEEKHOLE for in 0d0182bdb4.
-	 *
-	 * So a mapping with any folio dirty or under writeback is written back
-	 * from the offset's block first.  That is enough: a folio's writeback
-	 * ends only after its chain is assigned, inside the same XOP.  NFS 4.2
-	 * does the same in _nfs42_proc_llseek().  The page cache answer iomap
-	 * uses, mapping_seek_hole_data(), is not exported to modules; a
-	 * DEFER in doc/README.roadmap.md names building in tree as when that
-	 * changes.  The wait
-	 * keeps the error for fsync to report, and a failed writeback answers
-	 * the whole file as data, which lseek(2) permits and which can never
-	 * call data a hole.
-	 */
-	{
-		struct address_space *mapping = file->f_mapping;
-		loff_t from = offset & ~((loff_t)bsize - 1);
-		int error = 0;
-
-		if (mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
-		    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK)) {
-			error = filemap_fdatawrite_range(mapping, from, LLONG_MAX);
-			if (error == 0)
-				error = filemap_fdatawait_range_keep_errors(mapping,
-				    from, LLONG_MAX);
-		}
-		if (error != 0)
-			return (seek_data ? offset : isize);
-	}
-
-	/*
 	 * A file whose data lives in the inode has no blockref tree to scan.
 	 * HAMMER2 stores up to HAMMER2_EMBEDDED_BYTES of a file in the
 	 * inode's own metadata and sets HAMMER2_OPFLAG_DIRECTDATA, and
@@ -1746,45 +1768,96 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 		return (seek_data ? offset : isize);
 
 	/*
-	 * One forward scan from the offset's block.  A key present is an
-	 * allocated block and a key absent is a hole.  SEEK_DATA asks for the
-	 * first key at or after the offset's block; SEEK_HOLE passes the block
-	 * size as the step and gets the first boundary at or after that block
-	 * at which no chain begins, or the boundary after the last block.
+	 * The blockref tree records a written block from its writeback, in
+	 * hammer2_xop_strategy_write(), not from write(2).  Until then the
+	 * data is in a folio tagged dirty or under writeback and the tree
+	 * calls the block a hole: measured on the guest, SEEK_DATA at 0 on a
+	 * file written and not yet synced answered ENXIO, and a copy that
+	 * trusts that writes zeroes where the data was.  It is the defect
+	 * upstream disabled FIOSEEKHOLE for in 0d0182bdb4.  So a block
+	 * holding such a folio is data, at block granularity, since its
+	 * writeback writes the whole block.  This is the page cache answer
+	 * iomap gives through mapping_seek_hole_data(), which is not
+	 * exported to modules, read here with filemap_get_folios_tag().  It
+	 * replaced writing the file back from the offset, which made
+	 * lseek(2) start and wait for I/O under i_rwsem.
+	 *
+	 * The tags may make a block data and never a hole, and the order of
+	 * the two reads keeps that true while writeback runs.  A folio
+	 * leaves its tags only after its chain is in the tree, since its
+	 * writeback ends after the assignment in the same XOP, and i_rwsem
+	 * keeps write(2) from tagging another; so a tag read made before a
+	 * tree read sees every block of data the tree read misses.  SEEK_DATA
+	 * reads the tags first and scans the tree up to the first tagged
+	 * block.  SEEK_HOLE takes a hole from the tree, reads the tags over
+	 * it, and accepts it only from a tree read made after the tags said
+	 * it was clean, because a writeback that completed between the two
+	 * put a chain where the first read found none.  A mapping tagged
+	 * nowhere at entry stays so under i_rwsem, and its tags are not read.
 	 */
-	{
-		loff_t base = offset & ~((loff_t)bsize - 1);
-		hammer2_key_t got = 0;
-		int error;
+	tagged = mapping_tagged(mapping, PAGECACHE_TAG_DIRTY) ||
+	    mapping_tagged(mapping, PAGECACHE_TAG_WRITEBACK);
 
+	/*
+	 * A key present in the tree is an allocated block and a key absent
+	 * is a hole.  SEEK_DATA asks for the first key at or after the
+	 * offset's block; a key exactly at the block boundary means that
+	 * block holds data and the answer is the offset asked, which may be
+	 * partway into it.  No key and no tagged block from the offset:
+	 * nothing further is data.
+	 */
+	if (seek_data) {
+		loff_t limit = isize - 1;
+
+		pos = -1;
+		if (tagged) {
+			pos = hammer2_seek_tagged(mapping, base, isize - 1);
+			if (pos >= 0) {
+				pos &= ~((loff_t)bsize - 1);
+				if (pos <= base)
+					return (offset);
+				limit = pos - 1;
+			}
+			hammer2_seek_tag_hold();
+		}
 		error = hammer2_bmap_next_key(inode, (hammer2_key_t)base,
-		    (hammer2_key_t)isize - 1, seek_data ? 0 : bsize, &got);
-		if (error != 0 && error != ENOENT)
-			return (-error);
-
-		if (seek_data) {
-			/*
-			 * No key at or after the offset: nothing further is
-			 * allocated.  A key exactly at the block boundary
-			 * means that block holds data and the answer is the
-			 * offset asked, which may be partway into it.
-			 */
-			if (error == ENOENT)
-				return (-ENXIO);
+		    (hammer2_key_t)limit, 0, &got);
+		if (error == 0)
 			return (got <= (hammer2_key_t)base ? offset :
 			    (loff_t)got);
-		}
-		/*
-		 * SEEK_HOLE.  The first boundary from the offset's block at
-		 * which no chain begins; at the offset's own block that is
-		 * the offset, which stands in the hole, and from the end of
-		 * the last block on it is i_size.
-		 */
-		pos = (loff_t)got;
-		if (pos >= isize)
-			return (isize);
-		return (max(pos, offset));
+		if (error != ENOENT)
+			return (-error);
+		return (pos >= 0 ? pos : -ENXIO);
 	}
+
+	/*
+	 * SEEK_HOLE.  The tree's answer, with the block size as the step, is
+	 * the first boundary from cur at which no chain begins, or the
+	 * boundary after the last block.  A tagged run from there is data;
+	 * the first clean block after it is the next candidate, and clean
+	 * names one the tags cleared before the tree read that follows.  At
+	 * the offset's own block the answer is the offset, which stands in
+	 * the hole, and from the end of the last block it is i_size.
+	 */
+	for (;;) {
+		error = hammer2_bmap_next_key(inode, (hammer2_key_t)cur,
+		    (hammer2_key_t)isize - 1, bsize, &got);
+		if (error != 0)
+			return (-error);
+		pos = (loff_t)got;
+		if (!tagged || pos >= isize || pos == clean)
+			break;
+		hammer2_seek_tag_hold();
+		while (pos < isize &&
+		    hammer2_seek_tagged(mapping, pos, pos + bsize - 1) >= 0)
+			pos += bsize;
+		if (pos >= isize)
+			break;
+		clean = cur = pos;
+	}
+	if (pos >= isize)
+		return (isize);
+	return (max(pos, offset));
 }
 
 /*
@@ -1794,20 +1867,16 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
  * position where it was.  Before this, SEEK_DATA and SEEK_HOLE returned
  * the right offset and left the position behind.
  *
- * The size, the writeback and the scan run under i_rwsem shared, as
- * ext4, f2fs and btrfs hold it; FreeBSD's vn_bmap_seekhole(), which its
- * HAMMER2 port calls, holds the vnode exclusive, and shared is enough
- * since the seek writes nothing.
- * Unlocked, a truncate landing between the i_size read and the scan made
- * the seek answer an offset past the size it returned at.  The order is
- * the module's own: i_rwsem above the writeback's folio locks, its
- * HAMMER2_TRANS_BUFCACHE transaction and ip->lock, and above the scan's
- * hammer2_inode_lock().  hammer2_trans_init() sleeps only for a flush
- * against a flush, so a writer holding its transaction while it waits
- * for i_rwsem (hammer2_file_write_iter) blocks nothing this writeback needs,
- * and hammer2_fallocate_locked() already writes back under i_rwsem held
- * exclusive.  A page fault takes no i_rwsem, so an mmap write after the
- * writeback can still dirty a folio the scan then calls a hole; lseek(2)
+ * The size, the page cache tags and the scan are read under i_rwsem
+ * shared, as ext4, f2fs and btrfs hold it; FreeBSD's vn_bmap_seekhole(),
+ * which its HAMMER2 port calls, holds the vnode exclusive, and shared is
+ * enough since the seek writes nothing.  Unlocked, a truncate landing
+ * between the i_size read and the scan made the seek answer an offset
+ * past the size it returned at.  Under it the seek takes folio references
+ * and no folio lock, and the scan's hammer2_inode_lock() and chain locks,
+ * which sit below i_rwsem in the module's order as hammer2_vop_setattr()
+ * takes them.  A page fault takes no i_rwsem, so an mmap write after the
+ * tag read can still dirty a folio the scan then calls a hole; lseek(2)
  * cannot close that without the invalidate lock across faults, which
  * iomap's seek does not take either.
  */

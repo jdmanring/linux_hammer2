@@ -348,10 +348,11 @@ embedded(const char *path, long bsize)
  * past them, since the writer is still going.  SEEK_DATA from 0 has to
  * answer 0 once the first block is done.
  *
- * This is the window the writeback-before-scan fix closes, with the
- * writeback racing new dirty folios rather than settled ones: a scan that
- * wrote back only what was dirty when it started, then read a tree that a
- * second writeback was changing, could report a finished block as a hole.
+ * This is the window the seek's page cache read closes, with writeback
+ * racing new dirty folios rather than settled ones: a seek that read the
+ * tree, then tags a writeback had meanwhile cleared, could report a
+ * finished block as a hole.  The order of those two reads is controlled
+ * by seekprobe wbrace in script/seek-matrix.sh.
  *
  * The count of questions asked is printed and asserted, since a seeker
  * that never overlapped the writer would pass without testing anything.
