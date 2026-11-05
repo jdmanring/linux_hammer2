@@ -3,7 +3,7 @@ Linux [HAMMER2](https://gitweb.dragonflybsd.org/dragonfly.git/blob/HEAD:/sys/vfs
 
 [![CI](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml/badge.svg)](https://github.com/jdmanring/linux_hammer2/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](COPYRIGHT)
-[![Status](https://img.shields.io/badge/status-1.0.86-blue.svg)](doc/README.status.md)
+[![Status](https://img.shields.io/badge/status-1.0.87-blue.svg)](doc/README.status.md)
 [![Kernel](https://img.shields.io/badge/linux-7.3%2B-informational.svg)](doc/README.status.md)
 
 A port of DragonFly BSD's HAMMER2 file system to the Linux kernel.
@@ -101,7 +101,7 @@ it.
 
 The version is a position on the roadmap, not a release: the first two
 numbers name the milestone reached and the third counts point releases
-inside it. The tree is at 1.0.86, and [CHANGELOG.md](CHANGELOG.md) pins
+inside it. The tree is at 1.0.87, and [CHANGELOG.md](CHANGELOG.md) pins
 every row to the commits that delivered it and the runs that verified
 it.
 
