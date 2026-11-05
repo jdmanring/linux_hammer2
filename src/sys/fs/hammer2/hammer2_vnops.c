@@ -1598,8 +1598,9 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
 }
 
 /*
- * Linux: SEEK_DATA and SEEK_HOLE, which the BSDs reach through FIOSEEKDATA
- * and FIOSEEKHOLE on vn_bmap_seekhole().  Linux has no such ioctl: they
+ * Linux: SEEK_DATA and SEEK_HOLE, which FreeBSD's port answers through
+ * FIOSEEKDATA and FIOSEEKHOLE on the kernel's vn_bmap_seekhole(), and
+ * DragonFly's, NetBSD's and OpenBSD's refuse.  Linux has no such ioctl: they
  * are whences of lseek(2), and a filesystem that does not implement them
  * gets generic_file_llseek(), which treats the whole file as data.  That
  * is not a refusal but a wrong answer, and a sparse file copied with
@@ -1607,11 +1608,11 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
  * to look at and wrong.
  *
  * HAMMER2's model is that a hole is an offset no chain covers, which is
- * what hammer2_xop_bmap() answers with ENOENT.  Upstream asks it one block
- * at a time from vn_bmap_seekhole(); here one forward scan of the blockref
- * tree answers it, hammer2_bmap_next_key().  There is no freelist or
- * extent map to consult instead, and the blockref tree is the only record
- * of what is allocated.
+ * what hammer2_xop_bmap() answers with ENOENT.  FreeBSD's port asks it one
+ * block at a time through vn_bmap_seekhole(); here one forward scan of the
+ * blockref tree answers it, hammer2_bmap_next_key().  There is no freelist
+ * or extent map to consult instead, and the blockref tree is the only
+ * record of what is allocated.
  *
  * A file's last block may be allocated and hold data only to i_size.
  * The bytes past i_size are a hole by definition, so the scan stops
@@ -1760,8 +1761,9 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
  * the right offset and left the position behind.
  *
  * The size, the writeback and the scan run under i_rwsem shared, as
- * ext4, f2fs and btrfs hold it; DragonFly's vn_bmap_seekhole() holds the
- * vnode exclusive, and shared is enough since the seek writes nothing.
+ * ext4, f2fs and btrfs hold it; FreeBSD's vn_bmap_seekhole(), which its
+ * HAMMER2 port calls, holds the vnode exclusive, and shared is enough
+ * since the seek writes nothing.
  * Unlocked, a truncate landing between the i_size read and the scan made
  * the seek answer an offset past the size it returned at.  The order is
  * the module's own: i_rwsem above the writeback's folio locks, its

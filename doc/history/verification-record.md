@@ -22302,7 +22302,7 @@ none did, and `2d2eea0`'s message saying the same, were wrong, and the new file
 asks it without a writer.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
-(`hammer2_vnops.c:2426`), which still asks one bmap XOP per block and reads
+(`hammer2_vnops.c:2428`), which still asks one bmap XOP per block and reads
 `i_size` unlocked. Each of its XOPs is one lookup, not a scan restarted per
 block, and FIEMAP takes no lock that a writer waits on; it is a candidate for
 the same scan, not measured.
