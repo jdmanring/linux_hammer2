@@ -2753,7 +2753,7 @@ hammer2_remote_has_slot(hammer2_pfs_t *pmp)
 	int j;
 
 	for (j = 0; j < HAMMER2_MAXCLUSTER; ++j)
-		if (hammer2_dev_is_conn(pmp->pfs_hmps[j]))
+		if (hammer2_dev_is_conn(READ_ONCE(pmp->pfs_hmps[j])))
 			return (1);
 	return (0);
 }
