@@ -920,11 +920,15 @@ followed an audit of that move: a 13-byte file, whose data lives in its
 inode and for which the map had reported nothing, must map as one
 `FIEMAP_EXTENT_DATA_INLINE` extent at 0, as `btrfs` reports an inline
 extent; and a 1040-block file, each block its own bytes so none is a
-duplicate, must map every block with no two neighbouring extents left
-unmerged, and with one extent spanning block 1024, the edge between two of
-the map's tree reads, which is the precondition that makes the merge check
-fail when the merge across that edge is broken rather than pass on blocks
-that happen to lie apart on the media.
+duplicate, is mapped once from 0 to find a block at or above 1024 inside
+an extent and not at its start, then mapped again from 1024 blocks below
+that block, so the edge between two of the map's tree reads falls on it.
+That second map must cover every block from its start with no two
+neighbouring extents left unmerged and one extent spanning the edge,
+which is the precondition that makes the merge check fail when the merge
+across that edge is broken rather than pass on blocks that happen to lie
+apart on the media. An edge fixed at block 1024 sat on a break the
+allocator made there, and drove no merge.
 
 Its control is the file rather than a reference filesystem, and the reason
 is in the file: FIEMAP and the seek whences both describe this media's own

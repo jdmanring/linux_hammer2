@@ -112,7 +112,7 @@ size_of(const char *path)
  * which is a GNU extension and warns.
  */
 static int
-get_map(const char *path)
+get_map_from(const char *path, unsigned long long start)
 {
 	struct fiemap *fm;
 	struct fiemap_extent *fe;
@@ -125,7 +125,7 @@ get_map(const char *path)
 	fm = (struct fiemap *)buf;
 	fe = (struct fiemap_extent *)(buf + sizeof(*fm));
 
-	fm->fm_start = 0;
+	fm->fm_start = start;
 	fm->fm_length = FIEMAP_MAX_OFFSET;
 	fm->fm_extent_count = MAXEXT;
 	fm->fm_flags = 0;
@@ -160,6 +160,12 @@ get_map(const char *path)
 	memcpy(exts, fe, nexts * sizeof(exts[0]));
 	free(buf);
 	return (ret);
+}
+
+static int
+get_map(const char *path)
+{
+	return (get_map_from(path, 0));
 }
 
 /* Is [off, off+len) fully covered by data extents (not a hole)? */
@@ -269,14 +275,17 @@ comp_file(const char *dir, const char *sub, const char *algo,
 }
 
 /*
- * The map reads the tree HAMMER2_FIEMAP_REFS blocks at a time, 1024, and
- * merges an extent across the edge between two reads.  A 1040-block file
- * written in one pass in the uncompressed directory: every block mapped,
- * no two neighbouring extents that should have been one, and one extent
- * spanning block 1024, which is what makes the second check mean
- * something.  Without it, blocks 1023 and 1024 apart on the media pass
- * the merge check whatever the map does, so that precondition fails
- * rather than passing vacuously.
+ * The map reads the tree HAMMER2_FIEMAP_REFS blocks at a time, 1024,
+ * counted from the block it starts at, and merges an extent across the
+ * edge between two reads.  Where the media breaks a file is the
+ * allocator's choice, so a map from 0 can put its edge on a break, where
+ * no merge is driven.  A 1040-block file written in one pass in the
+ * uncompressed directory is mapped once from 0 to find a block at or
+ * above 1024 inside an extent and not at its start, then mapped again
+ * from 1024 blocks below it, which puts the edge on that block: every
+ * block from there mapped, no two neighbouring extents that should have
+ * been one, and one extent spanning the edge.  A file with no such block
+ * fails that precondition rather than passing vacuously.
  */
 #define EDGE_BLOCKS	1040
 #define EDGE_AT		1024
@@ -285,7 +294,7 @@ static void
 read_edge(const char *dir, const char *buf, size_t blk)
 {
 	char path[4096 + 32], b[65536];
-	unsigned long long edge = (unsigned long long)EDGE_AT * blk, sum = 0;
+	unsigned long long at = 0, edge, from, sum = 0;
 	unsigned int i, merge = 0, span = 0;
 	int fd, ok = blk <= sizeof(b);
 
@@ -306,6 +315,28 @@ read_edge(const char *dir, const char *buf, size_t blk)
 		unlink(path);
 		return;
 	}
+	for (i = 0; i < nexts && at == 0; ++i) {
+		const struct fiemap_extent *e = &exts[i];
+		unsigned long long lo = e->fe_logical / blk + 1;
+
+		if (lo < EDGE_AT)
+			lo = EDGE_AT;
+		if (!(e->fe_flags & FIEMAP_EXTENT_ENCODED) &&
+		    lo < (e->fe_logical + e->fe_length) / blk)
+			at = lo;
+	}
+	from = (at - EDGE_AT) * blk;
+	edge = at * blk;
+	if (at == 0 || get_map_from(path, from) != 0) {
+		checks++;
+		fails++;
+		printf("fiemap-fail no block at or above %d lies inside one of "
+		    "the %d-block file's %u extent(s), or the map from below it "
+		    "failed, so the merge across the edge was not driven\n",
+		    EDGE_AT, EDGE_BLOCKS, nexts);
+		unlink(path);
+		return;
+	}
 	for (i = 0; i < nexts; ++i) {
 		const struct fiemap_extent *e = &exts[i], *p = e - 1;
 
@@ -319,25 +350,25 @@ read_edge(const char *dir, const char *buf, size_t blk)
 			++merge;
 	}
 	checks++;
-	if (sum != (unsigned long long)EDGE_BLOCKS * blk || merge != 0) {
-		printf("fiemap-fail the %d-block file: %llu bytes mapped of "
-		    "%llu, %u neighbouring extent(s) left unmerged\n",
-		    EDGE_BLOCKS, sum, (unsigned long long)EDGE_BLOCKS * blk,
-		    merge);
+	if (sum != (unsigned long long)EDGE_BLOCKS * blk - from || merge != 0) {
+		printf("fiemap-fail the %d-block file from block %llu: %llu bytes "
+		    "mapped of %llu, %u neighbouring extent(s) left unmerged\n",
+		    EDGE_BLOCKS, at - EDGE_AT, sum,
+		    (unsigned long long)EDGE_BLOCKS * blk - from, merge);
 		fails++;
 	} else {
-		printf("fiemap-ok   the %d-block file: every block mapped in %u "
-		    "extent(s), none left unmerged\n", EDGE_BLOCKS, nexts);
+		printf("fiemap-ok   the %d-block file from block %llu: every "
+		    "block mapped in %u extent(s), none left unmerged\n",
+		    EDGE_BLOCKS, at - EDGE_AT, nexts);
 	}
 	checks++;
 	if (span != 1) {
 		printf("fiemap-fail no extent spans the tree reads' edge at "
-		    "block %d, so the merge across it was not driven\n",
-		    EDGE_AT);
+		    "block %llu, so the merge across it failed\n", at);
 		fails++;
 	} else {
 		printf("fiemap-ok   an extent spans the tree reads' edge at "
-		    "block %d\n", EDGE_AT);
+		    "block %llu\n", at);
 	}
 	unlink(path);
 }
