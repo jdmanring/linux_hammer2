@@ -1524,7 +1524,7 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 }
 
 /*
- * EXPERIMENT: the next allocated key at or after `lbn`, in one scan.
+ * The next allocated key at or after key_beg, or the next hole, in one scan.
  *
  * hammer2_bmap_lbn() answers one block per XOP, so a SEEK_DATA that walks a
  * hole issues one per block: measured 0.345 s per GiB on an all-hole file,
@@ -1545,10 +1545,15 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * started n scans: 2.4 s on a 64 MiB dense file on h2release-7.3tls, a
  * cost a writer pays too, since the seek holds i_rwsem.
  *
- * The scan feeds bref keys only.  HAMMER2_LOOKUP_ALWAYS resolved every
- * fed chain's data, up to HAMMER2_XOPFIFO blocks ahead of the one the
- * question needed; the position is in the bref, as the carried scans that
- * want positions alone ask with HAMMER2_LOOKUP_NODATA.
+ * On a local element the scan reads bref keys only.
+ * HAMMER2_LOOKUP_ALWAYS resolved every fed chain's data, up to
+ * HAMMER2_XOPFIFO blocks ahead of the one the question needed; the
+ * position is in the bref, as the carried scans that want positions alone
+ * ask with HAMMER2_LOOKUP_NODATA.  A data block's check error therefore no
+ * longer reaches the seek as EIO; the read reports it.  A remote element
+ * passes only NODIRECT on (HAMMER2_REMOTE_LOOKUPF), and its server scans
+ * with LOOKUP_ALWAYS and ships each chain's data in the feed, so there a
+ * seek still reads every block it passes.
  */
 static int
 hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
@@ -1602,11 +1607,11 @@ hammer2_bmap_next_key(struct inode *inode, hammer2_key_t key_beg,
  * to look at and wrong.
  *
  * HAMMER2's model is that a hole is an offset no chain covers, which is
- * what hammer2_xop_bmap() answers with ENOENT, so both whences are that
- * one question asked repeatedly: advance a block at a time until the
- * answer changes.  Upstream asks it the same way, one block at a time,
- * from vn_bmap_seekhole(); there is no freelist or extent map to consult
- * instead, and the blockref tree is the only record of what is allocated.
+ * what hammer2_xop_bmap() answers with ENOENT.  Upstream asks it one block
+ * at a time from vn_bmap_seekhole(); here one forward scan of the blockref
+ * tree answers it, hammer2_bmap_next_key().  There is no freelist or
+ * extent map to consult instead, and the blockref tree is the only record
+ * of what is allocated.
  *
  * A file's last block may be allocated and hold data only to i_size.
  * The bytes past i_size are a hole by definition, so the scan stops
@@ -1706,23 +1711,11 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
 		return (seek_data ? offset : isize);
 
 	/*
-	 * EXPERIMENT: one forward scan instead of a lookup per block.
-	 *
-	 * The loop this replaces asked hammer2_bmap_lbn() for each 64 KiB
-	 * block until the answer changed, which is one XOP per block:
-	 * measured 0.345 s per GiB over an all-hole file, 21 us per step and
-	 * no device I/O, since a hole is an absent key.  The same question is
-	 * a forward walk of the blockref tree, which hammer2_xop_scanall()
-	 * already is.
-	 *
-	 * The key space is the file's blockref tree, so a key present means
-	 * an allocated block and a key absent means a hole.  For SEEK_DATA
-	 * the answer is the first key at or after the offset's block that
-	 * exists; for SEEK_HOLE it is the first block boundary at or after
-	 * the offset that does NOT exist, which is the first key after that
-	 * boundary minus nothing: scanning from the offset's block, a key
-	 * further along than the boundary asked means the boundary itself is
-	 * a hole.
+	 * One forward scan from the offset's block.  A key present is an
+	 * allocated block and a key absent is a hole.  SEEK_DATA asks for the
+	 * first key at or after the offset's block; SEEK_HOLE passes the block
+	 * size as the step and gets the first boundary at or after that block
+	 * at which no chain begins, or the boundary after the last block.
 	 */
 	{
 		loff_t base = offset & ~((loff_t)bsize - 1);
