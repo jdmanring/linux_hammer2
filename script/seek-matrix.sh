@@ -206,7 +206,7 @@ if [ "$RACE$TIME$CONTEND" != 000 ]; then
 			[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c $ph line(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
 			echo "  contend $ph: median-ns $(printf '%s\n' "$out" | sed -n "s/^seekm-contend $ph median-ns \([0-9]*\) .*/\1/p" | tr '\n' ' ')max-ns $(printf '%s\n' "$out" | sed -n "s/^seekm-contend $ph median-ns [0-9]* max-ns \([0-9]*\) .*/\1/p" | tr '\n' ' ')"
 		done
-		echo "  contend seeks overlapped: $(printf '%s\n' "$out" | sed -n 's/^seekm-contend seeking .* seeks \([0-9]*\)$/\1/p' | tr '\n' ' ')"
+		echo "  contend seeks begun: $(printf '%s\n' "$out" | sed -n 's/^seekm-contend seeking .* seeks \([0-9]*\)$/\1/p' | tr '\n' ' ')"
 	else
 		for k in sparse dense dirty; do
 			m=$(printf '%s\n' "$out" | sed -n "s/^seekm-time $k median-ns \([0-9]*\) n .*/\1/p")
