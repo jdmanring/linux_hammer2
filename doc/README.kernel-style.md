@@ -368,6 +368,13 @@ debug build's `seek_scanall` parameter turns off so a test can compare
 the walk with the scan on one file: one more `return (x);`. No category is
 new.
 
+1,656 to 1,659 with the first audit round's fixes to the seek: the walk's
+depth argument, `hammer2_xops.c:1560`, is a continuation-line indent; the
+debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
+`return (x);`; and the chunked scan's fatal-signal check returns a positive
+`EINTR` at `hammer2_vnops.c:1557`, which is the module's errno convention
+and is negated at the VFS boundary like every other. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the
