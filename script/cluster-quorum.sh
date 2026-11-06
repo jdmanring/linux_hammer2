@@ -102,8 +102,11 @@ for d in vdb vdc; do
 	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
 done
 rm -f "$QA" "$QB"
+# 2 GiB, or room for the contend file and a quarter more: the scan's cost
+# grows with the file, so its wait is read at the size the walk's is.
+QSIZE=$(( QCONTEND * 5 / 4 / 1024 + 2 ))G
 for img in "$QA" "$QB"; do
-	truncate -s 2G "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
+	truncate -s "$QSIZE" "$img" && "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 || {
 		echo "quorum: COULD-NOT-RUN: newfs_hammer2 failed on $img" >&2; exit 2; }
 done
 if [ "$state" = running ]; then how=--live; else how=--config; fi
