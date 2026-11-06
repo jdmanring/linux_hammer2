@@ -230,7 +230,7 @@ vdump() {	# file tag
 	echo "vote $2 lines $(wc -l < /tmp/qv-walk.$2) extents $(grep -c '^seekm-dump extent ' /tmp/qv-walk.$2) differ $(cmp -s /tmp/qv-walk.$2 /tmp/qv-scan.$2 && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0))"
 	diff /tmp/qv-walk.$2 /tmp/qv-scan.$2 | head -5 | sed "s/^/vote $2 diff /"
 }
-vseek() {	# tag whence offset: one seek through xfs_io, and the fallbacks it took
+vseek() {	# tag d|h offset: one SEEK_DATA or SEEK_HOLE through xfs_io, and the fallbacks it took
 	b0=$(cat $P/seek_fellback)
 	r=$(xfs_io -r -c "seek -$2 $3" /mnt/h2q/dis 2>&1 | awk '$1 ~ /^(DATA|HOLE)$/ {print $2}')
 	echo "vote $1 answer ${r:-none} fellback $(( $(cat $P/seek_fellback) - b0 ))"
@@ -267,7 +267,7 @@ done
 echo -1 > $P/write_except
 ino=$(stat -c %i /mnt/h2q/dis)
 for v in a:vdb b:vdc; do
-	hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$ino" '
+	hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
 	/^ *inode\.[0-9]/ { mode = "inode"; next }
 	mode == "inode" && $1 == "inum" { inum = $2 }
 	/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
@@ -276,8 +276,8 @@ done
 umount /mnt/h2q; echo 3 > /proc/sys/vm/drop_caches
 mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
 vdump /mnt/h2q/dis disagree
-vseek inside data $((8 * 65536))
-vseek outside hole $((16 * 65536))
+vseek inside d $((8 * 65536))
+vseek outside h $((16 * 65536))
 for b in 2 10 12; do
 	echo "vote read $b nonzero $(dd if=/mnt/h2q/dis bs=64k skip=$b count=1 2>/dev/null | tr -d '\000' | wc -c)"
 done
@@ -426,11 +426,17 @@ if [ "$QVOTE" = 1 ]; then
 	vf() { vote "$1" | awk -v k="$2" '{ for (i = 1; i < NF; i++) if ($i == k) { print $(i + 1); exit } }'; }
 	sed -n 's/^vote \([a-z0-9-]*\) diff /  vote diff \1: /p' "$W/out"
 	# Agreeing masters: the walk answered every tree read and matched the scan.
-	for t in agree-lay agree-shp agree-emb; do
+	for t in agree-lay agree-shp; do
 		l=$(vf $t lines); d=$(vf $t differ); w=$(vf $t walked); b=$(vf $t fellback)
 		[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "${w:-0}" -gt 0 ] && [ "$b" = 0 ]
 		check "$t: both masters walk, agree, and answer as the scan" $? "lines ${l:-none} differ ${d:-none} walked ${w:-none} fellback ${b:-none}"
 	done
+	# A file held in its inode has no blockref tree: the seek answers from
+	# the inode before any walk (hammer2_seek_data_hole()), so neither
+	# counter moves.
+	l=$(vf agree-emb lines); d=$(vf agree-emb differ); w=$(vf agree-emb walked); b=$(vf agree-emb fellback)
+	[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "$w" = 0 ] && [ "$b" = 0 ]
+	check "agree-emb: a file held in its inode answers as the scan, with no walk and no fallback" $? "lines ${l:-none} differ ${d:-none} walked ${w:-none} fellback ${b:-none}"
 	a=$(vote refuse); set -- $a
 	[ "$2" = 0 ] && [ "$4" = 3 ] && [ "$6" = 0 ]
 	check "a walk's error on two masters is the call's EIO, with no fallback" $? "${a:-no line}"
@@ -451,8 +457,8 @@ if [ "$QVOTE" = 1 ]; then
 	r=$(vf inside answer); bad=0
 	for blk in 10 12; do
 		n=$(sed -n "s/^vote read $blk nonzero //p" "$W/out")
-		[ -n "$r" ] && [ "$r" != none ] && [ "$r" -gt $((blk * 65536)) ] && [ "${n:-1}" != 0 ] && bad=$((bad + 1))
-		[ -n "$n" ] || bad=$((bad + 1))
+		[ "$r" = $((16 * 65536)) ] || bad=$((bad + 1))
+		[ "$n" = 0 ] || bad=$((bad + 1))
 	done
 	[ "$bad" = 0 ]
 	check "no block the seek calls a hole reads back data" $? "SEEK_DATA from block 8 ${r:-none}, nonzero bytes: 10 $(sed -n 's/^vote read 10 nonzero //p' "$W/out") 12 $(sed -n 's/^vote read 12 nonzero //p' "$W/out")"

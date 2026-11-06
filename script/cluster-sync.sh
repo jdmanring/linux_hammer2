@@ -321,7 +321,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	nk "'blockref ('"; nk "'^data '"; nk "'^dirent \"q[0-9]*\" '"; nk "'([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)'"	# show and fsck
 	nk "'filename \"CL\"'"; nk "'filename \"CL.h2sync-src\"'"; nk "'filename \"CL.h2sync-tgt\"'"; nk "'filename \"m[0-9]\"\$'"; nk "'filename \"new[0-9]\"\$'"
 	nk '/^ *data\.[0-9]/'; nk '/^ *dirent\.[0-9]/'; nk '/^ *(indirect|empty)\.[0-9]/'; nk '/^ *inode\.[0-9]/'
-	nk '/^ *} \(inode\.[0-9]*, "CL"\)/'; nk '/filename "CL"$/'; nk '/filename "[^"]*\.h2sync-(src|tgt)"$/'; nk '/xxh=/'
+	nk '/^ *} \(inode\.[0-9]*, "CL"\)/'; nk '/filename "CL"$/'; nk '/filename "[^"]*\.h2sync-(src|tgt)"$/'; nk '/xxh=/'; nk '/mod=/'
 	nk '/^MemAvailable:/'; nk '/^Slab:/'; nk '/debug_locks:/'	# /proc/meminfo and lockdep_stats
 	# The clear's marker is spelled in two pieces: test-inventory.sh allows
 	# it named only at the host's read, and this line reads nothing.
@@ -1231,7 +1231,7 @@ if [ "${H2SEEKVOTE:-0}" = 1 ]; then
 	echo -1 > $P/write_except
 	ino=$(stat -c %i /mnt/h2c/sv)
 	for v in m:vdb s:vdc; do
-		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$ino" '
+		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
 		/^ *inode\.[0-9]/ { mode = "inode"; next }
 		mode == "inode" && $1 == "inum" { inum = $2 }
 		/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
