@@ -1534,7 +1534,14 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * since an empty range costs one lookup however large; one that held data
  * doubles only up to HAMMER2_SEEK_DATA_MAX, since each of its blocks costs
  * a chain.
- * DEFER(H2_WIRE_SEEKTIME's 1 GiB SEEK_HOLE above 2.5 s on h2debug-7.3tls, a PFS with a remote element mounted read-write, or seek_fellback above zero in cluster-quorum.sh's agreeing two-master run):
+ *
+ * On two voting elements the quorum is both, so a block the walks disagree
+ * on is a hole to the collect, and a SEEK_HOLE that falls back stops there,
+ * inside the batch that disagreed; SEEK_DATA's scan crosses holes a GiB at
+ * a time, and a map falls back one batch at a time.  On three or more a
+ * block two of them hold at one tid is data to the quorum while the slots
+ * differ, so the scan can run on to the next block the quorum lacks.
+ * DEFER(H2_WIRE_SEEKTIME's 1 GiB SEEK_HOLE above 2.5 s on h2debug-7.3tls, a PFS with a remote element mounted read-write, cluster-quorum.sh's two-master 16 GiB SEEK_HOLE above 50 ms on h2release-7.3tls with or without H2_QUORUM_SPLIT, or a third MASTER in cluster-quorum.sh):
  * a seek request the cluster transport carries would let a remote element
  * walk, and a quorum over the elements' blockref lists would let masters
  * that disagree walk rather than scan.
@@ -1617,17 +1624,20 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 }
 
 /*
- * Linux: whether hammer2_xop_seek() walks for this XOP: a cluster with no
- * remote element, which has no blockref array on this host.  The remote
- * test reads the XOP's own slots, the set hammer2_xop_start() runs, since
- * an element can join the inode's cluster under cluster_spin, which the
- * inode lock does not exclude.  The debug build's seek_scanall parameter
- * sends every seek and map to hammer2_seek_scanall(), so a test can
- * compare the two readers on one file; seek_walked counts the tree reads
- * the walk answered and seek_fellback those several voting elements sent
- * to the scan by disagreeing, so the test knows which reader each answer
- * came from; seek_agree_break, 1 or 2, breaks the comparison of the
- * elements' answers (hammer2_seek_agree()) for that comparison's control.
+ * Linux: whether hammer2_xop_seek() walks for this XOP: a PFS with no
+ * remote element, which has no blockref array on this host.  The test
+ * reads every slot of the PFS (hammer2_remote_has_slot()), not only those
+ * the XOP runs, so an element joining the inode's cluster under
+ * cluster_spin, which the inode lock does not exclude, cannot slip a
+ * remote one past it.  The debug build's seek_scanall parameter sends
+ * every seek and map to hammer2_seek_scanall(), so a test can compare the
+ * two readers on one file; seek_walked counts the tree reads the walk
+ * answered, and seek_fellback the reads hammer2_seek_vote() handed to the
+ * scan after a first walk: voting elements that disagreed, an element
+ * joined since the call began, or a remote slot or seek_scanall appearing
+ * between batches; so the test knows which reader each answer came from.
+ * seek_agree_break, 1 or 2, breaks the comparison of the elements'
+ * answers (hammer2_seek_agree()) for that comparison's control.
  */
 #if defined(HAMMER2_LOCKDEBUG)
 static unsigned int hammer2_seek_force_scanall;
@@ -1677,13 +1687,18 @@ hammer2_seek_voters(hammer2_xop_seek_t *xop)
 /*
  * Linux: whether the elements that walked answered alike, block for block:
  * the same answer and the same deciding blocks at the same keybits and
- * modify_tid, where the physical address is each element's own and is not
- * compared.  Returns the highest-index element that walked, the focus
- * hammer2_cluster_check() would choose among matching masters, or -1 when
- * they differ.  Alike is the quorum's answer at every key: each block in
- * the range is held by every voting element at one tid.  A difference
- * fixes no rule of its own; the caller asks the scan, whose collect
- * decides key by key.
+ * modify_tid.  The physical address and the methods are each element's
+ * own and are not compared: the compression heuristic is the inode's
+ * (ip->comp_heuristic, hammer2_strategy.c), so one element's write of a
+ * block can move it before the next element's write of the same block
+ * reads it, and two masters can hold one block at one tid compressed and
+ * not.  The caller reports one element's address and methods together, as
+ * the scan reports its focus's.  Returns the highest-index element that
+ * walked, the focus hammer2_cluster_check() would choose among matching
+ * masters, or -1 when they differ.  Alike is the quorum's answer at every
+ * key: each block in the range is held by every voting element at one
+ * tid.  A difference fixes no rule of its own; the caller asks the scan,
+ * whose collect decides key by key.
  */
 static int
 hammer2_seek_agree(struct hammer2_seek_req *rs, int nc)
@@ -1740,11 +1755,12 @@ hammer2_seek_vote(hammer2_inode_t *ip, struct hammer2_seek_req *r, int nc)
 	struct hammer2_fiemap_ref *rv;
 	hammer2_xop_seek_t *xop;
 	hammer2_key_t cur = r->key_beg;
-	int error, i, k;
+	int error, i, k, refs;
 
 	rs = kcalloc(nc, sizeof(*rs), GFP_KERNEL);
-	rv = kvmalloc_array((size_t)nc * HAMMER2_SEEK_VOTE_REFS, sizeof(*rv),
-	    GFP_KERNEL);
+	/* SEEK_DATA records the one block it answers at */
+	refs = (r->mode == HAMMER2_SEEK_MODE_DATA) ? 1 : HAMMER2_SEEK_VOTE_REFS;
+	rv = kvmalloc_array((size_t)nc * refs, sizeof(*rv), GFP_KERNEL);
 	if (rs == NULL || rv == NULL) {
 		kfree(rs);
 		kvfree(rv);
@@ -1765,10 +1781,9 @@ hammer2_seek_vote(hammer2_inode_t *ip, struct hammer2_seek_req *r, int nc)
 			rs[i].key_beg = cur;
 			rs[i].key_end = r->key_end;
 			rs[i].mode = r->mode;
-			rs[i].v = rv + (size_t)i * HAMMER2_SEEK_VOTE_REFS;
+			rs[i].v = rv + (size_t)i * refs;
 			rs[i].max = (r->mode == HAMMER2_SEEK_MODE_MAP) ?
-			    min(r->max, HAMMER2_SEEK_VOTE_REFS) :
-			    HAMMER2_SEEK_VOTE_REFS;
+			    min(r->max, refs) : refs;
 		}
 		xop->rs = rs;
 		hammer2_xop_start(&xop->head, &hammer2_seek_desc);
@@ -2661,6 +2676,11 @@ const struct address_space_operations hammer2_file_aops = {
  * with no hammer2 lock held, since a copy can fault.
  */
 #define HAMMER2_FIEMAP_REFS	1024		/* Linux: blocks per tree read */
+/*
+ * Linux: hammer2_fiemap() reads a batch shorter than HAMMER2_FIEMAP_REFS as
+ * the end of the range, and the vote clamps a map's batch to its own size.
+ */
+static_assert(HAMMER2_SEEK_VOTE_REFS >= HAMMER2_FIEMAP_REFS);
 
 /*
  * Linux: the extent being built, and the step that adds one block's worth

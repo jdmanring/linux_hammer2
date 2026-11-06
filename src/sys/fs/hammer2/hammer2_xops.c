@@ -1551,6 +1551,12 @@ done:
 static unsigned int hammer2_seek_depth_max = HAMMER2_SEEK_DEPTH_MAX;
 module_param_named(seek_depth_max, hammer2_seek_depth_max, uint, 0644);
 #define HAMMER2_SEEK_DEPTH	READ_ONCE(hammer2_seek_depth_max)
+/*
+ * Linux: fails the walk of one element, by clindex, so a test can read
+ * the call's error when one voting element fails and another answers.
+ */
+static int hammer2_seek_fail_elm = -1;
+module_param_named(seek_fail_elm, hammer2_seek_fail_elm, int, 0644);
 #else
 #define HAMMER2_SEEK_DEPTH	HAMMER2_SEEK_DEPTH_MAX
 #endif
@@ -1687,6 +1693,10 @@ hammer2_xop_seek(hammer2_xop_t *arg, void *scratch, int clindex)
 		goto done;
 	}
 	error = parent->error;
+#if defined(HAMMER2_LOCKDEBUG)
+	if (error == 0 && clindex == READ_ONCE(hammer2_seek_fail_elm))
+		error = HAMMER2_ERROR_BADBREF;
+#endif
 	if (error == 0 && (parent->data->ipdata.meta.op_flags &
 	    HAMMER2_OPFLAG_DIRECTDATA)) {
 		if (r->mode == HAMMER2_SEEK_MODE_DATA)

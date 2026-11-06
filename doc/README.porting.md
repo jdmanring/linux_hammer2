@@ -1614,7 +1614,15 @@ give the collect's skip its next key, and feeding a chain per block is the
 scan's cost. The elements walk one after another in the caller's thread
 (`hammer2_xop_start_except()`), so a writer beside a seek waits for the
 sum of the voting walks. FIEMAP reports the physical address of the
-highest-index element that walked, the focus the collect would pick.
+highest-index element that walked, the focus the collect would pick, with
+that element's methods, since methods are not compared: the compression
+heuristic is the inode's, so two masters can hold one block at one tid
+compressed and not. Which device that address lies on is an open
+question for a PFS on several devices: the super block has no `s_bdev`
+(`hammer2_get_tree()`), so `fe_physical` is an offset on one element's
+device that FIEMAP's caller cannot tell from another's. The scan reports
+its focus's address the same way, and the quorum harness cannot see the
+question, since two volumes written in lockstep hold the same offsets.
 
 A remote element has no blockref array on this host, so a PFS with one
 takes the scan, under a `DEFER` with three triggers: the remote 1 GiB
