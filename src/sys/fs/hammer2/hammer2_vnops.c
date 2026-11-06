@@ -1523,17 +1523,21 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 
 /*
  * Linux: the seek's and the map's answer from hammer2_xop_scanall(), for a
- * cluster hammer2_xop_seek() does not walk: several elements, where every
- * key needs the quorum's agreement, or a remote one, which has no blockref
- * array on this host.  The scan feeds every chain in its range before the
- * frontend's first collect (hammer2_xop_start_except()), so it runs over a
- * chunk of key space at a time and stops at the first chunk that holds the
+ * cluster hammer2_xop_seek() does not walk, one with a remote element,
+ * which has no blockref array on this host, and for a range on which
+ * several voting elements' walks disagree (hammer2_seek_vote()), where
+ * the scan's collect decides key by key.  The scan feeds every chain in
+ * its range before the frontend's first collect
+ * (hammer2_xop_start_except()), so it runs over a chunk of key space at a
+ * time and stops at the first chunk that holds the
  * answer.  A chunk that held no data doubles up to HAMMER2_SEEK_HOLE_MAX,
  * since an empty range costs one lookup however large; one that held data
  * doubles only up to HAMMER2_SEEK_DATA_MAX, since each of its blocks costs
  * a chain.
- * DEFER(H2_WIRE_SEEKTIME's 1 GiB SEEK_HOLE above 2.5 s, H2_QUORUM_CONTEND=512's writer median above 100 ms, or a PFS with a remote element mounted read-write):
- * a seek request the cluster transport carries would let each element walk.
+ * DEFER(H2_WIRE_SEEKTIME's 1 GiB SEEK_HOLE above 2.5 s on h2debug-7.3tls, a PFS with a remote element mounted read-write, or seek_fellback above zero in cluster-quorum.sh's agreeing two-master run):
+ * a seek request the cluster transport carries would let a remote element
+ * walk, and a quorum over the elements' blockref lists would let masters
+ * that disagree walk rather than scan.
  */
 #define HAMMER2_SEEK_CHUNK	((hammer2_key_t)HAMMER2_XOPFIFO * HAMMER2_PBUFSIZE)
 #define HAMMER2_SEEK_DATA_MAX	((hammer2_key_t)1024 * HAMMER2_PBUFSIZE)
@@ -1613,20 +1617,30 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 }
 
 /*
- * Linux: whether hammer2_xop_seek() walks for this XOP: a cluster of one
- * local element.  The element count is the XOP's own, the set
- * hammer2_xop_start() runs, since an element can join the inode's cluster
- * under cluster_spin, which the inode lock does not exclude.  The debug
- * build's seek_scanall parameter sends every seek and map to
- * hammer2_seek_scanall(), so a test can compare the two readers on one
- * file, and its seek_walked counts the tree reads the walk answered, so
- * the test knows which reader each answer came from.
+ * Linux: whether hammer2_xop_seek() walks for this XOP: a cluster with no
+ * remote element, which has no blockref array on this host.  The remote
+ * test reads the XOP's own slots, the set hammer2_xop_start() runs, since
+ * an element can join the inode's cluster under cluster_spin, which the
+ * inode lock does not exclude.  The debug build's seek_scanall parameter
+ * sends every seek and map to hammer2_seek_scanall(), so a test can
+ * compare the two readers on one file; seek_walked counts the tree reads
+ * the walk answered and seek_fellback those several voting elements sent
+ * to the scan by disagreeing, so the test knows which reader each answer
+ * came from; seek_agree_break, 1 or 2, breaks the comparison of the
+ * elements' answers (hammer2_seek_agree()) for that comparison's control.
  */
 #if defined(HAMMER2_LOCKDEBUG)
 static unsigned int hammer2_seek_force_scanall;
 module_param_named(seek_scanall, hammer2_seek_force_scanall, uint, 0644);
 static unsigned int hammer2_seek_walked;
 module_param_named(seek_walked, hammer2_seek_walked, uint, 0444);
+static unsigned int hammer2_seek_fellback;
+module_param_named(seek_fellback, hammer2_seek_fellback, uint, 0444);
+static unsigned int hammer2_seek_agree_break;
+module_param_named(seek_agree_break, hammer2_seek_agree_break, uint, 0644);
+#define HAMMER2_SEEK_COUNT(c)	WRITE_ONCE(c, (c) + 1)
+#else
+#define HAMMER2_SEEK_COUNT(c)	((void)0)
 #endif
 
 static bool
@@ -1637,22 +1651,171 @@ hammer2_seek_walks(hammer2_xop_seek_t *xop)
 		pr_info_once("hammer2: seek scanall forced\n");
 		return (false);
 	}
-	if (xop->head.cluster.nchains == 1 &&
-	    !hammer2_remote_has_slot(xop->head.ip1->pmp)) {
-		WRITE_ONCE(hammer2_seek_walked, hammer2_seek_walked + 1);
-		return (true);
-	}
-	return (false);
-#else
-	return (xop->head.cluster.nchains == 1 &&
-	    !hammer2_remote_has_slot(xop->head.ip1->pmp));
 #endif
+	return (!hammer2_remote_has_slot(xop->head.ip1->pmp));
+}
+
+/*
+ * Linux: the elements that decide a key, as hammer2_cluster_check() counts
+ * them: a MASTER or the SUPROOT.
+ */
+static int
+hammer2_seek_voters(hammer2_xop_seek_t *xop)
+{
+	int i, n = 0;
+
+	for (i = 0; i < xop->head.cluster.nchains; ++i)
+		switch (xop->head.ip1->pmp->pfs_types[i]) {
+		case HAMMER2_PFSTYPE_MASTER:
+		case HAMMER2_PFSTYPE_SUPROOT:
+			++n;
+			break;
+		}
+	return (n);
+}
+
+/*
+ * Linux: whether the elements that walked answered alike, block for block:
+ * the same answer and the same deciding blocks at the same keybits and
+ * modify_tid, where the physical address is each element's own and is not
+ * compared.  Returns the highest-index element that walked, the focus
+ * hammer2_cluster_check() would choose among matching masters, or -1 when
+ * they differ.  Alike is the quorum's answer at every key: each block in
+ * the range is held by every voting element at one tid.  A difference
+ * fixes no rule of its own; the caller asks the scan, whose collect
+ * decides key by key.
+ */
+static int
+hammer2_seek_agree(struct hammer2_seek_req *rs, int nc)
+{
+	struct hammer2_seek_req *a, *b;
+	int i, j, k = -1;
+	unsigned int brk = 0;
+
+#if defined(HAMMER2_LOCKDEBUG)
+	brk = READ_ONCE(hammer2_seek_agree_break);
+#endif
+	for (i = 0; i < nc; ++i) {
+		if (!rs[i].walked)
+			continue;
+		if (k < 0 || brk == 2) {
+			if (k < 0)
+				k = i;
+			if (brk == 2)
+				return (k);	/* the control: the first, unread */
+			continue;
+		}
+		a = &rs[k];
+		b = &rs[i];
+		if (a->key != b->key || a->found != b->found ||
+		    a->n != b->n || a->full != b->full)
+			return (-1);
+		for (j = 0; j < a->n; ++j)
+			if (a->v[j].key != b->v[j].key ||
+			    a->v[j].keybits != b->v[j].keybits ||
+			    (brk != 1 && a->v[j].tid != b->v[j].tid))
+				return (-1);
+		k = i;
+	}
+	return (k);
+}
+
+/*
+ * Linux: the seek's and the map's answer on several voting elements.
+ * Each walks into its own request and v, HAMMER2_SEEK_VOTE_REFS blocks at
+ * a time, and the frontend compares them (hammer2_seek_agree()): alike,
+ * the answer stands, and a SEEK_HOLE whose v filled goes on from its
+ * cursor in a new XOP; otherwise the scan answers from the cursor, and for
+ * a map only this batch, the next walking again.  The elements walk one
+ * after another in this thread (hammer2_xop_start_except()), so a writer
+ * waits for the sum of the walks.  nc is the element count v was sized
+ * for; an XOP with more, an element joined since, goes to the scan.
+ */
+#define HAMMER2_SEEK_VOTE_REFS	1024
+
+static int
+hammer2_seek_vote(hammer2_inode_t *ip, struct hammer2_seek_req *r, int nc)
+{
+	struct hammer2_seek_req *rs, r2;
+	struct hammer2_fiemap_ref *rv;
+	hammer2_xop_seek_t *xop;
+	hammer2_key_t cur = r->key_beg;
+	int error, i, k;
+
+	rs = kcalloc(nc, sizeof(*rs), GFP_KERNEL);
+	rv = kvmalloc_array((size_t)nc * HAMMER2_SEEK_VOTE_REFS, sizeof(*rv),
+	    GFP_KERNEL);
+	if (rs == NULL || rv == NULL) {
+		kfree(rs);
+		kvfree(rv);
+		return (hammer2_seek_scanall(ip, r));
+	}
+	for (;;) {
+		hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+		xop = hammer2_xop_alloc(ip, 0);
+		if (xop->head.cluster.nchains > nc || !hammer2_seek_walks(xop)) {
+			hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+			hammer2_inode_unlock(ip);
+			k = -1;
+			error = 0;
+			break;
+		}
+		for (i = 0; i < nc; ++i) {
+			memset(&rs[i], 0, sizeof(rs[i]));
+			rs[i].key_beg = cur;
+			rs[i].key_end = r->key_end;
+			rs[i].mode = r->mode;
+			rs[i].v = rv + (size_t)i * HAMMER2_SEEK_VOTE_REFS;
+			rs[i].max = (r->mode == HAMMER2_SEEK_MODE_MAP) ?
+			    min(r->max, HAMMER2_SEEK_VOTE_REFS) :
+			    HAMMER2_SEEK_VOTE_REFS;
+		}
+		xop->rs = rs;
+		hammer2_xop_start(&xop->head, &hammer2_seek_desc);
+		error = hammer2_xop_collect(&xop->head, 0);
+		if (error == HAMMER2_ERROR_ENOENT)	/* the walks fed no chain */
+			error = 0;
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		hammer2_inode_unlock(ip);
+		if (error != 0)
+			break;
+		k = hammer2_seek_agree(rs, nc);
+		if (k < 0 || r->mode != HAMMER2_SEEK_MODE_HOLE || !rs[k].full)
+			break;
+		HAMMER2_SEEK_COUNT(hammer2_seek_walked);
+		cur = rs[k].key;
+	}
+	if (error == 0 && k >= 0) {
+		HAMMER2_SEEK_COUNT(hammer2_seek_walked);
+		r->key = rs[k].key;
+		r->found = rs[k].found;
+		r->n = 0;
+		if (r->mode == HAMMER2_SEEK_MODE_MAP) {
+			memcpy(r->v, rs[k].v, rs[k].n * sizeof(*r->v));
+			r->n = rs[k].n;
+		}
+	}
+	kfree(rs);
+	kvfree(rv);
+	if (error != 0)
+		return (hammer2_error_to_errno(error));
+	if (k < 0) {
+		HAMMER2_SEEK_COUNT(hammer2_seek_fellback);
+		r2 = *r;
+		r2.key_beg = cur;
+		error = hammer2_seek_scanall(ip, &r2);
+		r->key = r2.key;
+		r->found = r2.found;
+		r->n = r2.n;
+	}
+	return (error);
 }
 
 /*
  * Linux: the blockref tree's answer to a seek or a map (struct
- * hammer2_seek_req), from hammer2_xop_seek()'s walk where
- * hammer2_seek_walks() and from hammer2_seek_scanall() otherwise.
+ * hammer2_seek_req): hammer2_xop_seek()'s walk on a cluster of local
+ * elements, through hammer2_seek_vote() where several vote, and
+ * hammer2_seek_scanall() for a cluster with a remote element.
  * Returns 0 or a positive errno.
  */
 static int
@@ -1660,7 +1823,7 @@ hammer2_seek_tree(struct inode *inode, struct hammer2_seek_req *r)
 {
 	hammer2_inode_t *ip = VTOI(inode);
 	hammer2_xop_seek_t *xop;
-	int error;
+	int error, nc;
 
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 	xop = hammer2_xop_alloc(ip, 0);
@@ -1669,10 +1832,17 @@ hammer2_seek_tree(struct inode *inode, struct hammer2_seek_req *r)
 		hammer2_inode_unlock(ip);
 		return (hammer2_seek_scanall(ip, r));
 	}
+	if (hammer2_seek_voters(xop) > 1) {
+		nc = xop->head.cluster.nchains;
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		hammer2_inode_unlock(ip);
+		return (hammer2_seek_vote(ip, r, nc));
+	}
 	xop->r = *r;
 	hammer2_xop_start(&xop->head, &hammer2_seek_desc);
 	error = hammer2_xop_collect(&xop->head, 0);
 	if (error == HAMMER2_ERROR_ENOENT) {	/* the walk fed no chain */
+		HAMMER2_SEEK_COUNT(hammer2_seek_walked);
 		*r = xop->r;
 		error = 0;
 	}
@@ -1827,7 +1997,7 @@ hammer2_seek_data_hole(struct file *file, loff_t offset, int whence)
  * seek read, and a truncate waits for the seek.  Under it the seek takes
  * the inode lock and chain locks, which sit below i_rwsem in the module's
  * order as hammer2_vop_setattr() takes them, and no folio lock.  On a
- * cluster of one local element the tree read is a walk of blockref arrays
+ * cluster of local elements the tree read is a walk of blockref arrays
  * that makes no chain for a block on the media (hammer2_xop_seek()).  A
  * success sets the file position through vfs_setpos(), as ext4_llseek()
  * ends; a failure leaves it where it was.
@@ -2372,6 +2542,20 @@ hammer2_gather_block(struct address_space *mapping, struct folio *folio,
 	folio_batch_release(&found);
 }
 
+/*
+ * Linux: the debug build's write_except, an element index or -1, writes
+ * each block on every element but that one, through upstream's
+ * hammer2_xop_start_except(), so a test can make two MASTERs hold
+ * different blocks of one file without a crash (script/cluster-quorum.sh).
+ */
+#if defined(HAMMER2_LOCKDEBUG)
+static int hammer2_write_except = -1;
+module_param_named(write_except, hammer2_write_except, int, 0644);
+#define HAMMER2_WRITE_EXCEPT	READ_ONCE(hammer2_write_except)
+#else
+#define HAMMER2_WRITE_EXCEPT	(-1)
+#endif
+
 static int
 hammer2_writepages(struct address_space *mapping,
     struct writeback_control *wbc)
@@ -2399,7 +2583,8 @@ hammer2_writepages(struct address_space *mapping,
 		xop->folio = folio;
 		xop->siblings = &siblings;
 		xop->lbase = folio_pos(folio);
-		hammer2_xop_start(&xop->head, &hammer2_strategy_write_desc);
+		hammer2_xop_start_except(&xop->head,
+		    &hammer2_strategy_write_desc, HAMMER2_WRITE_EXCEPT);
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 		folio_batch_release(&siblings);
 		error = 0;

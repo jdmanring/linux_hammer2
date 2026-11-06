@@ -241,7 +241,7 @@ own bound, since a count of 0 or less would never stop its scan. A
 cluster with a remote element (`hammer2_seek_scanall()`) bound theirs to
 a chunk of key space, at most 1024 blocks after a chunk holding data, and
 ask `NODATA`, so over the wire each block is a frame carrying a blockref
-alone. A cluster of one local element walks its blockref arrays instead
+alone. A cluster of local elements walks its blockref arrays instead
 (`hammer2_xop_seek()`), which has no remote index and never reaches the
 wire. The client accepts a data chain with no
 bytes only from a `scanall` that asked `NODATA` (`hammer2_remote_proxy()`);
@@ -476,7 +476,7 @@ helper's `mount_count` accounting (`hammer2_vfsops.c:2867-2875`) skips
 it by the same test, its `devvp_list` is initialized empty because
 `hammer2_register_sb()` walks every slot's list
 (`hammer2_ondisk.c:139-143`), and it is freed by a reference count the connection device alone
-carries (`struct hammer2_dev` has none, `hammer2.h:982-1038`, only
+carries (`struct hammer2_dev` has none, `hammer2.h:990-1046`, only
 `mount_count` and `iofree_count`): one reference per chain allocated on
 it, taken in `hammer2_chain_alloc()` (`hammer2_chain.c:176`) and dropped
 where the chain is freed (`:837`, not at `hammer2_chain_lastdrop()`'s
@@ -977,7 +977,7 @@ is a constraint on the write-capable pass of stage 3, which must either
 raise the bound with the size it asks for or ask in pieces, and stage
 2b's read-only pass never reaches it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
-(`:1723-1724`), and retires normally; a connection that closes fails every
+(`:1731-1732`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
 `hammer2_admin.c:484` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`
@@ -1058,7 +1058,7 @@ strategy write ends its folios only inside its storage function
 would leave every buffered write under writeback until unmount, and the
 buffered writes and attribute changes dispatch no XOP at all
 (`hammer2_vnops.c` starts one at `:133`, `:242`, `:515`, `:671`, `:712`,
-`:1514`, `:1568`, `:1673` and `:2402`), so they would have returned 0 and lost
+`:1514`, `:1572`, `:1842` and `:2586`), so they would have returned 0 and lost
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1849-1859`).
 The slave's pass writes its element through chain calls and its own
@@ -1313,7 +1313,7 @@ rather than from the design document alone.
   `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
   (`hammer2_vnops.c:374`, `:500`, `:619`, `:830`, `:1040`, `:1238`,
-  `:1431`, `:1966`, `:2763`), which a mount sets and only a remount
+  `:1431`, `:2136`, `:2948`), which a mount sets and only a remount
   rewrites (`hammer2_vfsops.c:1884`, `:2769`, `:2799`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1354-1355`), and with it clear
@@ -1332,7 +1332,7 @@ rather than from the design document alone.
   property of the write path's design, not of a flag.
 - **C14. A read served from the caches never reaches the quorum
   check.** Cached folios, the dentry cache and the in-memory inode
-  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2703`) with no
+  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2888`) with no
   XOP; only an uncached lookup and `readdir`, which is an XOP per call
   (`:197`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
@@ -1636,7 +1636,7 @@ issues it twice.
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
-(`hammer2.h:1692-1736`), and the collect turns `ESRCH` and `EDEADLK` at
+(`hammer2.h:1700-1744`), and the collect turns `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
 agreeing the check returns at `hammer2_cluster.c:353-366`, before pass 3,
 and `RDHARD` is set for a MASTER only in pass 3 (`:409-410`), so there is
@@ -1686,9 +1686,9 @@ keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`, `fs/ext4/ioctl.c:858-868`,
 those two test theirs: every VOP that modifies, since the port's
 create, unlink, rename, link, setattr, fallocate and time update modify
 local chains before the collect (C6), `open` and `mmap` for writing (the port has no `.open` and its
-`.read_iter` is the generic one, `hammer2_vnops.c:2163`, so those two are
+`.read_iter` is the generic one, `hammer2_vnops.c:2333`, so those two are
 new wrappers, and the mmap hook on the kernel of record is
-`.mmap_prepare`, `:2167`), `write_iter`, `page_mkwrite`, `writepages`,
+`.mmap_prepare`, `:2337`), `write_iter`, `page_mkwrite`, `writepages`,
 and the reads, which both refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
 so that a cut-off holder never serves cached data as current; `fsync`
 never returns 0 after the shutdown, as neither does (`fs/ext4/fsync.c:134`
@@ -1711,7 +1711,7 @@ state, read in the `quorum_loss` cell from `cat` and `ls` after the
 caches are dropped and from a `stat` of an uncached inode, which stage
 2's read-only remote element can already read. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
-errno map has no `pmp` (`hammer2.h:1698-1699`), the collect's skip (C7)
+errno map has no `pmp` (`hammer2.h:1706-1707`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
 **Taken: `ENOTCONN` for an uncached read with no quorum

@@ -259,7 +259,11 @@
 # hammer2_seek_walks(), and the scan's fatal-signal check returns a
 # positive EINTR, the module's errno convention. No category is new. See
 # README.kernel-style.md.
-21 Argument 'X' is not used in function-like macro
+# 1,659 to 1,661: the seek's vote on several MASTERs. The debug build's
+# fallback and walk counters have a non-debug macro of ((void)0), its
+# argument unused, as the hold helper's is, and the new frontend functions
+# net one more `return (x);`. No category is new. See README.kernel-style.md.
+22 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
 2 Block comments should align the * on each line
@@ -289,7 +293,7 @@
 4 please, no space before tabs
 247 please, no spaces at the start of a line
 86 quoted string split across lines
-398 return is not a function, parentheses are not required
+399 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)

@@ -146,7 +146,7 @@ threads are the per-mount sync thread and the bulkfree thread, which are
    the dedup granularity `HAMMER2_DEDUP_FRAG` derived from it. Larger than
    any base page; the DIO layer works in 64 KiB units regardless of page
    size, which is what makes it the right owner of the buffers on Linux.
-3. **`MAXPHYS` scratch buffers per XOP** (`hammer2.h:865`,
+3. **`MAXPHYS` scratch buffers per XOP** (`hammer2.h:873`,
    `hammer2_admin.c:326`): Linux has no `MAXPHYS`; the size becomes a port
    constant tied to the physical buffer size.
 4. **`nbuf`-derived sizing**: `hammer2_dio_limit = nbuf * 2`

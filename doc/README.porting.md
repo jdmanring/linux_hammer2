@@ -1593,18 +1593,36 @@ at the walk's cursor, so a seek from deep in a file loads no indirect
 block below it. SEEK_DATA stops at the first data block, SEEK_HOLE at the
 first key no block covers, and the map fills an array of blockrefs that
 `hammer2_fiemap()` merges into extents. The answer comes back in the
-XOP, as `hammer2_xop_bmap()` returns its offset, and no chain is fed. The
-walk runs only on a cluster of one local element. Several elements need
-the quorum's agreement on every key and a remote element has no blockref
-array on this host, so those take `hammer2_seek_scanall()`, the chunked
-scan through `hammer2_xop_scanall()` that every seek used before, under
-a `DEFER` with three triggers: the remote 1 GiB SEEK_HOLE of
-`cluster-wire.sh` under `H2_WIRE_SEEKTIME=1` above 2.5 s, a writer's
-median beside the two-master SEEK_HOLE loop of `cluster-quorum.sh` under
-`H2_QUORUM_CONTEND=512` above 100 ms, or a PFS with a remote element
-mounted read-write. A PFS with a remote element is read-only today, so
-no writer waits behind its scan; on a cluster of several local elements
-one does.
+XOP, as `hammer2_xop_bmap()` returns its offset, and no chain is fed.
+
+On a cluster of several local elements each voting element, a MASTER or
+the SUPROOT, the elements `hammer2_cluster_check()` counts, walks its own
+tree into its own request and array, and the frontend compares them
+(`hammer2_seek_vote()`, `hammer2_seek_agree()`): the same answer and the
+same deciding blocks at the same keybits and `modify_tid`, physical
+addresses aside, is the quorum's answer at every key, since each block in
+the range is then held by every voting element at one tid. Anything else
+goes to `hammer2_seek_scanall()` from the cursor, the chunked scan through
+`hammer2_xop_scanall()` that every seek used before, whose collect decides
+key by key as a read does; a block fewer than a quorum hold, or held at
+two tids, is a hole there as read(2) zero-fills it. A slave does not walk:
+it never decides a key, and one behind its master would send every seek to
+the scan. Feeding the deciding chains to the collect instead, as the
+carried readdir does, was rejected: every element runs to completion
+before the first collect, so a walk that stops at its first answer cannot
+give the collect's skip its next key, and feeding a chain per block is the
+scan's cost. The elements walk one after another in the caller's thread
+(`hammer2_xop_start_except()`), so a writer beside a seek waits for the
+sum of the voting walks. FIEMAP reports the physical address of the
+highest-index element that walked, the focus the collect would pick.
+
+A remote element has no blockref array on this host, so a PFS with one
+takes the scan, under a `DEFER` with three triggers: the remote 1 GiB
+SEEK_HOLE of `cluster-wire.sh` under `H2_WIRE_SEEKTIME=1` above 2.5 s on
+`h2debug-7.3tls`, a PFS with a remote element mounted read-write, or
+`seek_fellback` above zero in `cluster-quorum.sh`'s agreeing two-master
+run, which would mean the comparison fails on healthy media. A PFS with a
+remote element is read-only today, so no writer waits behind its scan.
 
 Both hold `i_rwsem` shared for the whole call, as
 `btrfs_file_llseek()` holds it for the seek and `xfs_vn_fiemap()`,
@@ -1613,12 +1631,12 @@ the same file waits for the seek it arrives behind, and the file's
 writeback, which modifies the inode chain the walk holds shared, waits
 for the walk. Until N10.6 the scan built a chain for every block and
 gave `i_rwsem` up between chunks when a writer waited, which bounded the
-writer's wait by hiding the scan's cost. On one local element the walk
-removed the cost instead. The scan that several elements and a remote
-one still take keeps it and no longer gives the lock up, so a writer on
-a cluster of several local elements waits out the whole scan; the scan
-stops on a fatal signal between chunks, as the walk does between
-blocks. The verification record has the readings on both sides.
+writer's wait by hiding the scan's cost. The walk removed the cost
+instead, on one local element and on several. The scan a remote element
+and a disagreement still take keeps it and no longer gives the lock up;
+it stops on a fatal signal between chunks, as the walk does at each
+indirect block it enters. The verification record has the readings on
+both sides.
 
 The walk is recursive and the media bounds nothing: an indirect block
 whose array names itself passes its check. The walk refuses a blockref

@@ -783,9 +783,10 @@ struct hammer2_xop_bmap {
 
 /*
  * Linux: hammer2_xop_seek(), the blockref walk behind SEEK_DATA, SEEK_HOLE
- * and FIEMAP on a cluster of one local element.  It feeds no chain: the
- * answer is in the fields below, which the one element writes before the
- * frontend collects.
+ * and FIEMAP on a cluster of local elements.  It feeds no chain: the
+ * answer is in the fields below, which each voting element (a MASTER or
+ * the SUPROOT) writes before the frontend collects, into r when one
+ * votes and into its own rs[clindex] when several do.
  */
 #define HAMMER2_SEEK_MODE_DATA	1	/* Linux: the first data at or after */
 #define HAMMER2_SEEK_MODE_HOLE	2	/* Linux: the first key no block covers */
@@ -794,6 +795,7 @@ struct hammer2_xop_bmap {
 struct hammer2_fiemap_ref {			/* Linux */
 	hammer2_key_t	key;
 	hammer2_off_t	poff;
+	hammer2_tid_t	tid;		/* modify_tid, compared across elements */
 	uint8_t		keybits;
 	uint8_t		methods;
 };
@@ -803,22 +805,28 @@ struct hammer2_fiemap_ref {			/* Linux */
  * data key at or after key_beg in key and sets found; HOLE leaves the
  * first key at or after key_beg no block covers, past key_end when every
  * block to there is data; MAP fills v with up to max data blocks, n of
- * them, and leaves the key after the last in key.
+ * them, and leaves the key after the last in key.  With several voting
+ * elements DATA and HOLE record the blocks that decided the answer in v
+ * too, for the frontend to compare, and HOLE stops with full set when v
+ * fills, its key the cursor to go on from.
  */
 struct hammer2_seek_req {			/* Linux */
 	hammer2_key_t		key_beg;	/* inclusive */
 	hammer2_key_t		key_end;	/* inclusive */
 	int			mode;
-	struct hammer2_fiemap_ref *v;		/* MAP */
-	int			max;		/* MAP: v's entries */
+	struct hammer2_fiemap_ref *v;		/* MAP, or several voters */
+	int			max;		/* v's entries */
 	hammer2_key_t		key;		/* the answer */
 	int			found;		/* DATA */
-	int			n;		/* MAP */
+	int			n;		/* v's entries filled */
+	int			full;		/* HOLE: v filled first */
+	int			walked;		/* this element walked */
 };
 
 struct hammer2_xop_seek {			/* Linux */
 	hammer2_xop_head_t	head;
 	struct hammer2_seek_req	r;
+	struct hammer2_seek_req	*rs;		/* several voters, by clindex */
 };
 
 typedef struct hammer2_xop_ipcluster hammer2_xop_ipcluster_t;
