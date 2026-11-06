@@ -508,6 +508,14 @@ STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
 # which is how a run against the tree before a fix is made.
 FAULT=${H2_FAULT:-0}
 LOCKDEBUG=${H2_LOCKDEBUG:-0}
+# H2_SYNC_SEEKVOTE=1: phase 2's MASTER, with its SLAVE made stale on one
+# block, seeks by the MASTER's walk alone and answers as the forced scan.
+# Needs H2_LOCKDEBUG=1 (or an H2_KO built with it).
+SEEKVOTE=${H2_SYNC_SEEKVOTE:-0}
+case $SEEKVOTE in 0|1) ;; *) echo "cluster: COULD-NOT-RUN: H2_SYNC_SEEKVOTE is 0 or 1" >&2; exit 2 ;; esac
+if [ "$SEEKVOTE" = 1 ] && [ "$LOCKDEBUG" != 1 ] && [ -z "${H2_KO:-}" ]; then
+	echo "cluster: COULD-NOT-RUN: H2_SYNC_SEEKVOTE needs H2_LOCKDEBUG=1 (or an H2_KO built with it)" >&2; exit 2
+fi
 # Two arms of the tree run, each 0 or 1 and each needing H2_LOCKDEBUG=1's
 # knob. H2_FORCE_RESCAN=1 starts the first change's pass as if the rescan
 # set had overflowed, so it compares every inode; the set holds 64 entries
@@ -1205,6 +1213,40 @@ fi
 sleep 30
 echo "cluster-passes $(passes CL)"
 echo "cluster-updates $(klog 'syncthr: update inode')"
+# H2SEEKVOTE=1 (H2_SYNC_SEEKVOTE): a MASTER with a SLAVE behind it seeks by
+# the MASTER's walk alone, since a slave never decides a key. A file of
+# eight blocks reaches both elements through the frontend, then block 3 is
+# rewritten on the MASTER only (write_except 1), so the slave's copy is
+# stale at an older modify_tid, which each volume's media is read for. A
+# slave that voted would send the call to the scan, and one that wrote the
+# walk's answer would make it differ from the scan's.
+if [ "${H2SEEKVOTE:-0}" = 1 ]; then
+	P=/sys/module/hammer2/parameters
+	for k in seek_scanall seek_walked seek_fellback write_except; do
+		[ -e $P/$k ] || { echo "cluster: COULD-NOT-RUN: no $k knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
+	done
+	dd if=/dev/urandom of=/mnt/h2c/sv bs=64k count=8 2>/dev/null; sync
+	echo 1 > $P/write_except
+	dd if=/dev/urandom of=/mnt/h2c/sv bs=64k seek=3 count=1 conv=notrunc 2>/dev/null; sync
+	echo -1 > $P/write_except
+	ino=$(stat -c %i /mnt/h2c/sv)
+	for v in m:vdb s:vdc; do
+		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$ino" '
+		/^ *inode\.[0-9]/ { mode = "inode"; next }
+		mode == "inode" && $1 == "inum" { inum = $2 }
+		/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+		mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m); if (inum == n && key ~ /^0000000000030000\//) print "seekvote-mod", t, m; mode = "" }'
+	done
+	w0=$(cat $P/seek_walked); b0=$(cat $P/seek_fellback)
+	xfs_io -r -c "seek -a -r 0" -c "fiemap -v" /mnt/h2c/sv > /tmp/sv.walk 2>&1
+	w1=$(cat $P/seek_walked); b1=$(cat $P/seek_fellback)
+	echo 1 > $P/seek_scanall
+	xfs_io -r -c "seek -a -r 0" -c "fiemap -v" /mnt/h2c/sv > /tmp/sv.scan 2>&1
+	echo 0 > $P/seek_scanall
+	echo "seekvote-slave lines $(wc -l < /tmp/sv.walk) differ $(cmp -s /tmp/sv.walk /tmp/sv.scan && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0))"
+	diff /tmp/sv.walk /tmp/sv.scan | head -5 | sed 's/^/seekvote-diff /'
+	rm -f /mnt/h2c/sv; sync
+fi
 if [ "${H2_FAULT:-0}" != 0 ]; then
 	# Until the copies settle, the same settle the resume uses.
 	n=0; last=-1; still=0
@@ -1621,7 +1663,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
+GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
@@ -1891,6 +1933,15 @@ a=$(val lone-delete-rc); [ "${a:-1}" = 0 ]; check "pfs-delete removes the SLAVE"
 a=$(val lone-threads-deleted); [ "${a:-1}" = 0 ]; check "pfs-delete stops its thread" $? "${a:-none} left"
 c=$(val cluster-thread); [ "${c:-0}" = 1 ]; check "the SLAVE in a cluster starts one thread" $? "${c:-0}"
 u=$(val cluster-updates); [ "${u:-0}" -ge 55 ] 2>/dev/null; check "the thread copies the set" $? "${u:-0} inode updates for 55 files and their directories"
+if [ "$SEEKVOTE" = 1 ]; then
+	mm=$(sed -n 's/^seekvote-mod m //p' "$W/out" | head -1); ms=$(sed -n 's/^seekvote-mod s //p' "$W/out" | head -1)
+	[ -n "$mm" ] && [ -n "$ms" ] && [ "$mm" != "$ms" ]
+	check "the two elements hold block 3 at different tids, by each volume's media" $? "master ${mm:-absent} slave ${ms:-absent}"
+	a=$(val seekvote-slave); set -- $a
+	[ "${2:-0}" -gt 0 ] 2>/dev/null && [ "$4" = 0 ] && [ "${6:-0}" -gt 0 ] 2>/dev/null && [ "$8" = 0 ]
+	check "a MASTER with a stale SLAVE seeks by its own walk and answers as the scan" $? "${a:-no line}"
+	sed -n 's/^seekvote-diff /        /p' "$W/out"
+fi
 p=$(val change-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the thread keeps passing after the master changes" $? "${p:-0} passes in 30 s"
 p=$(val change-files); [ "${p:-0}" = 35 ]; check "the changes leave 35 files on the master" $? "${p:-none}"
 p=$(val pass-errors); [ "${p:-1}" = 0 ]; check "no pass reports an error" $? "${p:-none}"
