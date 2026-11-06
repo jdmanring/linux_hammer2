@@ -1808,7 +1808,7 @@ share by construction, and the caller that hands the socket in is the
 one that knows which end it is, so the role is an input of the intake.
 Before anything is submitted the intake refuses, each with one named
 line: a socket that is not TCP over IPv4 or IPv6 (`holdfp()` accepts any
-connected stream socket, `hammer2_os.h:1881-1898`, and the submit any
+connected stream socket, `hammer2_os.h:1885-1902`, and the submit any
 socket with a file, `net/handshake/request.c:258-267`, so an `AF_UNIX`
 pair would fail only when `tlshd` installed kernel TLS); a socket already
 carrying an upper-layer protocol (`inet_csk_has_ulp()`,
@@ -2398,7 +2398,7 @@ change what the arm reads. One more `HAMMER2_LOCKDEBUG` parameter,
 in `hammer2_link_work()` after the quiesce (`hammer2_iocom.c:960`) with
 `hammer2_mntlk` still held, inside the window before the old reader is
 reaped. The existing build flag `HAMMER2_NOSNAPSCOPE=1`
-(`HAMMER2_CTL_NOSNAPSCOPE`, `hammer2_os.h:2080-2084`) is redefined
+(`HAMMER2_CTL_NOSNAPSCOPE`, `hammer2_os.h:2084-2088`) is redefined
 below.
 - `tlspeer`, bound to cluster id X, announces a span for Y: refused with
   the line, no slot. Removed: the span enters the table.

@@ -467,7 +467,11 @@ __hammer2_mtx_init(hammer2_mtx_t *p, const char *s, struct lock_class_key *k)
  * name "h2ch" and again by hammer2_chain_lockdep_nest() where
  * hammer2_chain_get() first knows the parent.  keybits strictly
  * decreases from parent to child, so that orders every indirect and
- * freemap level, and the type separates volume, freemap, inode, dirent
+ * freemap level, on media this port has written since 1.0.21; an indirect
+ * block an earlier hammer2_chain_create_indirect() made at its parent's
+ * keybits is one class taken twice under its parent, which lockdep
+ * reports, on every descent and not only the seek's, while the read
+ * itself is sound.  The type separates volume, freemap, inode, dirent
  * and data from each other.  What neither carries is the depth of an
  * inode chain under another inode chain, a directory above its entry, so
  * each chain also carries a level, the parent's plus one when the parent
