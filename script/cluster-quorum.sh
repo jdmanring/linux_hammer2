@@ -306,11 +306,16 @@ vseek outside h $((16 * 65536))
 vseek hole0 h 0
 # Each block the quorum calls a hole read on its own: dd's status, the
 # bytes it read and how many of them are not zero.
+# Debug bit 0x0100 prints each failed read with what every element fed,
+# and dd's own message is kept, so a failure names its errno.
+echo $((0x8000 | 0x0100)) > /sys/module/hammer2/parameters/debug
 for b in 2 10 12; do
 	rm -f /tmp/qv.blk
-	dd if=/mnt/h2q/dis of=/tmp/qv.blk bs=64k skip=$b count=1 2>/dev/null; s=$?
+	dd if=/mnt/h2q/dis of=/tmp/qv.blk bs=64k skip=$b count=1 2>/tmp/qv.err; s=$?
 	echo "vote read $b exit $s bytes $(wc -c < /tmp/qv.blk 2>/dev/null || echo none) nonzero $(tr -d '\000' < /tmp/qv.blk 2>/dev/null | wc -c)"
+	[ "$s" = 0 ] || echo "vote readerr $b $(tr '\n' ' ' < /tmp/qv.err)"
 done
+echo $((0x8000)) > /sys/module/hammer2/parameters/debug
 # The comparison's control: 1 drops the tid from it, 2 trusts the first
 # walk unread; either must make the walk's dump differ from the scan's.
 for k in 1 2; do
@@ -546,6 +551,7 @@ if [ "$QVOTE" = 1 ]; then
 	done
 	[ "$bad" = 0 ]
 	check "no block the seek calls a hole reads back data: each read whole, as zeros" $? "SEEK_DATA from block 8 ${r:-none};$rd"
+	sed -n 's/^vote readerr /        read error: /p' "$W/out"
 	for k in 1 2; do
 		d=$(vf break$k differ)
 		[ "$d" = 1 ]
