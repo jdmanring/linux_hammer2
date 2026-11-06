@@ -70,18 +70,26 @@
 #                   H2_SEEK_DENSE_MB sizing the dense file (64 MiB by
 #                   default) for this mode and the next,
 #                   checked for right answers, and with H2_SEEK_RULE_MS
-#                   set, failed when the dense kind's median of medians
-#                   passes that many milliseconds. A rate, so run it on
-#                   h2release-7.3tls.
+#                   set, failed when the dense SEEK_HOLE's median of
+#                   medians passes that many milliseconds, and with
+#                   H2_SEEK_DEEP_RULE_US, when the deep kind's passes that
+#                   many microseconds. Both rules are opt-in: the debug
+#                   kernel reads about 90 ms and 81 us at 16 GiB, so no
+#                   default bound holds on every build. A rate, so run it
+#                   on h2release-7.3tls.
 #   H2_SEEK_COLD=1  a SEEK_HOLE at 0 across a dense file of
 #                   H2_SEEK_DENSE_MB (64 by default) with nothing in
 #                   memory, H2_REPEAT times (5 by default): before each,
 #                   the guest unmounts and drops its caches, the image
 #                   is detached, the host syncs it and drops its pages
 #                   (POSIX_FADV_DONTNEED) and counts what stays resident
-#                   (mincore, at most 1024 pages or the run fails), the
-#                   image is attached again, and the guest mounts. Medians as the time mode's,
-#                   H2_SEEK_RULE_MS applying to them.
+#                   (mincore, at most an eighth of the walk's indirect
+#                   blocks in pages, or the run fails; a count before the
+#                   first drop must see 64 MiB just read), the image is
+#                   attached again, and the guest mounts and seeks, each
+#                   seek reading at least the walk's indirect blocks.
+#                   Medians as the time mode's, H2_SEEK_RULE_MS applying
+#                   to them.
 #   H2_SEEK_CONTEND=1  what a seek costs a writer (seekprobe contend):
 #                   H2_SEEK_TIME_N one-block writes to a 64 MiB file,
 #                   timed alone and beside a SEEK_HOLE loop, H2_REPEAT
@@ -121,6 +129,9 @@ case "$RACE$TIME$CONTEND$COLD" in
 esac
 REPEAT=${H2_REPEAT:-$( [ "$TIME$COLD" != 00 ] && echo 5 || { [ "$CONTEND" != 0 ] && echo 3 || echo 1; } )}
 RULE=${H2_SEEK_RULE_MS:-}
+DEEPRULE=${H2_SEEK_DEEP_RULE_US:-}
+case "$DEEPRULE" in ''|*[!0-9]*|0) [ -z "$DEEPRULE" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_DEEP_RULE_US=$DEEPRULE is not a count of us" >&2; exit 2; } ;; esac
+[ -z "$DEEPRULE" ] || [ "$TIME" = 1 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_DEEP_RULE_US needs H2_SEEK_TIME=1" >&2; exit 2; }
 case "$RULE" in ''|*[!0-9]*|0) [ -z "$RULE" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RULE_MS=$RULE is not a count of ms" >&2; exit 2; } ;; esac
 [ -z "$RULE" ] || [ "$TIME$COLD" != 00 ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RULE_MS needs H2_SEEK_TIME=1 or H2_SEEK_COLD=1" >&2; exit 2; }
 case "$REPEAT" in ''|*[!0-9]*|0) echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT=$REPEAT is not a count" >&2; exit 2 ;; esac
@@ -265,7 +276,9 @@ echo 3 > /proc/sys/vm/drop_caches
 '
 cold_seek='
 mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP cold mount failed"; exit 0; }
+s0=$(awk "{print \$3}" /sys/block/vdb/stat)
 /tmp/h2seekprobe cold /mnt/sm/c
+echo "cold read-sectors $(( $(awk "{print \$3}" /sys/block/vdb/stat) - s0 ))"
 '
 # The host's copy of the image, synced and dropped, so the guest's read
 # reaches the disk; the resident page count after says whether it did. It
@@ -274,12 +287,15 @@ mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP cold mount failed"; exit 0
 # caller neither owns nor can write mincore(2) reports every page resident
 # and cachestat(2), which fincore uses, refuses, so a count taken then is
 # no reading. Not owning the image fails the drop.
+# "keep" counts without the drop: the control that the count can read a
+# page as resident, run on 64 MiB of the image just read.
 hostdrop() {
 	[ -O "$IMG" ] || { echo "the image is owned by $(stat -c %U "$IMG"), so its pages cannot be counted"; return 1; }
 	python3 -c 'import ctypes, os, sys
 fd = os.open(sys.argv[1], os.O_RDONLY)
 os.fsync(fd)
-os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+if sys.argv[2] != "keep":
+    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
 n = os.fstat(fd).st_size
 libc = ctypes.CDLL(None, use_errno=True)
 libc.mmap.restype = ctypes.c_void_p
@@ -291,7 +307,7 @@ pg = os.sysconf("SC_PAGE_SIZE")
 v = (ctypes.c_ubyte * ((n + pg - 1) // pg))()
 if libc.mincore(ctypes.c_void_p(a), ctypes.c_size_t(n), v) != 0:
     sys.exit(1)
-print(sum(b & 1 for b in v))' "$IMG"
+print(sum(b & 1 for b in v))' "$IMG" "${1:-drop}"
 }
 time_body='
 for k in sparse dense dirty hole deep; do
@@ -308,8 +324,16 @@ if [ "$RACE$TIME$CONTEND$COLD" != 0000 ]; then
 		while [ "$i" -lt "$REPEAT" ]; do
 			o1=$(ssh "$GUEST_SSH" "$cold_drop" 2>&1)
 			detach
+			w=
+			if [ "$i" -eq 0 ]; then
+				w=$(dd if="$IMG" of=/dev/null bs=1M count=64 status=none && hostdrop keep 2>&1) &&
+					w="cold host-resident-warm $w" || w="$w
+SETUP cold warm count failed"
+			fi
 			o2=$(hostdrop 2>&1) && o2="cold host-resident $o2" || o2="$o2
 SETUP cold host drop failed"
+			[ -z "$w" ] || o2="$w
+$o2"
 			attach || o2="$o2
 SETUP cold reattach failed"
 			o3=$(ssh "$GUEST_SSH" "$cold_seek" 2>&1)
@@ -428,17 +452,39 @@ SETUP cold reattach failed"
 		[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c cold seek(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
 		mm=$(printf '%s\n' "$m" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')
 		echo "  cold SEEK_HOLE ns: $(printf '%s\n' "$m" | tr '\n' ' ')median ${mm:-none}"
-		# Each drop's resident count must be a number and at most 1024
-		# pages, 4 MiB, an eighth of the indirect blocks a 16 GiB walk
-		# reads, or the seek after it read the host's memory.
+		# A file's leaf indirect blocks are 16 KiB of 128 blockrefs, 8 MiB
+		# of data each (hammer2_chain_create_indirect()), so the walk
+		# across a dense file reads a 512th of it, 32 MiB at 16 GiB. Each
+		# drop's resident count must be a number and at most an eighth of
+		# that in pages, or the seek after it read the host's memory; the
+		# count before the first drop, with 64 MiB of the image just read,
+		# must see those 16384 pages, or the counter reads nothing.
+		hb=$(( ${DMB:-64} / 16 )); [ "$hb" -ge 1 ] || hb=1
+		hw=$(printf '%s\n' "$out" | sed -n 's/^cold host-resident-warm //p')
+		if [ -n "$hw" ] && [ "$hw" -ge 16384 ] 2>/dev/null; then
+			echo "  ok    the count sees the pages just read: $hw resident before the first drop"
+		else
+			echo "  FAIL  the count before the first drop read ${hw:-nothing}, under the 16384 pages just read"; fail=$((fail + 1))
+		fi
 		hr=$(printf '%s\n' "$out" | sed -n 's/^cold host-resident //p')
 		echo "  cold host-resident pages after each drop: $(printf '%s\n' "$hr" | tr '\n' ' ')"
 		hn=$(printf '%s\n' "$hr" | command grep -c '^[0-9][0-9]*$')
-		hbig=$(printf '%s\n' "$hr" | awk '$1 ~ /^[0-9]+$/ && $1 > 1024' | wc -l)
+		hbig=$(printf '%s\n' "$hr" | awk -v b="$hb" '$1 ~ /^[0-9]+$/ && $1 > b' | wc -l)
 		if [ "$hn" -eq "$REPEAT" ] && [ "$hbig" -eq 0 ]; then
-			echo "  ok    the host held at most 1024 pages of the image after each of $REPEAT drop(s)"
+			echo "  ok    the host held at most $hb pages of the image after each of $REPEAT drop(s)"
 		else
-			echo "  FAIL  host residency: $hn count(s) for $REPEAT drop(s), $hbig above 1024 pages"; fail=$((fail + 1))
+			echo "  FAIL  host residency: $hn count(s) for $REPEAT drop(s), $hbig above $hb pages"; fail=$((fail + 1))
+		fi
+		# The guest's own read: at least the walk's indirect blocks, a
+		# 512th of the file in 512-byte sectors, or the seek was warm.
+		sf=$(( ${DMB:-64} * 4 ))
+		rs=$(printf '%s\n' "$out" | sed -n 's/^cold read-sectors //p')
+		echo "  cold sectors read by each seek: $(printf '%s\n' "$rs" | tr '\n' ' ')"
+		rlow=$(printf '%s\n' "$rs" | awk -v f="$sf" '!($1 ~ /^[0-9]+$/) || $1 < f' | wc -l)
+		if [ "$(printf '%s\n' "$rs" | command grep -c .)" -eq "$REPEAT" ] && [ "$rlow" -eq 0 ]; then
+			echo "  ok    each cold seek read at least $sf sectors, the walk's indirect blocks"
+		else
+			echo "  FAIL  cold reads: $rlow of the seeks read under $sf sectors or no count"; fail=$((fail + 1))
 		fi
 		if [ -n "$RULE" ]; then
 			if [ -n "$mm" ] && [ "$mm" -le $((RULE * 1000000)) ]; then
@@ -459,6 +505,15 @@ SETUP cold reattach failed"
 					echo "  ok    the dense SEEK_HOLE median of medians is within $RULE ms"
 				else
 					echo "  FAIL  the dense SEEK_HOLE median of medians ${mm:-none} ns passes $RULE ms"; fail=$((fail + 1))
+				fi; }
+			# deep, SEEK_DATA in the file's last sixteenth, is the walk's
+			# seed: a walk from the file's first block answers it in
+			# about 190 us against 7 us.
+			[ "$k" = deep ] && [ -n "$DEEPRULE" ] && {
+				if [ -n "$mm" ] && [ "$mm" -le $((DEEPRULE * 1000)) ]; then
+					echo "  ok    the deep median of medians is within $DEEPRULE us"
+				else
+					echo "  FAIL  the deep median of medians ${mm:-none} ns passes $DEEPRULE us"; fail=$((fail + 1))
 				fi; }
 		done
 		raw=$(printf '%s\n' "$out" | command grep -c '^seekm-time [a-z]* [0-9]* ')
