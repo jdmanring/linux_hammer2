@@ -44,6 +44,12 @@ case $IDLE in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_IDLE is no
 # H2_QUORUM_CONTEND=n prints a writer's wait beside a SEEK_HOLE loop through
 # the quorum on a dense file of n MiB, a rate, so read on h2release-7.3tls.
 QCONTEND=${H2_QUORUM_CONTEND:-0}
+# H2_QUORUM_SEEKVOTE=1 builds the module with HAMMER2_LOCKDEBUG and checks
+# the seek walk on both masters against the forced scan, with the masters
+# agreeing and then made to disagree by writing blocks on one alone
+# (write_except), and the comparison's own control (seek_agree_break).
+QVOTE=${H2_QUORUM_SEEKVOTE:-0}
+case $QVOTE in 0|1) ;; *) echo "quorum: COULD-NOT-RUN: H2_QUORUM_SEEKVOTE is 0 or 1" >&2; exit 2 ;; esac
 case $QCONTEND in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_CONTEND is not a count of MiB without a leading zero" >&2; exit 2 ;; esac
 # The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
 # kernel is not read as a hang.
@@ -72,7 +78,8 @@ if [ "$other" -gt 0 ] && [ "${H2_FIXTURE_SHARE:-0}" != 1 ]; then
 fi
 
 make -s clean >/dev/null 2>&1
-make -s KDIR="$KDIR" >/dev/null 2>&1 || {
+LD=; [ "$QVOTE" = 1 ] && LD="HAMMER2_LOCKDEBUG=1"
+make -s KDIR="$KDIR" $LD >/dev/null 2>&1 || {
 	echo "quorum: COULD-NOT-RUN: module did not build against $KDIR" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -o "$W/h2seekprobe" test/hammer2-seekprobe.c >/dev/null 2>&1 || {
@@ -204,9 +211,92 @@ grep '^seekm-fail' /tmp/q.seek | head -5
 echo "map-exit $s map-extents $(sed -n 's/^seekm-dump extents //p' /tmp/q.dump)"
 # Removed again, so the media checks below count the set's 24 files.
 rm -f /mnt/h2q/seekf
+# VOTE=1 (H2_QUORUM_SEEKVOTE, a HAMMER2_LOCKDEBUG module): each MASTER walks
+# and the frontend compares the walks (hammer2_seek_vote()). Every file is
+# dumped by the walk and by the forced scan and compared, and the counters
+# say which reader answered.
+if [ "${VOTE:-0}" = 1 ]; then
+P=/sys/module/hammer2/parameters
+for k in seek_scanall seek_walked seek_fellback seek_agree_break seek_depth_max write_except; do
+	[ -e $P/$k ] || { echo "vote-setup no $k"; exit 1; }
+done
+vdump() {	# file tag
+	w0=$(cat $P/seek_walked); b0=$(cat $P/seek_fellback)
+	/tmp/h2seekprobe dump "$1" > /tmp/qv-walk.$2
+	w1=$(cat $P/seek_walked); b1=$(cat $P/seek_fellback)
+	echo 1 > $P/seek_scanall
+	/tmp/h2seekprobe dump "$1" > /tmp/qv-scan.$2
+	echo 0 > $P/seek_scanall
+	echo "vote $2 lines $(wc -l < /tmp/qv-walk.$2) extents $(grep -c '^seekm-dump extent ' /tmp/qv-walk.$2) differ $(cmp -s /tmp/qv-walk.$2 /tmp/qv-scan.$2 && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0))"
+	diff /tmp/qv-walk.$2 /tmp/qv-scan.$2 | head -5 | sed "s/^/vote $2 diff /"
+}
+vseek() {	# tag whence offset: one seek through xfs_io, and the fallbacks it took
+	b0=$(cat $P/seek_fellback)
+	r=$(xfs_io -r -c "seek -$2 $3" /mnt/h2q/dis 2>&1 | awk '$1 ~ /^(DATA|HOLE)$/ {print $2}')
+	echo "vote $1 answer ${r:-none} fellback $(( $(cat $P/seek_fellback) - b0 ))"
+}
+# Agreeing masters: a file across the walk's 1024-block batch edge, the
+# probe's shape, and a file held in its inode.
+/tmp/h2seekprobe layout /mnt/h2q/lay >/dev/null 2>&1
+/tmp/h2seekprobe make /mnt/h2q/shp >/dev/null 2>&1
+printf x > /mnt/h2q/emb
+sync; umount /mnt/h2q; echo 3 > /proc/sys/vm/drop_caches
+mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
+vdump /mnt/h2q/lay agree-lay
+vdump /mnt/h2q/shp agree-shp
+vdump /mnt/h2q/emb agree-emb
+# The walk's error on several masters is the collect's error, and no
+# fallback: seek_depth_max=0 refuses the first indirect block.
+d0=$(cat $P/seek_depth_max); b0=$(cat $P/seek_fellback)
+echo 0 > $P/seek_depth_max
+/tmp/h2seekprobe refuse /mnt/h2q/lay > /tmp/qv.refuse 2>&1; s=$?
+echo $d0 > $P/seek_depth_max
+echo "vote refuse exit $s eio $(grep -c '^seekm-ok   refuse' /tmp/qv.refuse) fellback $(( $(cat $P/seek_fellback) - b0 ))"
+rm -f /mnt/h2q/lay /mnt/h2q/shp /mnt/h2q/emb
+# Masters made to disagree: blocks 0-7 and 16-23 of 24 on both, then block
+# 10 on the first only, block 12 on the second only, and block 2 rewritten
+# on the first only, so its two copies carry two modify_tids.
+dd if=/dev/urandom of=/mnt/h2q/dis bs=64k count=8 2>/dev/null
+dd if=/dev/urandom of=/mnt/h2q/dis bs=64k seek=16 count=8 conv=notrunc 2>/dev/null
+sync
+for xb in 1:10 0:12 1:2; do
+	echo ${xb%%:*} > $P/write_except
+	dd if=/dev/urandom of=/mnt/h2q/dis bs=64k seek=${xb#*:} count=1 conv=notrunc 2>/dev/null
+	sync
+done
+echo -1 > $P/write_except
+ino=$(stat -c %i /mnt/h2q/dis)
+for v in a:vdb b:vdc; do
+	hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$ino" '
+	/^ *inode\.[0-9]/ { mode = "inode"; next }
+	mode == "inode" && $1 == "inum" { inum = $2 }
+	/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+	mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m); if (inum == n) print "vote show", t, key, m; mode = "" }'
+done
+umount /mnt/h2q; echo 3 > /proc/sys/vm/drop_caches
+mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
+vdump /mnt/h2q/dis disagree
+vseek inside data $((8 * 65536))
+vseek outside hole $((16 * 65536))
+for b in 2 10 12; do
+	echo "vote read $b nonzero $(dd if=/mnt/h2q/dis bs=64k skip=$b count=1 2>/dev/null | tr -d '\000' | wc -c)"
+done
+# The comparison's control: 1 drops the tid from it, 2 trusts the first
+# walk unread; either must make the walk's dump differ from the scan's.
+for k in 1 2; do
+	echo $k > $P/seek_agree_break
+	vdump /mnt/h2q/dis break$k
+done
+echo 0 > $P/seek_agree_break
+rm -f /mnt/h2q/dis; echo "vote rm exit $?"
+fi
 # CONTEND=n prints what a seek through the quorum costs a writer: a dense
 # file of n MiB, writes timed alone and beside a SEEK_HOLE loop.
 [ "${CONTEND:-0}" -gt 0 ] && /tmp/h2seekprobe contend /mnt/h2q/contend 20 "$CONTEND" | grep -v '^seekm-contend [a-z]* [0-9]'
+# and the seek itself on a dense file of the same size, by the probe's
+# time mode: SEEK_HOLE from an offset in the first 16 MiB, ten of twenty
+[ "${CONTEND:-0}" -gt 0 ] && /tmp/h2seekprobe time /mnt/h2q/tdense dense 20 "$CONTEND" | grep '^seekm-time dense-hole median'
+rm -f /mnt/h2q/contend /mnt/h2q/tdense
 sync
 # IDLE=n holds the cluster mounted n seconds after the read-back, so each
 # thread runs several passes, whose counts are printed at the end.
@@ -263,7 +353,7 @@ dmesg > /tmp/q.klog
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$W/h2seekprobe" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; chmod 755 /tmp/h2seekprobe; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=$IDLE CONTEND=$QCONTEND sh /tmp/h2quorum.sh" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; chmod 755 /tmp/h2seekprobe; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=$IDLE CONTEND=$QCONTEND VOTE=$QVOTE sh /tmp/h2quorum.sh" > "$W/out" 2>&1
 rc=$?
 # The guest half's exit, read before anything is inferred from its output.
 # A non-zero that is not 124 means the guest or its session ended without
@@ -330,7 +420,50 @@ check "both seeks through the quorum answer the probe's shape after a remount" $
 a=$(sed -n 's/^map-exit \([0-9]*\) map-extents \([0-9]*\)$/\1 \2/p' "$W/out"); [ "$a" = "0 2" ]
 check "FIEMAP through the quorum maps the shape's two data blocks" $? "${a:-no line} (exit, extents)"
 grep '^seekm-fail' "$W/out" | sed 's/^/        /'
-[ "$QCONTEND" = 0 ] || sed -n 's/^seekm-contend /  contend /p' "$W/out"
+[ "$QCONTEND" = 0 ] || sed -n 's/^seekm-contend /  contend /p; s/^seekm-time dense-hole /  time dense-hole /p' "$W/out"
+if [ "$QVOTE" = 1 ]; then
+	vote() { sed -n "s/^vote $1 //p" "$W/out" | head -1; }	# vote <tag>: the line's fields after the tag
+	vf() { vote "$1" | awk -v k="$2" '{ for (i = 1; i < NF; i++) if ($i == k) { print $(i + 1); exit } }'; }
+	sed -n 's/^vote \([a-z0-9-]*\) diff /  vote diff \1: /p' "$W/out"
+	# Agreeing masters: the walk answered every tree read and matched the scan.
+	for t in agree-lay agree-shp agree-emb; do
+		l=$(vf $t lines); d=$(vf $t differ); w=$(vf $t walked); b=$(vf $t fellback)
+		[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "${w:-0}" -gt 0 ] && [ "$b" = 0 ]
+		check "$t: both masters walk, agree, and answer as the scan" $? "lines ${l:-none} differ ${d:-none} walked ${w:-none} fellback ${b:-none}"
+	done
+	a=$(vote refuse); set -- $a
+	[ "$2" = 0 ] && [ "$4" = 3 ] && [ "$6" = 0 ]
+	check "a walk's error on two masters is the call's EIO, with no fallback" $? "${a:-no line}"
+	# The disagreement made, read from each volume's own media.
+	key() { sed -n "s/^vote show $1 $2\/[0-9]* \([0-9a-f]*\)$/\1/p" "$W/out" | head -1; }	# volume, the key as show prints it
+	xa=$(key a 00000000000a0000); xb=$(key b 00000000000a0000)
+	ya=$(key a 00000000000c0000); yb=$(key b 00000000000c0000)
+	za=$(key a 0000000000020000); zb=$(key b 0000000000020000)
+	[ -n "$xa" ] && [ -z "$xb" ] && [ -z "$ya" ] && [ -n "$yb" ] && [ -n "$za" ] && [ -n "$zb" ] && [ "$za" != "$zb" ]
+	check "the masters disagree on media: block 10 on the first only, 12 on the second only, 2 at two tids" $? "10 ${xa:-absent}/${xb:-absent} 12 ${ya:-absent}/${yb:-absent} 2 ${za:-absent}/${zb:-absent}"
+	l=$(vf disagree lines); d=$(vf disagree differ); b=$(vf disagree fellback)
+	[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "${b:-0}" -gt 0 ]
+	check "masters that disagree fall back to the scan and answer as it does" $? "lines ${l:-none} differ ${d:-none} fellback ${b:-none}"
+	a=$(vf inside fellback); b=$(vf outside fellback)
+	[ "${a:-0}" -gt 0 ] && [ "$b" = 0 ]
+	check "only a call whose range holds a disagreement falls back" $? "inside ${a:-none} outside ${b:-none}"
+	# What the seek calls a hole must read as zeros: SEEK_DATA from block 8.
+	r=$(vf inside answer); bad=0
+	for blk in 10 12; do
+		n=$(sed -n "s/^vote read $blk nonzero //p" "$W/out")
+		[ -n "$r" ] && [ "$r" != none ] && [ "$r" -gt $((blk * 65536)) ] && [ "${n:-1}" != 0 ] && bad=$((bad + 1))
+		[ -n "$n" ] || bad=$((bad + 1))
+	done
+	[ "$bad" = 0 ]
+	check "no block the seek calls a hole reads back data" $? "SEEK_DATA from block 8 ${r:-none}, nonzero bytes: 10 $(sed -n 's/^vote read 10 nonzero //p' "$W/out") 12 $(sed -n 's/^vote read 12 nonzero //p' "$W/out")"
+	for k in 1 2; do
+		d=$(vf break$k differ)
+		[ "$d" = 1 ]
+		check "seek_agree_break=$k makes the walk differ from the scan, so the comparison is what decides" $? "differ ${d:-none}"
+	done
+	a=$(vote rm); [ "$a" = "exit 0" ]
+	check "the file the masters disagree on is removed through the quorum" $? "${a:-no line}"
+fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 a=$(val threads-after); [ "${a:-1}" = 0 ]; check "no thread is left" $? "${a:-none}"
 a=$(val scrapped); [ "${a:-1}" = 0 ]; check "nothing is scrapped unwritten" $? "${a:-none} chain(s) scrapped"
