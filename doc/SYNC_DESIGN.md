@@ -924,8 +924,8 @@ source before it was applied, and no lever-2 code precedes it.
    other flush of the root; what that brings into the copy was written
    after the cut, stamped `G + 1`, and harmless to the proof. These are
    absolute readings, not deltas. The body's own work all follows the cut (the source root's
-   `hammer2_inode_modify()` at `:1003`, which touches no chain, and the
-   snapshot root's create at `:1044`), so no leg can see it and no
+   `hammer2_inode_modify()` at `hammer2_ioctl.c:1024`, which touches no
+   chain, and the snapshot root's create at `:1065`), so no leg can see it and no
    excuse for the body is needed. On the source calls of the run above
    the count read 0 at this point on all 8 calls outside the backlog
    window and 362 to 687 on the 7 inside it, which veto.
