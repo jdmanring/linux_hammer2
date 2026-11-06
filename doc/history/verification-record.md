@@ -23221,8 +23221,8 @@ seek and map still took the scan's whole call: beside a SEEK_HOLE loop a
 `:57`, `:92`, `h2release-7.3tls`, head `3df8836`). The change taken
 (`p7-notes/n10-6-r2/design-b.md`, reviewed DESIGN: READY before code)
 gives each local MASTER and the SUPROOT its own walk into its own slot
-(`751cdc4`). The frontend compares the slots field by field (key, keybits
-and `modify_tid`, and for the map `data_off` and methods) and answers only
+(`751cdc4`). The frontend compares the slots field by field (the answer, and
+each deciding block's key, keybits and `modify_tid`) and answers only
 where every slot is identical; a range on which they differ goes to the
 scan from the cursor, whose collect decides key by key as read(2)'s does.
 A SLAVE does not vote. The predictions were written before the runs
@@ -23314,16 +23314,20 @@ On `h2debug-7.3tls` the phase passed 35 checks (`:59`):
 - On those masters the dump fell back 23 times and equalled the scan's
   (`:36`); SEEK_DATA from block 8 fell back once and SEEK_HOLE from block
   16 not at all (`:37`); SEEK_DATA from block 8 answered 1048576, block
-  16, blocks 10 and 12 being a hole to the quorum, and both read back as
-  zeros (`:38`).
+  16, blocks 10 and 12 being a hole to the quorum (`:38`). The same line
+  reads 0 nonzero bytes for both, which this entry first took for a
+  read back as zeros; the check counted the bytes and not the read's
+  status, and a read that fails returns none. Read with dd's status at
+  seq11, every one of them failed (the next entry).
 - `seek_agree_break` 1, the tid dropped from the comparison, and 2, the
   first slot trusted unread, each made the walk differ from the scan
   (`:39-40`).
 
 `debug_locks` read 1 after (`:61`). The stale slave passed 61 checks
 (`:133`): the two elements held block 3 at `23b` and `22f` by their own
-media (`:76`), and the MASTER's dump walked 4 reads with 0 fallbacks and
-equalled the scan's (`:77`). On `h2kasan-7.3tls` the vote phase passed 35
+media (`:76`), and the MASTER's seeks and map through `xfs_io` walked 4
+tree reads with 0 fallbacks and printed what the forced scan printed
+(`:77`). On `h2kasan-7.3tls` the vote phase passed 35
 checks (`:193`) in the same shape, its tids `5cd`, `5d2`, `5d7` and `5af`
 (`:165-173`), with 0 reports (`:195`).
 
@@ -23357,9 +23361,12 @@ beside a SEEK_HOLE loop through the two-master mount):
 | 16 GiB | 6.24 us | 66.27 ms, 76.23 ms worst | 914.05 ms | 33.53 ms | `:1725-1727` |
 
 The two-master SEEK_HOLE at 16 GiB, 33.53 ms, falls inside the predicted
-28 to 40 ms and under 50 ms. The writer's predictions, 1 to 3, 6 to 12
-and 28 to 40 ms, missed at every size. They set the writer at one walk
-while their own text said two. At 4 GiB and 16 GiB the writer waits about
+28 to 40 ms and under 50 ms, a comparison made by hand: `cluster-quorum.sh`
+applied no rule then, and `H2_QUORUM_RULE_MS` since the next entry does.
+The writer's predictions, 1 to 3, 6 to 12
+and 28 to 40 ms, missed at every size. They set the writer at about two
+walks, one seek on two elements, where one element's writer had already
+read as about two seeks. At 4 GiB and 16 GiB the writer waits about
 two two-master seeks, as on one element it waits about two seeks (31.9 to
 35.1 ms beside 16.46 ms, the 1.0.88 entry). At 512 MiB it waits about six
 seeks. One candidate, not measured here, is the rwsem's writer handoff,
@@ -23371,3 +23378,123 @@ times.
 
 QEMU cores read 0 at the start and the end of both runs
 (`n10-6-seq9.log:1`, `:1752`; `n10-6-seq10.log:1`, `:201`).
+## The read a quorum skips, and the space check's recount, 2026-11-05
+
+The third review round (`p7-notes/audit-n10-6-round3.md`, series
+`3df8836..034b8dd`) returned FIX-FIRST with no must-fix finding, four
+should-fix and seven nits. `10576c4` answers the code and documents: the
+scan's DEFER gains clauses that can fire, among them the two-master
+16 GiB SEEK_HOLE above 50 ms on `h2release-7.3tls` with or without masters
+made to disagree (`H2_QUORUM_SPLIT`); the comparison's comment says why
+methods are not compared (`comp_heuristic` is the inode's, so two masters
+can store one block at one tid under different methods); SEEK_DATA takes
+one ref per element; a `static_assert` holds the vote's batch at FIEMAP's
+or above; the debug build's `seek_fail_elm` fails one element's walk.
+`19345ae` answers the harness: each whole-block read's status and byte
+count, block 2 included, SEEK_HOLE from 0 and from block 16 by their
+answers, one element's walk failing, `rm` without `-f`, the stale slave's
+tid read again after the seek, a control module with a SLAVE voting, the
+50 ms rule applied by status (`H2_QUORUM_RULE_MS`), and
+`README.testing.md`'s three rows. The predictions were written first
+(`p7-notes/n10-6-expected6.md`).
+
+**The read the stronger check found** (`n10-6-seq11.log`, head `19345ae`,
+no uncommitted change). The review's second finding read the code as
+zero-filling a key the quorum skips. The check that now keeps dd's status
+failed on `h2debug-7.3tls` (`:81`), on `h2kasan-7.3tls` (`:1266`) and in
+the split run (`:1542`): blocks 2, 10 and 12 each `exit 1 bytes 0`. A rerun
+keeping dd's message, with debug bit 0x0100 set around the reads
+(`n10-6-readerr.log`, the harness edit uncommitted and hashed at `:1`),
+gave errno 115, EINPROGRESS, for all three (`:37-39`). Its kept log
+(`fixtures/quorum-run-20261105-214813.klog`) holds 51 `H2 READ` lines, 17
+per block (a 64 KiB folio, then 16 single pages), each `collect=00000800`
+with both elements holding no chain and no error. The strategy read feeds
+its one chain and no end after it. The skip, EDEADLK for block 2 at two
+tids and ESRCH for 10 and 12 on one master each, drained both FIFOs, and
+the check then counted both elements as masters still in progress.
+Upstream's collect waits in that state; the port's has nothing to wait
+on, every element having run and retired before it, and returned the
+code. `9de43da` reads an element started (`chk_mask`) and retired
+(`run_mask`) with an empty FIFO as at its end. An element
+`hammer2_xop_start_except()` leaves out was never started and keeps its
+reading, as the sync thread's collects need, and so does the write
+completion's own element, which collects before it retires. From
+upstream's code, not run: its strategy read, collected only by the
+elements, would leave the bio uncompleted (candidate).
+
+**After the fix** (`n10-6-seq12.log`, head `cd00206`, no uncommitted
+change; predictions `p7-notes/n10-6-expected7.md`). Seq11 is the control:
+the same phases at the parent commits. The debug vote passed 37 checks
+(`:102`), each block `exit 0 bytes 65536 nonzero 0` (`:81`), its kept log
+(`fixtures/quorum-run-20261105-220227.klog`) holding 0 `H2 READ` lines and
+55 `no quorum possible` lines, the skip being upstream's. The KASAN vote
+passed 37 (`:1290`) with 0 reports (`:1292`) and the split run 42
+(`:1566`). At both heads, line for line: one element's failing walk is the
+call's EIO with no fallback (`:76`); SEEK_HOLE from block 16 answers
+1572864 without falling back (`:79`) and from 0 answers 131072 (`:80`);
+cluster-sync with the vote passes 62 checks (`:177`), the slave's block 3
+at `22f` before and after the seek (`:120`); the SLAVE-voting control
+(`ctl/n10-6-r3-slavevotes-lockdebug.ko`, `56a43d0d577427ec`) fails the
+stale-slave check alone, walked 1 and fellback 3 (`:194`), while its own
+after-seek check passes (`:193`). Fixtures, enospc as root and xfstests
+`-g seek`, 8 of 8, passed at both heads; `debug_locks` read 1 after each
+group.
+
+**Release timing at both heads** (`h2release-7.3tls`, 16 GiB unless
+named):
+
+| reading | seq11 | seq12 | predicted (seq11, seq12) |
+|---|---|---|---|
+| one element, dense SEEK_HOLE | 15.50 ms (`:1310`) | 14.61 ms (`:1313`) | 13 to 17 |
+| one element, deep | 7.22 us (`:1314`) | 7.08 us (`:1317`) | 5 to 10 |
+| two masters, SEEK_HOLE | 34.36 ms (`:1436`) | 35.53 ms (`:1439`) | 30 to 38 |
+| writer beside it | 68.85 ms (`:1435`) | 74.13 ms (`:1438`) | 60 to 75 |
+| 4 GiB, 1 ms rule (control) | 8.73 ms, fails (`:1476`) | 9.76 ms, fails (`:1479`) | 6 to 9 |
+| split SEEK_HOLE | 41.45 ms (`:1513`) | 34.52 ms (`:1516`) | 31 to 40, 36 to 46 |
+| writer beside the split | 69.45 ms (`:1515`) | 67.92 ms (`:1518`) | 60 to 80 |
+| split fallbacks | 92 (`:1516`) | 92 (`:1519`) | one per seek, then 92 |
+
+The 50 ms rule is applied to the SEEK_HOLE medians, and each is within
+it. The writer beside two masters, 68.85 and 74.13 ms, is not under that
+rule and reads about two two-master seeks, as the entry before found it.
+Three readings missed their bands:
+the control's 9.76 ms above 9, and the split SEEK_HOLE once above and once
+below, 6.9 ms apart on two heads whose seek paths differ by the collect's
+one branch, so the band was narrower than the run-to-run spread. The
+fallbacks are 10 + 2 x 41, not one per seek: the ten timed seeks run on a
+clean mapping and call the tree once each, and each of the 41 seeks beside
+the writer runs with the mapping tagged dirty, so `hammer2_seek_data_hole()`
+calls the tree again from the found hole to confirm it clean, and both
+calls disagree at the split block. Seq12's prediction was written to that.
+
+**The early user-mode refusal, twice.** Seq12's user-mode fill failed
+"the volume reports free space after the sync" with 3 blocks available
+after the sync (`n10-6-seq12.log:1105`, rc 1 at `:1112`), the reading the
+1.0.88 entry left unattributed at 1 in 16 (`n10-6-seq.log:1219-1221`).
+The write check charges what is dirty or under writeback on the device,
+read through `wb_stat()`, the per-CPU counter's cheap read, which may read
+up to `wb_stat_error()` pages high: 384 on the guest's twelve CPUs, past
+the three blocks left. That was the candidate. A first reading of seq12
+took the third refusal line for the refused after-sync write; the gate
+prints those lines before the after-sync writes, so they were the fill's,
+and the refused write's charge was printed nowhere. `fc98920` prints it.
+`5bd9ee1` judges a refusal again on `wb_stat_sum()`, as the kernel's
+`wb_dirty_limits()` sums near its threshold, and prints each admission the
+exact sum makes with both counts.
+
+**The recount** (`n10-6-seq13.log`, head `fc98920`, no uncommitted change;
+predictions `p7-notes/n10-6-expected8.md`). As root the gate passed with 2
+admissions (`:257-258`, rc 0 at `:443`). As a user, `H2_REPEAT=10` passed
+10 of 10 (`:813`), every run with 0 blocks available after the sync and
+every file intact. The admissions per run read 1, 3, 3, 7, 2, 0, 3, 4, 5
+and 3 (`:464` to `:797`). Each run's last admission was a 64 KiB write the
+cheap count refused at 16 to 128 pages above the exact sum, once with the
+exact sum at 0 (`:465`). On `h2kasan-7.3tls` the user fill passed with 5
+admissions, the last at an exact sum of 0 against a cheap count of 109
+pages (`:1045-1046`), and 0 reports (`:1232`). Ten passes is a rate the old
+count could also give. The admission lines are the reading: writes the
+cheap count refused on pages the exact sum did not hold.
+
+QEMU cores read 0 at the start and the end of every run
+(`n10-6-seq11.log:1`, `:1570`; `n10-6-readerr.log:1`, `:62`;
+`n10-6-seq12.log:1`, `:1573`; `n10-6-seq13.log:1`, `:1238`).
