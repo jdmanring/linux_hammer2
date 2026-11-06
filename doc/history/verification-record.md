@@ -23209,3 +23209,165 @@ whole-call hold on a cluster of several elements, and the number
 `325d29d`'s second clause is set against. QEMU cores read 0 at the start
 and the end of both runs (`n10-6-seq6.log:1`, `:1790`;
 `n10-6-seq7.log:1`, `:1378`).
+
+## Two MASTERs walk the seek and the map, and agree or fall back to the scan, 2026-11-05
+
+The second review round (`p7-notes/audit-n10-6-round2.md`, series
+`762db57..3df8836`) returned FIX-FIRST on twelve findings. Its first was
+the writer's wait on a writable cluster of two local MASTERs, where every
+seek and map still took the scan's whole call: beside a SEEK_HOLE loop a
+64 KiB write took 27.87 ms at 512 MiB, 228.39 ms at 4 GiB and 914.05 ms at
+16 GiB, median of twenty, against about 6 us alone (`n10-6-seq8.log:21-22`,
+`:57`, `:92`, `h2release-7.3tls`, head `3df8836`). The change taken
+(`p7-notes/n10-6-r2/design-b.md`, reviewed DESIGN: READY before code)
+gives each local MASTER and the SUPROOT its own walk into its own slot
+(`751cdc4`). The frontend compares the slots field by field (key, keybits
+and `modify_tid`, and for the map `data_off` and methods) and answers only
+where every slot is identical; a range on which they differ goes to the
+scan from the cursor, whose collect decides key by key as read(2)'s does.
+A SLAVE does not vote. The predictions were written before the runs
+(`p7-notes/n10-6-expected5.md`).
+
+**The twelve findings.**
+- 1, the writer's wait: the vote, read below.
+- 2, noseed could not fail: `4178d28` adds `H2_SEEK_DEEP_RULE_US` on the
+  deep kind, and the control now fails by its status (below). The round's
+  report put noseed's deep reading at 191.8 ms; it was 191.8 us
+  (`n10-6-seq.log:256`), as the round-1 entry says.
+- 3, the cold cost unexplained: `4178d28` counts the sectors each cold
+  seek reads from the guest's `/sys/block/vdb/stat`, requires a warm count
+  of at least 16384 pages before the first drop, and scales the residency
+  bound to the file, `DMB/16` pages.
+- 4, nothing showed the quorum's seek took the scan: the vote phase reads
+  `seek_walked` and `seek_fellback` around every dump (`0d67362`).
+- 5, the walk predicate written twice: `hammer2_seek_walks()` is one body
+  with the debug knob ahead of it (`751cdc4`).
+- 6, the lockdep comment: `a2afaef`.
+- 7, a wrap of the walk's end: refuted. The walk stops at a blockref whose
+  key passes `key_end`, which is `i_size - 1` and below 2^63, and refuses
+  keybits above 63 (`hammer2_xop_seek_walk()`), so `key + 2^keybits` for
+  any blockref it reaches is below 2^64.
+- 8, numbers: the 1.0.88 row and `doc/PERFORMANCE.md` set the forced
+  scan's upper middle, 274.5 ms, beside 1.0.86's lower middle, 238.5 ms;
+  the lower middle is 271.7 ms. The 1.0.89 row names its two heads, and
+  the round-1 entry cites the lines for 13.97 ms and 233.06 ms
+  (`93d899c`).
+- 9, "between blocks": the walk checks for a fatal signal at each indirect
+  block it enters, as `README.porting.md` now says (`751cdc4`).
+- 10, the corrupt pass's warn count: gated at 0 (`934bf9a`).
+- 11, the residency counter's control ran a copy outside the tree: the
+  warm count above is taken by `hostdrop keep`, the subject's own code.
+- 12, `hammer2_remote_local_elm()` reading `pfs_hmps[]` unmarked:
+  refuted. Its three callers hold `hammer2_mntlk`.
+  `hammer2_remote_register()` runs under `hammer2_remote_reconcile()`'s
+  try-lock, and so does the reconcile's own call.
+  `hammer2_remote_conn_end()` is reached through
+  `hammer2_remote_quiesce()`, from the reconnect's work item, which holds
+  the lock across the call (`hammer2_link_work()`), and from
+  `hammer2_iocom_uninit()` in the unmount helper, each of whose calls sits
+  inside a mount's or an unmount's locked span.
+
+**The first run** (`n10-6-seq9.log`, launched at `3c2d8ee` with no
+uncommitted change). `93d899c` and `3b22486` were committed while it ran.
+Each fleet script rebuilds its module from the tree, so the later phases
+print `3b22486`, but `src/` and `test/` are identical between the two
+(`git diff 3c2d8ee 3b22486 -- src test` is empty), and every script ran
+from a copy taken at the launch. On `h2debug-7.3tls` the race mode walked
+4404 of the first dump's tree reads and none of the forced one (`:20`),
+refused at the depth bound and on the corrupt block with EIO (`:21-23`,
+`:32-34`), and passed (`:48`). The quorum's default run passed 24 checks
+(`:80`), the fixtures 0 failures over 11 images (`:166`), and enospc as
+root and as a user every seek, map and fallocate check (`:586-592`,
+`:994-1000`). xfstests `-g seek` passed 8 of 8 (`:1076`) and the wire 36
+checks (`:1120`), with `debug_locks` 1 after (`:1078`). On
+`h2kasan-7.3tls` the race mode passed (`:1166`) with 0 KASAN or UBSAN
+reports after it and the vote phase (`:1221`).
+
+The two new phases failed on their harness, not on the code. The vote
+phase failed 3 of 35 checks on debug and on KASAN (`:135`, `:1219`), and
+cluster-sync's selftest refused its run (`:138`, `:142`). `hammer2 show`
+prints `inum` in hex and both readers compared it with stat's decimal, so
+no block of the file was found on either volume. xfs_io's `seek` takes
+`-d` or `-h`, and `-data` made no seek, so both fallback counts read 0 and
+the hole check passed on no answer at all (`:114`). Its fallback pointed
+the wrong way, and it now requires the quorum's answer. A file held in its
+inode is answered from the inode before any walk (`hammer2_seek_data_hole()`),
+so `walked 0` (`:109`) is the code and the check that wanted a walk was
+the prediction's error. The selftest wanted the new `/mod=/` read listed.
+`3b22486` fixes all four. The reader was checked against the kept image's
+dump on the host, where inode 0x402's block at key 0 prints and the decimal
+comparison matches nothing, and the selftest passes on the fix and fails on
+the copy before it.
+
+**The vote** (`n10-6-seq10.log`, head `3b22486`, no uncommitted change).
+On `h2debug-7.3tls` the phase passed 35 checks (`:59`):
+- On agreeing masters, a 2237-line dump across the walk's 1024-block
+  batch edge walked 4436 tree reads with 0 fallbacks and equalled the
+  forced scan's (`:31`), and so did the probe's shape (`:32`). The file
+  held in its inode walked nothing and fell back nothing (`:33`).
+- `seek_depth_max=0` refused all three calls with EIO and no fallback
+  (`:34`), so one element's error is the call's error.
+- The disagreement read from each volume's media: block 10 on the first
+  only at tid `57b`, block 12 on the second only at `580`, block 2 at
+  `585` and `55d` (`:35`). The inode kept its quorum, which the
+  predictions named as a risk to the fixture.
+- On those masters the dump fell back 23 times and equalled the scan's
+  (`:36`); SEEK_DATA from block 8 fell back once and SEEK_HOLE from block
+  16 not at all (`:37`); SEEK_DATA from block 8 answered 1048576, block
+  16, blocks 10 and 12 being a hole to the quorum, and both read back as
+  zeros (`:38`).
+- `seek_agree_break` 1, the tid dropped from the comparison, and 2, the
+  first slot trusted unread, each made the walk differ from the scan
+  (`:39-40`).
+
+`debug_locks` read 1 after (`:61`). The stale slave passed 61 checks
+(`:133`): the two elements held block 3 at `23b` and `22f` by their own
+media (`:76`), and the MASTER's dump walked 4 reads with 0 fallbacks and
+equalled the scan's (`:77`). On `h2kasan-7.3tls` the vote phase passed 35
+checks (`:193`) in the same shape, its tids `5cd`, `5d2`, `5d7` and `5af`
+(`:165-173`), with 0 reports (`:195`).
+
+**Release timing** (`n10-6-seq9.log`, `h2release-7.3tls`, 16 GiB, one
+element, `H2_SEEK_RULE_MS=50` and `H2_SEEK_DEEP_RULE_US=50`):
+- Head: dense SEEK_HOLE 14.97 ms (`:1230`), the deep kind 7.06 us
+  (`:1234`), passing both rules (`:1351`).
+- `noseed` (`ctl/n10-6-r2-noseed`, the walk seeded at each parent's first
+  blockref, `06f79edc69ad787d`): the deep kind 170.57 us, failing the
+  50 us rule by status (`:1359`, `:1372`, `:1476`), while its dense
+  SEEK_HOLE, 14.88 ms (`:1355`), passes the 50 ms one. The deep rule is
+  what separates it.
+- `scanall` (`ctl/n10-6-r2-scanall`, the walk never chosen,
+  `97623e9f70eb27eb`): dense SEEK_HOLE 249.32 ms, failing by status
+  (`:1480`, `:1493`, `:1601`).
+- Cold, five repeats: 19.57 to 22.76 ms, median 20.11 ms, within 50 ms
+  (`:1629`, `:1635`). The count saw 91438 pages before the first drop and
+  0 after each (`:1630-1631`). Each seek read 66432 sectors, 32.4 MiB
+  (`:1633`), against the 2048 leaf indirect blocks of 16 KiB a 16 GiB
+  dense file holds, 32 MiB, so the cold walk did read the indirect blocks.
+  It does so in about 5 ms over the warm reading.
+
+**The writer beside two masters**, the reading the vote was built for
+(same log, `H2_QUORUM_CONTEND`, twenty 64 KiB writes into a synced file
+beside a SEEK_HOLE loop through the two-master mount):
+
+| size | writer alone | writer beside the loop | the scan's (seq8) | two-master SEEK_HOLE | lines |
+|---|---|---|---|---|---|
+| 512 MiB | 5.45 us | 5.88 ms | 27.87 ms | 0.96 ms | `:1653-1655` |
+| 4 GiB | 5.61 us | 15.38 ms | 228.39 ms | 7.59 ms | `:1689-1691` |
+| 16 GiB | 6.24 us | 66.27 ms, 76.23 ms worst | 914.05 ms | 33.53 ms | `:1725-1727` |
+
+The two-master SEEK_HOLE at 16 GiB, 33.53 ms, falls inside the predicted
+28 to 40 ms and under 50 ms. The writer's predictions, 1 to 3, 6 to 12
+and 28 to 40 ms, missed at every size. They set the writer at one walk
+while their own text said two. At 4 GiB and 16 GiB the writer waits about
+two two-master seeks, as on one element it waits about two seeks (31.9 to
+35.1 ms beside 16.46 ms, the 1.0.88 entry). At 512 MiB it waits about six
+seeks. One candidate, not measured here, is the rwsem's writer handoff,
+which 1.0.85's lock event counters read at 4 ms a write. The voting
+elements walk in turn in the caller's thread, so the seek costs the sum of
+the walks, and the writer waits for it under the whole-call hold the
+design states. Against the scan the wait falls by 4.7, 14.8 and 13.8
+times.
+
+QEMU cores read 0 at the start and the end of both runs
+(`n10-6-seq9.log:1`, `:1752`; `n10-6-seq10.log:1`, `:201`).
