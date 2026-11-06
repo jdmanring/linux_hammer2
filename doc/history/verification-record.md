@@ -23498,3 +23498,101 @@ cheap count refused on pages the exact sum did not hold.
 QEMU cores read 0 at the start and the end of every run
 (`n10-6-seq11.log:1`, `:1570`; `n10-6-readerr.log:1`, `:62`;
 `n10-6-seq12.log:1`, `:1573`; `n10-6-seq13.log:1`, `:1238`).
+
+## A key the masters disagree on fails EIO, 2026-11-06
+
+The fourth review of N10.6 (`p7-notes/audit-n10-6-round4.md`) read the
+code after `9de43da` as zero-filling a block two masters hold at
+differing tids and, from the code, letting a partial write into it write
+those zeros back over both. `doc/CLUSTER_PROTOCOL_DESIGN.md` had taken
+decision C, EIO for a reachable quorum that disagrees on media. `7d52bd6`
+builds the read half: `hammer2_cluster_check()` returns EDEADLK also for
+a key some masters hold and the rest do not, neither side a quorum, the
+collect fails EDEADLK at its key, and the errno map gives EIO.
+`doc/README.porting.md`, "A key the masters disagree on", has the rule
+and what it never fires on.
+
+**The first run** (`n10-6-seq14.log`, head `be2367e`, no uncommitted
+change; predictions `p7-notes/n10-6-expected9.md`). On `h2debug-7.3tls`
+the vote's reads now fail as decision C says: blocks 2, 10 and 12 each
+`exit 1 bytes 0` with dd's `Input/output error`, block 0 of the same file
+whole (`:76`); SEEK_HOLE from 0 and SEEK_DATA from block 8 each fail EIO
+(`:74-75`); both readers' FIEMAP fail with errno 5 and their seeks agree,
+49 lines (`:72`). Two checks failed (`:98`), the same on `h2kasan-7.3tls`
+(`:1214`) and in the release split run (`:1286`), against the
+prediction:
+
+- The 4 KiB write into block 2 succeeded, and both volumes then held the
+  block at one new tid, `58b`, where they had held `581` and `559` (`:77`).
+  The kept log (`fixtures/quorum-run-20261106-074833.klog`) holds 51
+  `H2 READ` lines, all `collect=00010000 error=5`, 17 per disputed block,
+  and none from the write. The failed 64 KiB read had left the block's
+  pages in the cache as page-sized folios; the write covered its own
+  folio, so `hammer2_write_begin()` read nothing, and at writeback each
+  element assembled the block around the page from its own chain
+  (`hammer2_strategy_assemble()`). Each master kept its own other 60 KiB
+  under the tid they now shared, a disagreement the quorum can no longer
+  see.
+- `seek_agree_break=1` read `differ 0` (`:78`): it ran after the write,
+  which had ended the tid disagreement at block 2.
+- A refuting reading the predictions named: the same log holds 40 `no
+  quorum possible` lines at lokey `b6a9cb23fd8a8001`, a key the harness
+  did not dispute, each beside `syncsnap: noquorum ... error 65536`. The
+  sync thread's read of the PFS root leaves its own element out
+  (`hammer2_xop_start_except()`); that master is in progress, and
+  upstream's tid loop ends on an iteration that counts no master, so the
+  check reached the key test with one master answering. The parent read
+  ESRCH there and ended in EINPROGRESS, 2048 in seq12's log
+  (`fixtures/quorum-run-20261105-220227.klog`); the new rule read the
+  one answering master as a disagreement.
+
+The release split run timed the split SEEK_HOLE failing EIO, 32.84 ms
+median (`:1239`), with 51 fallbacks, 10 plus one for each of the 41 seeks
+beside the writer (`:1241-1242`), as predicted. The writer beside it read
+65.65 ms (`:1241`) against a prediction of 30 to 50 ms: a miss, and the
+reading that refutes the account written in `7d52bd6`'s DEFER text, that
+the writer waits two tree reads because a seek beside it reads the tree
+twice. Each split seek read it once and the writer still waited about two
+seek medians, as beside agreeing masters (66.17 ms against 33.25 ms,
+`:1237-1238`). The ratio has held in four readings; its cause is not
+attributed.
+
+`ecae73a` reads a folio smaller than its block before a write that
+covers it, unless its whole block lies past the end of the file, and
+fires the split rule only when every master has answered. The same
+per-element assembly would, from the code and not run, give a SLAVE
+behind its master its own stale bytes under the master's new tid on a
+sub-block writeback, and the sync pass replaces a slave block only when
+its tid differs (`hammer2_synchro.c:2384`): a candidate, which assembling
+once from the quorum, as upstream's single buffer does, would answer.
+
+**After the fix** (`n10-6-seq15.log`, head `ecae73a`, no uncommitted
+change; predictions `p7-notes/n10-6-expected10.md`). Seq14 is the
+control. Every check passed: the debug vote 39 (`:103`), the KASAN vote
+39 (`:1223`) with 0 reports (`:1225`), the release split run 44
+(`:1300`). The partial write fails with `exit 1 eio 1` and both volumes
+keep block 2 at `581` and `559` (`:82`), on KASAN at `5d7` and `5af`
+(`:1202`), on release at `55b` and `533` (`:1279`); both comparison
+controls differ. The debug run's kept log
+(`fixtures/quorum-run-20261106-081820.klog`) holds 52 `H2 READ` lines,
+all `collect=00010000 error=5`, the 52nd the write's own read of the page
+at 0x21000; its `syncsnap: noquorum` lines read 2048 and 524288 as at
+seq12, and the three kept quorum logs print `no quorum possible` only at
+keys the harness disputed: ten in each vote run, 8 at 0x20000 and 2 at
+0xa0000, the count of `pr_warn_ratelimited()`'s default burst, no suppression line following, and 10 more at 0x400000000 in
+the split run. The rest passed: the race mode on both builds (`:46`,
+`:1166`), the sync vote (`:179`), fixtures (`:203`), enospc as root and as
+a user with 0 blocks available after the sync (`:429`, `:852`, rc 0 at
+`:632` and `:1043`), xfstests `-g seek` 8 of 8 (`:1051` to `:1115`),
+`debug_locks` 1 after each group (`:105`, `:180`, `:1121`).
+
+| reading, `h2release-7.3tls`, 16 GiB | seq14 | seq15 | predicted for seq15 |
+|---|---|---|---|
+| two masters, SEEK_HOLE | 33.25 ms (`:1238`) | 34.01 ms (`:1247`) | 30 to 38 |
+| writer beside it | 66.17 ms (`:1237`) | 66.44 ms (`:1246`) | 60 to 75 |
+| split SEEK_HOLE, failing EIO | 32.84 ms (`:1239`) | 33.79 ms (`:1248`) | 28 to 40 |
+| writer beside the split | 65.65 ms (`:1241`) | 67.51 ms (`:1250`) | 55 to 80 |
+| split fallbacks | 51 (`:1242`) | 51 (`:1251`) | 10 + 41 |
+
+QEMU cores read 0 at the start and the end of both runs
+(`n10-6-seq14.log:1`, `:1293`; `n10-6-seq15.log:1`, `:1307`).
