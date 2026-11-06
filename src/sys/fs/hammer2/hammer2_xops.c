@@ -887,6 +887,16 @@ done:
  *	    exclusive lock.  The shared lock also allows chain->data to be
  *	    retained.
  */
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * Linux: ends one element's scan of a regular file, by clindex, on EIO
+ * before its first chain, so a test can read the seek's answer when one
+ * master fails and another holds a key past the cursor.
+ */
+static int hammer2_scan_fail_elm = -1;
+module_param_named(scan_fail_elm, hammer2_scan_fail_elm, int, 0644);
+#endif
+
 void
 hammer2_xop_scanall(hammer2_xop_t *arg, void *scratch, int clindex)
 {
@@ -911,6 +921,16 @@ hammer2_xop_scanall(hammer2_xop_t *arg, void *scratch, int clindex)
 		hprintf("NULL parent\n");
 		goto done;
 	}
+
+#if defined(HAMMER2_LOCKDEBUG)
+	if (clindex == READ_ONCE(hammer2_scan_fail_elm) &&
+	    xop->head.ip1->meta.type == HAMMER2_OBJTYPE_REGFILE) {
+		error = HAMMER2_ERROR_EIO;	/* Linux: scan_fail_elm */
+		hammer2_chain_unlock(parent);
+		hammer2_chain_drop(parent);
+		goto done;
+	}
+#endif
 
 	/*
 	 * Generic scan of exact records.  Note that indirect blocks are

@@ -872,7 +872,7 @@ since it needs a collected XOP on the parent and that XOP takes the
 dependency. The proof obligation, listed function by function in stage
 2a's record, is that each read storage function reads nothing of `ip1`
 but its cluster slot; the call sites are
-`hammer2_xops.c:141, 173, 244, 807, 908` and `hammer2_strategy.c`'s read. One of them indexes by slot:
+`hammer2_xops.c:141, 173, 244, 807, 918` and `hammer2_strategy.c`'s read. One of them indexes by slot:
 `nresolve`'s hardlink arm calls `hammer2_chain_inode_find()` with the
 request's `clindex` on the server's own `pmp` (`hammer2_xops.c:271`),
 which reads that `pmp`'s inode at that slot (`hammer2_chain.c:5524`), so
@@ -1266,10 +1266,10 @@ rather than from the design document alone.
   (`hammer2_vnops.c:398`); the flush writes it into the root's
   `pfs_inum` (`hammer2_flush.c:797-798`). Two coordinators issue the same
   inode numbers, and `hammer2_xop_inode_create()` answers the second
-  `EEXIST` on every host (`hammer2_xops.c:1092-1095`).
+  `EEXIST` on every host (`hammer2_xops.c:1112-1115`).
 - **C5. The frontend's inode is not refreshed by a chain commit.** A
   participant's `ip->meta` is written by its own VOPs and written back
-  whole by `inode_chain_sync` (`hammer2_xops.c:1433`), so a commit that
+  whole by `inode_chain_sync` (`hammer2_xops.c:1453`), so a commit that
   changed the chains under an inode on another host leaves this host's
   in-memory size, mode and times stale and its next sync overwrites the
   other's. `hammer2_inode_repoint()` moves chains, not meta.
@@ -1309,7 +1309,7 @@ rather than from the design document alone.
   alone until it is carried.
 - **C11. Storage functions read host-local inode state**:
   `hammer2_xop_inode_create()` takes the parent's compression and check
-  methods from the in-memory inode (`hammer2_xops.c:1103-1104`), so the
+  methods from the in-memory inode (`hammer2_xops.c:1123-1124`), so the
   same request can produce different chains on two hosts.
 - **C12. A read-only state set at run time does not stop a writer
   already holding a descriptor.** The kernel tests `sb_rdonly` at

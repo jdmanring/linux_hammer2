@@ -1703,7 +1703,10 @@ master holds the key without a quorum the check returns the errored
 master's own error rather than EDEADLK. That master has said nothing of
 the key or of any past the point it failed, so a seek fails with its
 error, as a read of the key does, rather than answering a hole it may
-hold data in.
+hold data in. `cluster-quorum.sh` ends one master's scan on EIO
+(`scan_fail_elm`) before a block the other holds past a hole at 0, and
+requires SEEK_HOLE from 0 to fail EIO, and with the knob unset to answer
+0.
 
 A strategy write runs its elements one after another on the writeback
 thread with no inode lock across them, so a call beside a writeback can

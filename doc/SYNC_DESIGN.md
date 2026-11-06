@@ -870,7 +870,7 @@ change executes:
 **Status, 2026-11-01: amended and audited to SIGN-OFF; the tree
 carries only scaffolding (the `HAMMER2_LOOKUP_PRUNE` flag,
 `hammer2.h:366`, two unused thread fields, `hammer2.h:1116-1117`, and
-scanall clearing the flag, `hammer2_xops.c:902`) and no prune
+scanall clearing the flag, `hammer2_xops.c:912`) and no prune
 predicate, and, under `HAMMER2_LOCKDEBUG` alone, an instrument that
 prints what the capture and the veto below would read on each snapshot
 (`hammer2_snap_gen()`, `hammer2_snap_queues()`,
@@ -1141,14 +1141,14 @@ source before it was applied, and no lever-2 code precedes it.
    `hammer2_chain_lookup()` takes no XOP (`hammer2_chain.c:2336`). The
    scan's XOP carries the threshold, and `hammer2_xop_scanall()` passes
    it to a lookup and a next variant only the scan calls (it iterates
-   with both, `hammer2_xops.c:919, 925`, and `hammer2_chain_next()`
+   with both, `hammer2_xops.c:939, 945`, and `hammer2_chain_next()`
    re-enters the lookup), which return an indirect block whose
    `mirror_tid` is below the threshold as a range record, the way
    `LOOKUP_MATCHIND` returns one on an exact range
    (`hammer2_chain.c:2395-2405`), instead of recursing into it
    (`hammer2_chain.c:2602-2609`). The record travels
    through the feed and collect to the slave side, which suppresses its
-   sweep inside the range. The clearing line at `hammer2_xops.c:902`
+   sweep inside the range. The clearing line at `hammer2_xops.c:912`
    goes with the variant: the variant is selected by the threshold, not
    by a lookup flag, and the flag `HAMMER2_LOOKUP_PRUNE` is removed with
    it rather than left defined and cleared. The carried lookup's body is

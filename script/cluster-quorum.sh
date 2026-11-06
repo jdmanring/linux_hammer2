@@ -236,7 +236,7 @@ rm -f /mnt/h2q/seekf
 # say which reader answered.
 if [ "${VOTE:-0}" = 1 ]; then
 P=/sys/module/hammer2/parameters
-for k in seek_scanall seek_walked seek_fellback seek_agree_break seek_depth_max seek_fail_elm write_except write_gap_ms write_waits write_wait_off; do
+for k in seek_scanall seek_walked seek_fellback seek_agree_break seek_depth_max seek_fail_elm scan_fail_elm write_except write_gap_ms write_waits write_wait_off; do
 	[ -e $P/$k ] || { echo "vote-setup no $k"; exit 1; }
 done
 vdump() {	# file tag
@@ -294,6 +294,22 @@ echo 1 > $P/seek_fail_elm
 /tmp/h2seekprobe refuse /mnt/h2q/lay > /tmp/qv.fail1 2>&1; s=$?
 echo -1 > $P/seek_fail_elm
 echo "vote failone exit $s eio $(grep -c '^seekm-ok   refuse' /tmp/qv.fail1) fellback $(( $(cat $P/seek_fellback) - b0 ))"
+# One master's scan failing before a key the other holds: a file whose only
+# block is block 2, SEEK_HOLE from 0 through the forced scan, scan_fail_elm
+# ending the second master's scan of a regular file on EIO. The second has
+# said nothing of any key, so the call fails with its error rather than
+# answering the hole at 0; with the knob unset, the control, it answers 0.
+dd if=/dev/urandom of=/mnt/h2q/sf bs=64k seek=2 count=1 2>/dev/null; sync
+echo 1 > $P/seek_scanall
+for e in on:1 off:-1; do
+	echo ${e#*:} > $P/scan_fail_elm
+	o=$(xfs_io -r -c "seek -h 0" /mnt/h2q/sf 2>&1)
+	r=$(printf '%s\n' "$o" | awk '$1 == "HOLE" {print $2}')
+	echo "vote scanfail-${e%%:*} answer ${r:-none} eio $(printf '%s\n' "$o" | grep -c 'Input/output error')"
+done
+echo -1 > $P/scan_fail_elm
+echo 0 > $P/seek_scanall
+rm -f /mnt/h2q/sf
 rm -f /mnt/h2q/lay /mnt/h2q/shp /mnt/h2q/emb
 # Masters made to disagree: blocks 0-7 and 16-23 of 24 on both, then block
 # 10 on the first only, block 12 on the second only, and block 2 rewritten
@@ -576,6 +592,12 @@ if [ "$QVOTE" = 1 ]; then
 	a=$(vote failone); set -- $a
 	[ "$2" = 0 ] && [ "$4" = 3 ] && [ "$6" = 0 ]
 	check "one master's walk failing while the other answers is the call's EIO, with no fallback" $? "${a:-no line}"
+	a=$(vf scanfail-on answer); e=$(vf scanfail-on eio)
+	[ "$a" = none ] && [ "$e" = 1 ]
+	check "one master's scan failing before a key the other holds fails SEEK_HOLE with EIO, not a hole" $? "answer ${a:-none} eio ${e:-none}"
+	a=$(vf scanfail-off answer); e=$(vf scanfail-off eio)
+	[ "$a" = 0 ] && [ "$e" = 0 ]
+	check "with scan_fail_elm unset the same SEEK_HOLE answers the hole at 0, its control" $? "answer ${a:-none} eio ${e:-none}"
 	# The disagreement made, read from each volume's own media.
 	key() { sed -n "s/^vote show $1 $2\/[0-9]* \([0-9a-f]*\)$/\1/p" "$W/out" | head -1; }	# volume, the key as show prints it
 	key2() { sed -n "s/^vote after $1 $2\/[0-9]* \([0-9a-f]*\)$/\1/p" "$W/out" | head -1; }	# the same, read after the partial write
