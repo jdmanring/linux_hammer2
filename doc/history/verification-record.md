@@ -23152,9 +23152,9 @@ while the read failed EIO, with no BUG, oops or warning and
 
 **Release timing, the probe's per-whence medians** (same log, head
 `3f7c118`, `h2release-7.3tls`, 16 GiB, 20 seeks, `H2_SEEK_RULE_MS=50`):
-dense SEEK_HOLE 13.97 ms median of ten, within the rule; the scan forced
-(`ctl/n10-6-r1-scanall`, `06553c94532e8f97`) 233.06 ms, failing the rule
-by its status, rc 1, where the first entry's scanall and noseed runs had
+dense SEEK_HOLE 13.97 ms median of ten (`:1478`, `:1490`), within the rule; the scan forced
+(`ctl/n10-6-r1-scanall`, `06553c94532e8f97`) 233.06 ms (`:1602`, `:1614`), failing the rule
+by its status (`:1615`), rc 1, where the first entry's scanall and noseed runs had
 exited 0 and been read by hand.
 
 On `h2debug-7.3tls` (same log, `:227`, not a rule run) the dense
