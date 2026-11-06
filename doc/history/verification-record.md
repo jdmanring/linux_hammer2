@@ -22873,8 +22873,8 @@ a seek after a read, with the chains already resolved, is not asked.
 What this entry claims: on a cluster of one local element the seek and the
 map read the blockref tree by a walk that makes no chain for a block on the
 media, holding `i_rwsem` shared for the whole call with nothing given up
-between chunks, and a dense 16 GiB SEEK_HOLE takes 14.9 ms where the scan it
-replaces took 250 ms; that each control placed in the walk or the frontend
+between chunks, and a dense 16 GiB SEEK_HOLE's median is 16.5 ms where the
+scan it replaces took 274.5 ms; that each control placed in the walk or the frontend
 fails; that the syntax gate's sparse pass reads every file the module
 builds; and the readings against the predictions written before the runs
 (`p7-notes/n10-6-expected.md`, `n10-6-expected2.md`), misses included.
@@ -22889,15 +22889,21 @@ fed chain, its re-run on error and FIEMAP's per-chunk release.
 **Timing, `h2release-7.3tls`** (`n10-6-seq.log`, head `f09e415` with no
 uncommitted change under `src`, `script` or `test`, module `7fe20b663954a514`,
 `H2_SEEK_DENSE_MB=16384`, 20 seeks per kind, one repeat, `:13-18`):
-SEEK_HOLE at 0 across 16 GiB of data 14.86 ms median, against the 50 ms rule
-the step set before the run and against 238.5 ms at 1.0.86; SEEK_DATA from
+SEEK_HOLE across 16 GiB of data, from an offset in the first 16 MiB, 16.46 ms
+median of ten (14.86 to 18.94 ms, the odd lines of `:49-68`), against the
+50 ms rule the step set before the run and against 238.5 ms at 1.0.86. This
+entry first gave 14.86 ms, the probe's median of all 20 seeks: the dense
+kind alternates SEEK_DATA, which answers at once on a dense file, with
+SEEK_HOLE, so that median is the fastest SEEK_HOLE. The probe now prints a
+median for each (the round-1 audit section below). Then: SEEK_DATA from
 inside a 16 GiB hole 1.55 us; the deep kind, SEEK_DATA in the file's last
 sixteenth, 7.0 us; a sparse file 1.35 us; a dirty file 3.17 us. The rule
 held, so the whole-call hold stays.
 - Control `scanall` (`ctl/n10-6-scanall`, every seek through
   `hammer2_seek_scanall()`, module `6d36305998984451`, `:133-137`): the
-  dense SEEK_HOLE 250.1 ms, failing the rule, so the 14.86 ms came from the
-  walk.
+  dense SEEK_HOLE 274.5 ms median of ten (250.1 to 279.9 ms, the odd lines
+  of `:168-187`; 250.1 ms was first written, the same misread), failing
+  the rule by hand, so head's reading came from the walk.
 - Control `noseed` (`ctl/n10-6-noseed`, each level scanned from key 0, module
   `4c91117025c52232`, `:252-256`): the deep kind 191.8 us, 27 times head's.
   The prediction said 0.5 to 3 ms and at least 50 times: missed, by a
@@ -22924,10 +22930,11 @@ to 5 ms.
 harness):
 - the matrix, 31 probe checks, 0 failures (`:1271`);
 - the race mode, three repeats, `H2_SEEK_RACE_WANT=after`: every wbrace and
-  race answer right, and the file dumped by the walk and by the forced scan
+  race answer right, and, in the one dump the mode runs however many
+  repeats it is given, the file dumped by the walk and by the forced scan
   identical, 2237 lines, 35 extents, the scan's print counted once
   (`:1289-1301`);
-- xfstests `-g seek`: generic/285, 286, 436, 445, 448, 490 and 539 pass, 3 to
+- xfstests `-g seek`: generic/285, 286, 436, 445, 448, 490, 539 and 706 pass, 3 to
   5 s each (`:1308-1378`). generic/490 ran 4 s against 11 s at 1.0.86; the
   prediction said 0 to 1 s and missed, since every seek test takes 3 to 5 s
   on this kernel, which is the test's own setup;
@@ -22950,7 +22957,7 @@ marked edit, three repeats of the race mode, each failing 3 of 3):
   was being edited during the run, which this harness does not read.
 
 **KASAN, `h2kasan-7.3tls`** (`n10-6-seq.log:1955-2032`): xfstests `-g seek`
-pass, 9 s each, generic/490 9 s against 48 s at 1.0.86 and a predicted under 5 s, the same setup cost;
+pass, 9 s each but generic/286 at 13 s, generic/490 9 s against 48 s at 1.0.86 and a predicted under 5 s, the same setup cost;
 0 KASAN or UBSAN reports.
 
 **Over the wire**, both guests `h2debug-7.3tls`: `cluster-wire.sh` 36 checks,
@@ -23067,3 +23074,138 @@ and the kernel printed nothing after the unload. It is the same mechanism
 as the udevd logger that held `dmsetup` on 2026-10-17, whose cause that
 entry left unknown; the fix is the guests' service order, the loggers after
 `mount-filesystems`.
+
+**The first hostile audit** (`p7-notes/audit-n10-6-round1.md`, a
+maintainer's review of `ad80733..762db57`) returned FIX-FIRST with
+fourteen findings; every code claim was read against the source before a
+fix, and all held but two record nits (`n10-6-seq.log:1219` is the
+failure's own line, and `n10-6-seq3.sh:20` does issue two kmemleak
+scans). The fixes:
+- `37d331b`: the walk recursed once per INDIRECT blockref with nothing
+  bounding it, and an indirect block whose array names its own block
+  passes its check, so a crafted image ran the walk off the stack from
+  any seek or map. It fails with BADBREF, EIO to the caller, past sixteen
+  levels, bulkfree's bound for its own recursion; the frame measured 200
+  bytes on the kernel of record (`sub $0xc0` plus the return address) and
+  392 under KASAN. Keybits above 63 are refused in the walk and the scan.
+  The auditor's second check, refusing a child INDIRECT at its parent's
+  keybits, was not taken: `hammer2_chain_create_indirect()` could build
+  one before 1.0.21 (`e9495a3`), and media holding one must still read.
+- `eb46736`: the seek and the map negated their own errnos, so a block
+  failing its check, CHECK in the core and EDOM from
+  `hammer2_error_to_errno()`, reached lseek(2) and FIEMAP as EDOM. They
+  return through `hammer2_vfs_errno()`.
+- `2ea2064`: `hammer2_seek_scanall()` had no rescheduling point and no
+  fatal-signal check per chunk.
+- `31c3818`, `c443d4d`: the remote-slot check read `pfs_hmps[]`
+  unmarked; the `READ_ONCE()` added for it was evaluated twice, which the
+  automated security review caught, because `hammer2_dev_is_conn()` was a
+  macro expanding its argument twice; six callers pass a slot read
+  without its lock. It is an inline function.
+- `ce7b2d0`: the comments said a folio leaves its tags only once its block
+  is in the tree; a failed writeback ends with the folio clean and no
+  block in the tree (`hammer2_xop_strategy_write()`), so the seek calls a
+  block a hole that read(2) returns. Stated in the code and in
+  `README.porting.md`, with the whole-call hold's cost on the scan path.
+- `325d29d`: the scan's `DEFER` fired on "a cluster of several local
+  elements in use", which no instrument reads. The architect ruling set
+  the trigger from the remote 1 GiB reading as a writer's wait, and
+  `b95499f` dropped that reading once a remote element was found
+  read-only, with no writer to wait. The trigger now names three
+  readings: `cluster-wire.sh`'s remote SEEK_HOLE under
+  `H2_WIRE_SEEKTIME=1` above 2.5 s, twice the 1.217 s it read; the
+  writer's median beside the two-master SEEK_HOLE loop of
+  `cluster-quorum.sh` under `H2_QUORUM_CONTEND=512` above 100 ms, about
+  four times the 26.93 ms read below; or a PFS with a remote element
+  mounted read-write. It departs from the ruling on the remote clause:
+  there the reading is the seek's own length, since the remote element
+  has no writer and the length is the one reading the fleet takes of the
+  scan there.
+- The instruments: `seek_walked` (`d933232`, counted where the walk is
+  chosen), seekprobe `refuse` and `cold` and per-whence dense medians, the
+  race mode's depth and corrupt-indirect passes, `H2_SEEK_RULE_MS`,
+  `H2_SEEK_COLD` (`8981c9d`, `f437339`), the quorum's seek and map
+  (`cb35259`, `7d23095`), and the sparse pass's status and lockdebug read
+  (`3f7c118`).
+
+**The new checks and their controls** (`n10-6-seq6.log`, head `3f7c118`,
+`h2debug-7.3tls`, one repeat of the race mode, `:1-50`): the walk
+answered 4404 tree reads of the first dump and none of the forced one
+(`:22`, predicted 4000 to 10000); `seek_depth_max=0` refused all three
+calls with EIO (`:23-26`); the corrupt pass found inode 1029's first
+indirect block at data_off `000000000502400e`, a 16 KiB block, flipped
+byte 84033600 (190 to 65), and refused both seeks and FIEMAP with EIO
+while the read failed EIO, with no BUG, oops or warning and
+`debug_locks` 1 (`:32-45`). Each control, a lockdebug module from
+`3f7c118` with one marked edit, failed as predicted:
+- `nodepth` (no depth bound, `0a4891c2a4b4391c`): the refusals answered,
+  SEEK_DATA 0 and SEEK_HOLE 68157440 (`:63-66`), the corrupt pass
+  unaffected.
+- `noerrno` (the three returns negated by hand again, `dd22d3d8e33297a5`):
+  "Numerical argument out of domain" for both seeks and FIEMAP on the
+  corrupt block (`:116-119`), while BADBREF's refusal passed, since the
+  core maps it to EIO itself.
+- `mapdrop` (the walk's map batch ends one short of full,
+  `1bd2136509bc1af5`): the dumps differed, 2233 lines and 31 extents
+  against 2237 and 35 (`:145`), with the walk counter still moving.
+`debug_locks` read 1 after the controls (`:180`).
+
+**Release timing, the probe's per-whence medians** (same log, head
+`3f7c118`, `h2release-7.3tls`, 16 GiB, 20 seeks, `H2_SEEK_RULE_MS=50`):
+dense SEEK_HOLE 13.97 ms median of ten, within the rule; the scan forced
+(`ctl/n10-6-r1-scanall`, `06553c94532e8f97`) 233.06 ms, failing the rule
+by its status, rc 1, where the first entry's scanall and noseed runs had
+exited 0 and been read by hand.
+
+On `h2debug-7.3tls` (same log, `:227`, not a rule run) the dense
+SEEK_HOLE median was 89.49 ms, inside the predicted 50 to 120 ms, with
+`debug_locks` 1 after (`:347`). The quorum's seek and map answered on both
+kernels: both seeks 6 of 6 after a remount and FIEMAP two extents
+(`:360-361`, `:1762-1763`). Both quorum runs still failed, two checks on
+debug and three on release (`:371-372`, `:1772-1776`): the seek's file was
+left on the cluster, so each MASTER held 25 file entries where the set's
+check counts 24, and the release kernel, which configures no kmemleak,
+read as a refusal. `7d23095` removes the file and prints a note for a
+kernel without kmemleak.
+
+The first cold run took no cold reading. Its five SEEK_HOLEs read 19.31 to
+21.03 ms (`:1744`), but every host residency count was empty (`:1745`):
+libvirt gives an attached image to its own user, mincore(2) reports every
+page of a file the caller neither owns nor can write as resident, and
+cachestat(2), which fincore uses, refuses it. Its 50 ms check passed
+anyway. `f437339` takes the host's drop and count while the image is
+detached and fails a drop it cannot count.
+
+**The follow-up at `f437339`** (`n10-6-seq7.log`, no uncommitted change,
+predictions in `n10-6-expected3.md`'s follow-up section). On
+`h2debug-7.3tls` (`:6-79`) the race mode ran clean with its depth and
+corrupt passes (`:45`), the quorum passed 24 checks with kmemleak cleared
+and read empty (`:67`, `:78`), the fixtures had 0 failures over 11 images
+(`:102`), and enospc filled clean as root and as a user (`:527`, `:935`).
+xfstests `-g seek` passed 8 of 8 (`:1012`), the wire passed 36 checks
+(`:1056`), and `debug_locks` read 1 after (`:1014`). On `h2kasan-7.3tls`
+the race mode and xfstests passed with 0 KASAN or UBSAN reports
+(`:1101`, `:1178-1180`). On `h2release-7.3tls` the 16 GiB dense
+SEEK_HOLE was 14.15 ms under the 50 ms rule (`:1189`, `:1202`), against
+13.97 ms at `3f7c118`.
+
+Cold, five repeats under the rule (`:1310-1336`): SEEK_HOLE 19.75 to
+22.61 ms, median 20.15 ms, within 50 ms, with 0 of the image's pages
+resident on the host after each drop. A zero from this counter needed a
+live counter behind it: the same mincore(2) count over a 64 MiB file just
+read gave 16384 of 16384 pages without the drop and 0 after it
+(`n10-6-r1/mincore-ctl.log`). The median is below the predicted 25 to
+80 ms, a prediction resting on an unmeasured cost per leaf block. A
+warm read is 14.15 ms, so the cold cost is about 6 ms; why the cold reads
+cost that little is not measured. The whole-call hold stands, as the
+step's rule said it would at 50 ms or less.
+
+The quorum under `H2_QUORUM_CONTEND=512` on the release kernel passed 23
+checks (`:1371`), kmemleak a note (`:1360`). Twenty 64 KiB writes into a
+512 MiB synced file took 5.21 us median alone and 26.93 ms median, 27.15 ms worst, beside a SEEK_HOLE
+loop that began 42 seeks through the two-master mount (`:1352-1353`), against
+26.78 ms at `3f7c118` (`n10-6-seq6.log:1765`). That wait is the scan's
+whole-call hold on a cluster of several elements, and the number
+`325d29d`'s second clause is set against. QEMU cores read 0 at the start
+and the end of both runs (`n10-6-seq6.log:1`, `:1790`;
+`n10-6-seq7.log:1`, `:1378`).
