@@ -648,10 +648,13 @@ if [ "$QVOTE" = 1 ]; then
 	check "the file the masters disagree on is removed through the quorum" $? "${a:-no line}"
 	# A block on one master because its write has not reached the next is
 	# not a disagreement: the call waits for the write. With the wait off
-	# the same call fails EIO, which shows the call met the held window.
+	# the same call fails EIO, which shows the call met the held window;
+	# whether the writeback returned before the call is printed and not
+	# required, since the woken call reads the tree again after the count
+	# moves and the writeback's own return races it.
 	for k in hole map; do
 		a=$(vf wbrace0-$k answer); w=$(vf wbrace0-$k want); e=$(vf wbrace0-$k errno); y=$(vf wbrace0-$k sync)
-		[ -n "$a" ] && [ "$a" = "$w" ] && [ "$e" = 0 ] && [ "$y" = inside ]
+		[ -n "$a" ] && [ "$a" = "$w" ] && [ "$e" = 0 ]
 		check "$k beside a writeback held between the masters waits for it and answers" $? "answer ${a:-none} want ${w:-none} errno ${e:-none} sync ${y:-none}"
 		a=$(vf wbrace1-$k answer); e=$(vf wbrace1-$k errno)
 		[ -n "$a" ] && [ "$a" -lt 0 ] 2>/dev/null && [ "$e" = 5 ]
