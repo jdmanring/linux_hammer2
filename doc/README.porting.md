@@ -1711,3 +1711,20 @@ would have `cp --sparse` and `tar --sparse` skip it silently; a hole the
 scan reaches before a disputed key is answered. What repairs the
 disagreement is the protocol note's (C12 and C13); until then the block
 fails.
+
+A write meets the quorum only through a read. Upstream's strategy write
+sends every element one buffer the frontend read through the quorum. The
+port writes a whole-block folio the same way, but a folio smaller than its
+block, the page cache's fallback or what a failed read of the block left
+behind, is assembled at writeback from each element's own chain
+(`hammer2_strategy_assemble()`). `hammer2_write_begin()` therefore reads
+such a folio through `->read_folio` even when the write covers it, unless
+its whole block lies past the end of the file, so a disputed block fails
+the write. Without that read, the 1.0.92 quorum runs measured a 4 KiB
+write into a disputed block, made after the failed reads had left
+page-sized folios, succeeding and leaving both masters at one new tid
+with their other 60 KiB still different. The same assembly would, from
+the code and not run, give a SLAVE behind its master its own stale bytes
+under the master's new tid, which the sync pass, replacing only a block
+whose tid differs, would not repair: a candidate, recorded in the
+verification record with the step that answers it.

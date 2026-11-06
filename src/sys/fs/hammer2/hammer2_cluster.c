@@ -376,11 +376,14 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 		 * not the quorum saying there is no such key, and returns as
 		 * a disagreement on the tid does (doc/CLUSTER_PROTOCOL_DESIGN.md,
 		 * decision C).  On two masters that is a key one holds alone.
-		 * A key no master holds, a slave's, stays ESRCH and is
-		 * stepped over, and so does one a quorum lacks.
+		 * Only once every master has answered: one still in progress,
+		 * as the sync thread's own element is to its collect, may
+		 * hold the key.  A key no master holds, a slave's, stays ESRCH
+		 * and is stepped over, and so does one a quorum lacks.
 		 */
 		if (nmasters_keymatch < nquorum) {
-			if (nmasters_keymatch > 0 && nmasters_nokey < nquorum)
+			if (nmasters_keymatch > 0 && umasters == 0 &&
+			    nmasters_nokey < nquorum)
 				return (HAMMER2_ERROR_EDEADLK);
 			return (HAMMER2_ERROR_ESRCH);
 		}

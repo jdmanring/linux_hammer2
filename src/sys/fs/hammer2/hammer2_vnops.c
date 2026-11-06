@@ -1588,11 +1588,12 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * On three or more a block a quorum holds at one tid is data and one a
  * quorum lacks is a hole while the slots differ, so the scan runs on key
  * by key, and a run only a minority hold costs it a chain per block.  A
- * writer beside a two-master SEEK_HOLE loop waits about two tree reads
- * (68.85 and 74.13 ms beside 34.36 and 35.53 at 16 GiB), a seek that finds
- * the mapping tagged dirty reading the tree again from its hole, so the
- * 50 ms rule on the seek bounds the writer near 100 ms; the split's
- * reading is taken on the HAMMER2_LOCKDEBUG module H2_QUORUM_SPLIT needs.
+ * writer beside a two-master SEEK_HOLE loop has waited about twice the
+ * seek's median in every reading at 16 GiB, beside agreeing masters and
+ * beside a split whose seeks each read the tree once, so the 50 ms rule on
+ * the seek bounds the writer near 100 ms; why it is two seeks is not
+ * attributed.  The split's reading is taken on the HAMMER2_LOCKDEBUG
+ * module H2_QUORUM_SPLIT needs.
  * DEFER(H2_WIRE_SEEKTIME's 1 GiB SEEK_HOLE above 2.5 s on h2debug-7.3tls, a PFS with a remote element mounted read-write, cluster-quorum.sh's two-master 16 GiB SEEK_HOLE above 50 ms on h2release-7.3tls with or without H2_QUORUM_SPLIT, or a third MASTER in cluster-quorum.sh):
  * a seek request the cluster transport carries would let a remote element
  * walk, and a quorum over the elements' blockref lists would let masters
@@ -2436,6 +2437,7 @@ hammer2_write_begin(const struct kiocb *iocb,
 	struct inode *inode = mapping->host;
 	struct folio *folio;
 	pgoff_t index = pos >> PAGE_SHIFT, bindex;
+	bool small;	/* Linux: a folio smaller than its block */
 	int error;
 
 	/*
@@ -2490,10 +2492,24 @@ hammer2_write_begin(const struct kiocb *iocb,
 	if (IS_ERR(folio))
 		return (PTR_ERR(folio));
 
+	/*
+	 * Linux: a folio smaller than its block, in a block the file reaches,
+	 * is read even when the write covers it.  Its writeback assembles the
+	 * rest of the block from each element's own chain
+	 * (hammer2_strategy_assemble()), and only the read goes through the
+	 * quorum, which fails a block the masters disagree on; covered and
+	 * unread, a 4 KiB write into such a block gave each master its own
+	 * copy at one tid.  Such a folio is the page cache's fallback, or what
+	 * a failed read of the block left.
+	 */
+	small = folio_size(folio) < HAMMER2_PBUFSIZE &&
+	    (folio_pos(folio) & ~((loff_t)HAMMER2_PBUFSIZE - 1)) <
+	    i_size_read(inode);
 	if (!folio_test_uptodate(folio)) {
-		if (pos == folio_pos(folio) && len >= folio_size(folio)) {
+		if (!small && pos == folio_pos(folio) &&
+		    len >= folio_size(folio)) {
 			/* Covered entirely by the write; nothing to read. */
-		} else if (folio_pos(folio) >= i_size_read(inode)) {
+		} else if (!small && folio_pos(folio) >= i_size_read(inode)) {
 			folio_zero_range(folio, 0, folio_size(folio));
 			folio_mark_uptodate(folio);
 		} else {

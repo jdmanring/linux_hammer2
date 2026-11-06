@@ -372,7 +372,7 @@ new.
 depth argument, `hammer2_xops.c:1566`, is a continuation-line indent; the
 debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
 `return (x);`; and the chunked scan's fatal-signal check returns a positive
-`EINTR` at `hammer2_vnops.c:1620`, which is the module's errno convention
+`EINTR` at `hammer2_vnops.c:1621`, which is the module's errno convention
 and is negated at the VFS boundary like every other. No category is new.
 
 1,659 to 1,661 with the seek's vote on several MASTERs

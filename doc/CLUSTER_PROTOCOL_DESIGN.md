@@ -69,8 +69,8 @@ property the remote element depends on was read:
 | `hammer2_cluster.c:179` | `nquorum` is `pfs_nmasters / 2 + 1` |
 | `hammer2_cluster.c:287` | `umasters` counts a master slot with no chain and no `CITEM_NULL` flag |
 | `hammer2_cluster.c:365` | `HAMMER2_ERROR_EINPROGRESS` is returned while enough masters are still in progress to reach the quorum |
-| `hammer2_cluster.c:385` | too few masters agreeing on the key returns `ESRCH`, and the tid disagreement `EDEADLK` below it |
-| `hammer2_cluster.c:404` | a quorum whose agreeing masters all errored returns `EIO`, reachable only with a quorum |
+| `hammer2_cluster.c:388` | too few masters agreeing on the key returns `ESRCH`, and the tid disagreement `EDEADLK` below it |
+| `hammer2_cluster.c:407` | a quorum whose agreeing masters all errored returns `EIO`, reachable only with a quorum |
 | `hammer2_chain.c:849` | `hammer2_chain_drop_data()` panics "data not NULL" for a chain with data and no `dio`, every type but VOLUME and FREEMAP |
 | `hammer2_chain.c:1164` | `hammer2_chain_unlock()` calls it on every last unlock |
 | `hammer2_chain.c:1027` | `hammer2_chain_load_data()` returns before touching the device when `chain->data` is set or the block part of `data_off` is zero, and reads through `hammer2_io_bread()` otherwise, an I/O error becoming the chain's `EIO` |
@@ -1058,7 +1058,7 @@ strategy write ends its folios only inside its storage function
 would leave every buffered write under writeback until unmount, and the
 buffered writes and attribute changes dispatch no XOP at all
 (`hammer2_vnops.c` starts one at `:133`, `:242`, `:515`, `:671`, `:712`,
-`:1558`, `:1631`, `:1918` and `:2662`), so they would have returned 0 and lost
+`:1558`, `:1632`, `:1919` and `:2678`), so they would have returned 0 and lost
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1849-1859`).
 The slave's pass writes its element through chain calls and its own
@@ -1083,7 +1083,7 @@ and modify its chain, the remote element, which serves no modifying
 descriptor, would feed its end as `ENOTCONN`, the check would return
 `ENOTCONN` with this one master unreachable, and the slave's created
 chain would flush with no master agreeing. `EIO` at
-`hammer2_cluster.c:404` is reachable only with a quorum. The mount
+`hammer2_cluster.c:407` is reachable only with a quorum. The mount
 becomes writable only under the protocol a later note settles.
 
 **The slave's pass over a remote master takes its source from the
@@ -1316,7 +1316,7 @@ rather than from the design document alone.
   `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
   (`hammer2_vnops.c:374`, `:500`, `:619`, `:830`, `:1085`, `:1282`,
-  `:1475`, `:2212`, `:3029`), which a mount sets and only a remount
+  `:1475`, `:2213`, `:3045`), which a mount sets and only a remount
   rewrites (`hammer2_vfsops.c:1884`, `:2769`, `:2799`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1398-1399`), and with it clear
@@ -1335,7 +1335,7 @@ rather than from the design document alone.
   property of the write path's design, not of a flag.
 - **C14. A read served from the caches never reaches the quorum
   check.** Cached folios, the dentry cache and the in-memory inode
-  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2969`) with no
+  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:2985`) with no
   XOP; only an uncached lookup and `readdir`, which is an XOP per call
   (`:197`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
@@ -1641,8 +1641,8 @@ issues it twice.
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
 (`hammer2.h:1701-1745`), and the collect turns `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
-agreeing the check returns at `hammer2_cluster.c:363-388`, before pass 3,
-and `RDHARD` is set for a MASTER only in pass 3 (`:431-432`), so there is
+agreeing the check returns at `hammer2_cluster.c:363-391`, before pass 3,
+and `RDHARD` is set for a MASTER only in pass 3 (`:434-435`), so there is
 no carried read of a local focus under quorum loss: today a `lookup`
 under it reads `ENOENT`, "no such file", and a `readdir` reads empty.
 Reads are already closed, with the wrong errno, and the state model
@@ -1689,9 +1689,9 @@ keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`, `fs/ext4/ioctl.c:858-868`,
 those two test theirs: every VOP that modifies, since the port's
 create, unlink, rename, link, setattr, fallocate and time update modify
 local chains before the collect (C6), `open` and `mmap` for writing (the port has no `.open` and its
-`.read_iter` is the generic one, `hammer2_vnops.c:2409`, so those two are
+`.read_iter` is the generic one, `hammer2_vnops.c:2410`, so those two are
 new wrappers, and the mmap hook on the kernel of record is
-`.mmap_prepare`, `:2413`), `write_iter`, `page_mkwrite`, `writepages`,
+`.mmap_prepare`, `:2414`), `write_iter`, `page_mkwrite`, `writepages`,
 and the reads, which both refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
 so that a cut-off holder never serves cached data as current; `fsync`
 never returns 0 after the shutdown, as neither does (`fs/ext4/fsync.c:134`

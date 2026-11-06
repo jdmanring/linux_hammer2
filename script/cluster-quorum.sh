@@ -322,20 +322,27 @@ for b in 0 2 10 12; do
 	echo "vote read $b exit $s bytes $(wc -c < /tmp/qv.blk 2>/dev/null || echo none) nonzero $(tr -d '\000' < /tmp/qv.blk 2>/dev/null | wc -c)"
 	[ "$s" = 0 ] || echo "vote readerr $b $(tr '\n' ' ' < /tmp/qv.err)"
 done
-# A 4 KiB write into block 2 reads the block's folio first; it must fail
-# and leave both masters' copies as they were, read again from the media.
-dd if=/dev/urandom of=/mnt/h2q/dis bs=4k seek=$((2 * 16 + 1)) count=1 conv=notrunc 2>/tmp/qv.err; s=$?
-echo "vote pwrite exit $s eio $(grep -c 'Input/output error' /tmp/qv.err)"
-sync
 echo $((0x8000)) > /sys/module/hammer2/parameters/debug
-vshow "vote after"
 # The comparison's control: 1 drops the tid from it, 2 trusts the first
 # walk unread; either must make the walk's dump differ from the scan's.
+# Before the partial write, which would end the disagreement at block 2
+# if it went through.
 for k in 1 2; do
 	echo $k > $P/seek_agree_break
 	vdump /mnt/h2q/dis break$k
 done
 echo 0 > $P/seek_agree_break
+# A 4 KiB write into block 2, after the reads above left the block's pages
+# in the cache as page-sized folios, none uptodate: the write covers its
+# own folio whole, so only hammer2_write_begin()'s read of a folio smaller
+# than its block goes through the quorum. It must fail and leave both
+# masters' copies as they were, read again from the media.
+echo $((0x8000 | 0x0100)) > /sys/module/hammer2/parameters/debug
+dd if=/dev/urandom of=/mnt/h2q/dis bs=4k seek=$((2 * 16 + 1)) count=1 conv=notrunc 2>/tmp/qv.err; s=$?
+echo "vote pwrite exit $s eio $(grep -c 'Input/output error' /tmp/qv.err)"
+echo $((0x8000)) > /sys/module/hammer2/parameters/debug
+sync
+vshow "vote after"
 rm /mnt/h2q/dis; echo "vote rm exit $?"
 fi
 # CONTEND=n prints what a seek through the quorum costs a writer: a dense
