@@ -402,7 +402,7 @@ SETUP cold reattach failed"
 		fi
 		for want in "^refuse depth exit 0$" "^refuse corrupt exit 0$" \
 		    "^corrupt read exit [1-9][0-9]* eio [1-9]" "^corrupt umount exit 0$" \
-		    "^corrupt rmmod exit 0$" "^corrupt log: bug 0 oops 0 " "^corrupt debug_locks [1n]"; do
+		    "^corrupt rmmod exit 0$" "^corrupt log: bug 0 oops 0 warn 0$" "^corrupt debug_locks [1n]"; do
 			printf '%s\n' "$out" | command grep -q "$want" || {
 				echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 		done
