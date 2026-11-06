@@ -383,8 +383,14 @@ race(const char *path)
  * "map" asks FIEMAP of the "data" file instead, held the same way between
  * its tag read and its tree read: block 1 must be in some extent, as
  * DELALLOC or as written, and a map that read the tags after the tree
- * reports it as neither.  The answer printed is 65536 when it is mapped
- * and -1 when it is not.
+ * reports it as neither.  The answer printed is 65536 when it is mapped,
+ * -1 when it is not and -2 when the map failed, with its errno.
+ *
+ * A trailing count of milliseconds delays the call by that much after the
+ * fork, so it can land inside the writeback rather than before it: on two
+ * MASTERs with the module's write_gap_ms holding the write between its
+ * elements, block 1 is then on the first master and not the second when
+ * the tree is read (script/cluster-quorum.sh).
  */
 static long
 mapped(int fd, long off)
@@ -408,12 +414,12 @@ mapped(int fd, long off)
 }
 
 static int
-wbrace(const char *path, const char *kind)
+wbrace(const char *path, const char *kind, long delay)
 {
 	volatile long *tt;
 	char *buf = malloc(BSIZE);
 	int hole = strcmp(kind, "hole") == 0, map = strcmp(kind, "map") == 0;
-	int fd, st;
+	int fd, st, e;
 	long t0, t1, want = hole ? 2 * BSIZE : BSIZE;
 	off_t got;
 	pid_t pid;
@@ -440,7 +446,11 @@ wbrace(const char *path, const char *kind)
 		*tt = now_ns();
 		_exit(0);
 	}
+	if (delay > 0)
+		usleep(delay * 1000);
+	errno = 0;
 	got = map ? mapped(fd, BSIZE) : lseek(fd, 0, hole ? SEEK_HOLE : SEEK_DATA);
+	e = errno;
 	t1 = now_ns();
 	waitpid(pid, &st, 0);
 	if (!WIFEXITED(st) || WEXITSTATUS(st) != 0 || *tt == 0) {
@@ -448,8 +458,8 @@ wbrace(const char *path, const char *kind)
 		return (1);
 	}
 	printf("seekm-wbrace %s answer %ld want %ld seek-ms %ld sync-ms %ld "
-	    "sync %s\n", kind, (long)got, want, (t1 - t0) / 1000000,
-	    (*tt - t0) / 1000000, *tt < t1 ? "inside" : "after");
+	    "sync %s errno %d\n", kind, (long)got, want, (t1 - t0) / 1000000,
+	    (*tt - t0) / 1000000, *tt < t1 ? "inside" : "after", e);
 	if (got != (off_t)want) {
 		printf("seekm-fail wbrace %s: answered %ld, want %ld\n", kind,
 		    (long)got, want);
@@ -1012,7 +1022,9 @@ main(int argc, char **argv)
 	if (argc == 3 && strcmp(argv[1], "race") == 0)
 		return (race(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "wbrace") == 0)
-		return (wbrace(argv[2], argv[3]));
+		return (wbrace(argv[2], argv[3], 0));
+	if (argc == 5 && strcmp(argv[1], "wbrace") == 0)
+		return (wbrace(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	/* A trailing count of MiB sizes the dense file, a block multiple. */
 	if (argc >= 2 && strcmp(argv[1], "contendgap") == 0) {
 		gap = 1;
@@ -1040,7 +1052,7 @@ main(int argc, char **argv)
 	if (argc == 5 && strcmp(argv[1], "time") == 0)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
-	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole|map | corrupt|refuse <path> | layout|dump <path> | "
+	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole|map [ms] | corrupt|refuse <path> | layout|dump <path> | "
 	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | cold <path> [MiB] | contend|contendgap <path> <n> [MiB] | contendon|contendeio <path> <n> <MiB> | fill <path> <MiB>\n",
 	    argv[0]);
 	return (2);

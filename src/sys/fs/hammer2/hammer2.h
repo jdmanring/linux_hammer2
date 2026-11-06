@@ -527,7 +527,28 @@ struct hammer2_inode {
 	unsigned int		flags;		/* for HAMMER2_INODE_xxx */
 	uint8_t			comp_heuristic;
 	int			ipdep_idx;
+	atomic_t		wr_begun;	/* Linux: hammer2_write_wait() */
+	atomic_t		wr_done;	/* Linux */
 };
+
+/*
+ * Linux: a strategy write runs its elements one after another on the
+ * writeback thread (hammer2_xop_start_except()) and holds no inode lock
+ * across them, so a frontend XOP beside it can find a new block on one
+ * master and not yet on the next, or a removed one still on the next,
+ * which hammer2_cluster_check() fails as a disagreement.  The frontend
+ * reads wr_done before it starts its XOP (hammer2_write_sample()), and on
+ * EDEADLK, with the XOP retired and the inode unlocked, asks
+ * hammer2_write_wait() whether any write was in flight then or began
+ * since.  If one was, it waits for those writes and runs the XOP again; a
+ * disagreement no write ran beside is on media and fails.  The count is
+ * per inode, so a write to another block also earns a run, and
+ * HAMMER2_WRITE_RETRIES (hammer2_vnops.c) bounds the runs a stream of
+ * writes can cost one call before the disagreement fails.  Upstream steps
+ * over the key.
+ */
+unsigned int hammer2_write_sample(hammer2_inode_t *);
+bool hammer2_write_wait(hammer2_inode_t *, unsigned int, int *);
 
 /*
  * MODIFIED	- Inode is in a modified state, ip->meta may have changes.

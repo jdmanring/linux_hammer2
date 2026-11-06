@@ -481,6 +481,7 @@ check "hammer2_flush.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_flush.c -D
 check "hammer2_freemap.c: lockdebug"  pass src/sys/fs/hammer2/hammer2_freemap.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_iocom.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_iocom.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_ioctl.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_ioctl.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_strategy.c: lockdebug" pass src/sys/fs/hammer2/hammer2_strategy.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS
 check "hammer2_synchro.c: lockdebug"  pass src/sys/fs/hammer2/hammer2_synchro.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_vfsops.c: lockdebug"   pass src/sys/fs/hammer2/hammer2_vfsops.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_vnops.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_vnops.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED

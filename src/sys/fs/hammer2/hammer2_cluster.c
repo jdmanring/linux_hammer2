@@ -157,6 +157,7 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	 */
 	int nmasters_keymatch;
 	int nmasters_nokey;	/* XXX Linux: masters that answered without it */
+	int emaster_error;	/* XXX Linux: a master's own error, ended on it */
 	int nslaves;
 	int nquorum;
 	int umasters;
@@ -256,6 +257,7 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	nmasters = 0;
 	nmasters_keymatch = 0;
 	nmasters_nokey = 0;
+	emaster_error = 0;
 	quorum_tid = 0;
 
 	while (nmasters < nquorum && last_best_quorum_tid != 0) {
@@ -264,6 +266,7 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 		nmasters = 0;
 		nmasters_keymatch = 0;
 		nmasters_nokey = 0;
+		emaster_error = 0;
 		quorum_tid = 0;
 
 		for (i = 0; i < cluster->nchains; ++i) {
@@ -330,9 +333,12 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 				/*
 				 * XXX Linux: past the key, or ended clean, so
 				 * this master says it holds no such key.  An
-				 * element that ended on an error says nothing.
+				 * element that ended on an error says nothing,
+				 * and its error is kept for the split below.
 				 */
 				++nmasters_nokey;
+			} else if (emaster_error == 0) {
+				emaster_error = error;
 			}
 		}
 		if (nmasters >= nquorum)
@@ -379,12 +385,17 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 		 * Only once every master has answered: one still in progress,
 		 * as the sync thread's own element is to its collect, may
 		 * hold the key.  A key no master holds, a slave's, stays ESRCH
-		 * and is stepped over, and so does one a quorum lacks.
+		 * and is stepped over, and so does one a quorum lacks.  Where
+		 * a master ended on an error, which says nothing of this key
+		 * or any past the point it failed, the split is that error
+		 * rather than a disagreement, so the caller fails with the
+		 * master's own error, as a read of the key does.
 		 */
 		if (nmasters_keymatch < nquorum) {
 			if (nmasters_keymatch > 0 && umasters == 0 &&
 			    nmasters_nokey < nquorum)
-				return (HAMMER2_ERROR_EDEADLK);
+				return (emaster_error ? emaster_error :
+				    HAMMER2_ERROR_EDEADLK);
 			return (HAMMER2_ERROR_ESRCH);
 		}
 		return (HAMMER2_ERROR_EDEADLK);

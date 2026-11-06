@@ -249,8 +249,21 @@ hammer2_vop_readdir(struct file *file, struct dir_context *ctx)
 			uint16_t namlen;
 			bool ok = true;
 
-			error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head,
-			    0));
+			error = hammer2_xop_collect(&xop->head, 0);
+			/*
+			 * Linux: a disagreement at or past rkey can be an
+			 * element that stopped at its nmax short of the key,
+			 * which the check counts as answering without it.  It
+			 * is the chunk's end, as an entry there is, and the
+			 * next XOP reads it from rkey with every element.
+			 */
+			if (error == HAMMER2_ERROR_EDEADLK &&
+			    rkey != HAMMER2_KEY_MAX &&
+			    xop->head.collect_key - 1 >= rkey) {
+				error = 0;
+				break;
+			}
+			error = hammer2_error_to_errno(error);
 			if (error)
 				break;
 			hammer2_cluster_bref(&xop->head.cluster, &bref);
@@ -1550,19 +1563,25 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 {
 	hammer2_inode_t *ip = VTOI(inode);
 	hammer2_xop_bmap_t *xop;
-	int error;
+	unsigned int done;
+	int cerror, tries = 0;
 
+again:
+	done = hammer2_write_sample(ip);
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 	xop = hammer2_xop_alloc(ip, 0);
 	xop->lbn = lbn;
 	hammer2_xop_start(&xop->head, &hammer2_bmap_desc);
-	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
-	if (error == 0)
+	cerror = hammer2_xop_collect(&xop->head, 0);
+	if (cerror == 0)
 		*poff = hammer2_bmap_offset(&xop->head.cluster, xop->offset);
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	hammer2_inode_unlock(ip);
+	if (cerror == HAMMER2_ERROR_EDEADLK &&
+	    hammer2_write_wait(ip, done, &tries))
+		goto again;
 
-	return (error);
+	return (hammer2_error_to_errno(cerror));
 }
 
 /*
@@ -1588,11 +1607,11 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * On three or more a block a quorum holds at one tid is data and one a
  * quorum lacks is a hole while the slots differ, so the scan runs on key
  * by key, and a run only a minority hold costs it a chain per block.  A
- * writer beside a two-master SEEK_HOLE loop has waited about twice the
- * seek's median in every reading at 16 GiB, beside agreeing masters and
- * beside a split whose seeks each read the tree once, so the 50 ms rule on
- * the seek bounds the writer near 100 ms; why it is two seeks is not
- * attributed.  The split's reading is taken on the HAMMER2_LOCKDEBUG
+ * writer beside a two-master SEEK_HOLE loop has waited 1.68 to 2.09 times
+ * the seek's median in each reading at 16 GiB, beside agreeing masters and
+ * beside a split whose seeks each read the tree once, and why is not
+ * attributed; cluster-quorum.sh holds the writer to three times the
+ * seek's rule, a check of its own.  The split's reading is taken on the HAMMER2_LOCKDEBUG
  * module H2_QUORUM_SPLIT needs.
  * DEFER(H2_WIRE_SEEKTIME's 1 GiB SEEK_HOLE above 2.5 s on h2debug-7.3tls, a PFS with a remote element mounted read-write, cluster-quorum.sh's two-master 16 GiB SEEK_HOLE above 50 ms on h2release-7.3tls with or without H2_QUORUM_SPLIT, or a third MASTER in cluster-quorum.sh):
  * a seek request the cluster transport carries would let a remote element
@@ -1609,8 +1628,10 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 	hammer2_xop_scanall_t *sxop;
 	hammer2_blockref_t *bref;
 	hammer2_key_t cur = r->key_beg, end, next, chunk = HAMMER2_SEEK_CHUNK;
+	hammer2_key_t key0;
+	unsigned int done;
 	bool held;
-	int error;
+	int error, n0, tries = 0;
 
 	r->key = r->key_beg;
 	r->found = 0;
@@ -1621,6 +1642,9 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 			return (EINTR);
 		end = (r->key_end - cur < chunk) ? r->key_end : cur + chunk - 1;
 		held = false;
+		key0 = r->key;
+		n0 = r->n;
+		done = hammer2_write_sample(ip);
 		hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
 		sxop = hammer2_xop_alloc(ip, 0);
 		sxop->key_beg = cur;
@@ -1674,6 +1698,13 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 			error = 0;
 		hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
 		hammer2_inode_unlock(ip);
+		/* a write beside the chunk: run it again (hammer2_write_wait()) */
+		if (error == HAMMER2_ERROR_EDEADLK &&
+		    hammer2_write_wait(ip, done, &tries)) {
+			r->key = key0;
+			r->n = n0;
+			continue;
+		}
 		if (error != 0 || r->found || end == r->key_end ||
 		    (r->mode == HAMMER2_SEEK_MODE_HOLE && r->key <= end) ||
 		    (r->mode == HAMMER2_SEEK_MODE_MAP && r->n == r->max))
@@ -1732,12 +1763,12 @@ hammer2_seek_walks(hammer2_xop_seek_t *xop)
  * them: a MASTER or the SUPROOT.
  */
 static int
-hammer2_seek_voters(hammer2_xop_seek_t *xop)
+hammer2_voters(hammer2_pfs_t *pmp, int nchains)
 {
 	int i, n = 0;
 
-	for (i = 0; i < xop->head.cluster.nchains; ++i)
-		switch (xop->head.ip1->pmp->pfs_types[i]) {
+	for (i = 0; i < nchains; ++i)
+		switch (pmp->pfs_types[i]) {
 		case HAMMER2_PFSTYPE_MASTER:
 		case HAMMER2_PFSTYPE_SUPROOT:
 			++n;
@@ -1909,7 +1940,7 @@ hammer2_seek_tree(struct inode *inode, struct hammer2_seek_req *r)
 		hammer2_inode_unlock(ip);
 		return (hammer2_seek_scanall(ip, r));
 	}
-	if (hammer2_seek_voters(xop) > 1) {
+	if (hammer2_voters(xop->head.ip1->pmp, xop->head.cluster.nchains) > 1) {
 		nc = xop->head.cluster.nchains;
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 		hammer2_inode_unlock(ip);
@@ -2499,10 +2530,15 @@ hammer2_write_begin(const struct kiocb *iocb,
 	 * (hammer2_strategy_assemble()), and only the read goes through the
 	 * quorum, which fails a block the masters disagree on; covered and
 	 * unread, a 4 KiB write into such a block gave each master its own
-	 * copy at one tid.  Such a folio is the page cache's fallback, or what
-	 * a failed read of the block left.
+	 * copy at one tid.  A cold read leaves page-sized folios as often as
+	 * whole blocks, since readahead grows from the mapping's minimum
+	 * order.  With one voting element the assembly is already the quorum's
+	 * and nothing is read.  A folio already uptodate is not read either,
+	 * and its block keeps the per-element assembly (doc/README.status.md).
 	 */
 	small = folio_size(folio) < HAMMER2_PBUFSIZE &&
+	    hammer2_voters(VTOI(inode)->pmp,
+	    READ_ONCE(VTOI(inode)->cluster.nchains)) > 1 &&
 	    (folio_pos(folio) & ~((loff_t)HAMMER2_PBUFSIZE - 1)) <
 	    i_size_read(inode);
 	if (!folio_test_uptodate(folio)) {
@@ -2648,6 +2684,47 @@ module_param_named(write_except, hammer2_write_except, int, 0644);
 #define HAMMER2_WRITE_EXCEPT	(-1)
 #endif
 
+/*
+ * Linux: what hammer2.h says of wr_begun and wr_done.  The debug build's
+ * write_waits counts the runs hammer2_write_wait() has granted, and
+ * write_wait_off, set, refuses them, which is the control for a test that
+ * holds the window open with write_gap_ms (hammer2_strategy.c).
+ */
+#define HAMMER2_WRITE_RETRIES	8
+#if defined(HAMMER2_LOCKDEBUG)
+static unsigned int hammer2_write_waits;
+module_param_named(write_waits, hammer2_write_waits, uint, 0444);
+static unsigned int hammer2_write_wait_off;
+module_param_named(write_wait_off, hammer2_write_wait_off, uint, 0644);
+#endif
+
+unsigned int
+hammer2_write_sample(hammer2_inode_t *ip)
+{
+	unsigned int done = atomic_read(&ip->wr_done);
+
+	smp_mb();	/* the sample before the XOP's chain reads */
+	return (done);
+}
+
+bool
+hammer2_write_wait(hammer2_inode_t *ip, unsigned int done, int *tries)
+{
+	unsigned int begun;
+
+	smp_mb();	/* the XOP's chain reads before the count */
+	begun = atomic_read(&ip->wr_begun);
+	if (begun == done || ++*tries > HAMMER2_WRITE_RETRIES)
+		return (false);
+#if defined(HAMMER2_LOCKDEBUG)
+	if (READ_ONCE(hammer2_write_wait_off))
+		return (false);
+	WRITE_ONCE(hammer2_write_waits, hammer2_write_waits + 1);
+#endif
+	return (wait_var_event_killable(&ip->wr_done,
+	    (int)((unsigned int)atomic_read(&ip->wr_done) - begun) >= 0) == 0);
+}
+
 static int
 hammer2_writepages(struct address_space *mapping,
     struct writeback_control *wbc)
@@ -2675,8 +2752,14 @@ hammer2_writepages(struct address_space *mapping,
 		xop->folio = folio;
 		xop->siblings = &siblings;
 		xop->lbase = folio_pos(folio);
+		atomic_inc(&ip->wr_begun);	/* Linux: hammer2_write_wait() */
+		smp_mb__after_atomic();	/* the count before any element writes */
 		hammer2_xop_start_except(&xop->head,
 		    &hammer2_strategy_write_desc, HAMMER2_WRITE_EXCEPT);
+		smp_mb__before_atomic();	/* every element has written */
+		atomic_inc(&ip->wr_done);
+		smp_mb__after_atomic();	/* the count before the waiters' test */
+		wake_up_var(&ip->wr_done);
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 		folio_batch_release(&siblings);
 		error = 0;

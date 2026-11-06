@@ -372,7 +372,7 @@ new.
 depth argument, `hammer2_xops.c:1566`, is a continuation-line indent; the
 debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
 `return (x);`; and the chunked scan's fatal-signal check returns a positive
-`EINTR` at `hammer2_vnops.c:1621`, which is the module's errno convention
+`EINTR` at `hammer2_vnops.c:1642`, which is the module's errno convention
 and is negated at the VFS boundary like every other. No category is new.
 
 1,659 to 1,661 with the seek's vote on several MASTERs
@@ -392,6 +392,13 @@ moved between rows of a category the list already holds:
 `-EDEADLK` row goes and the `-EIO` row reads 16 (decision C of
 `doc/CLUSTER_PROTOCOL_DESIGN.md`; `doc/README.porting.md`, "A key the
 masters disagree on").
+
+1,662 to 1,667 when a write in flight was told from a disagreement: the
+prototypes of `hammer2_write_sample()` and `hammer2_write_wait()` in
+`hammer2.h` add four unnamed arguments, the port's prototype style, and
+the two functions net one more `return (x);`. Each memory barrier they
+and `hammer2_writepages()` add carries its comment, which checkpatch
+asks for. No category is new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

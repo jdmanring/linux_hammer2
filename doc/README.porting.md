@@ -1698,7 +1698,28 @@ holds stays ESRCH and is stepped over, and so does a key a quorum lacks
 on three or more, a minority's. The collect fails EDEADLK at its key
 rather than looping, with `collect_key` already past it, and the errno
 map turns it into EIO. A master that ended on an error counts on neither
-side, so it cannot turn a disagreement into an absence.
+side, so it cannot turn a disagreement into an absence, and where another
+master holds the key without a quorum the check returns the errored
+master's own error rather than EDEADLK. That master has said nothing of
+the key or of any past the point it failed, so a seek fails with its
+error, as a read of the key does, rather than answering a hole it may
+hold data in.
+
+A strategy write runs its elements one after another on the writeback
+thread with no inode lock across them, so a call beside a writeback can
+find a block on one master and not yet on the next, or a removed one still
+on the next. That is not a disagreement. The inode counts the strategy
+writes begun on it and completed, and the read, `bmap` and the scan the
+seek and the map fall back to sample the count before their XOP; on
+EDEADLK, if a write was in flight then or began since, the call waits for
+those writes and runs again, up to eight times (`hammer2_write_wait()`). A
+disagreement no write ran beside fails. The count is per inode, so a write
+to another block also earns a run; the bound keeps a stream of writes from
+holding one call. `cluster-quorum.sh` holds a write between its two
+masters with the debug build's `write_gap_ms` and requires a SEEK_HOLE and
+a FIEMAP made inside that window to answer, and the same calls with
+`write_wait_off` set, which refuses the wait, to fail EIO, so a pass shows
+the window was met.
 
 The rule is the same for every XOP. A read, the lookup by name or by
 inode number, `bmap`, a listing, the name-collision scan a create and a
@@ -1715,16 +1736,28 @@ fails.
 A write meets the quorum only through a read. Upstream's strategy write
 sends every element one buffer the frontend read through the quorum. The
 port writes a whole-block folio the same way, but a folio smaller than its
-block, the page cache's fallback or what a failed read of the block left
-behind, is assembled at writeback from each element's own chain
-(`hammer2_strategy_assemble()`). `hammer2_write_begin()` therefore reads
-such a folio through `->read_folio` even when the write covers it, unless
-its whole block lies past the end of the file, so a disputed block fails
-the write. Without that read, the 1.0.92 quorum runs measured a 4 KiB
-write into a disputed block, made after the failed reads had left
-page-sized folios, succeeding and leaving both masters at one new tid
-with their other 60 KiB still different. The same assembly would, from
-the code and not run, give a SLAVE behind its master its own stale bytes
-under the master's new tid, which the sync pass, replacing only a block
-whose tid differs, would not repair: a candidate, recorded in the
-verification record with the step that answers it.
+block, which a cold read leaves as often as a whole-block one since
+readahead grows from the mapping's minimum order of a page, is assembled
+at writeback from each element's own chain (`hammer2_strategy_assemble()`).
+On a PFS with more than one voting element, `hammer2_write_begin()`
+therefore reads such a folio through `->read_folio` even when the write
+covers it, unless its whole block lies past the end of the file, so a
+write through a folio not yet uptodate into a disputed block fails. With
+one voting element the assembly is already the quorum's and nothing is
+read. Without that read, the 1.0.92 quorum runs measured a 4 KiB write
+into a disputed block, made after the failed reads had left page-sized
+folios, succeeding and leaving both masters at one new tid with their
+other 60 KiB still different.
+
+Two cases the read does not reach. A folio already uptodate is not read,
+so one cached before its block came to be disputed, which a writeback
+that succeeded on one element and failed on the other leaves behind, is
+assembled per element at the next write, and the dispute disappears
+under one tid. And the same assembly gives a SLAVE behind its master its
+own stale bytes under the master's new tid, which the sync pass,
+replacing only a block whose tid differs, does not repair. The fifth
+review of N10.6 read both from the code; `cluster-sync.sh` takes a
+reading of the second (a stale block read cold, then 4 KiB of it
+rewritten, each volume's tid and check read from its media), and the
+fix both need is one assembly, from the block read through the quorum,
+handed to every element as upstream's buffer is.

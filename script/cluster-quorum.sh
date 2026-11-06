@@ -47,7 +47,9 @@ QCONTEND=${H2_QUORUM_CONTEND:-0}
 # H2_QUORUM_SEEKVOTE=1 builds the module with HAMMER2_LOCKDEBUG and checks
 # the seek walk on both masters against the forced scan, with the masters
 # agreeing and then made to disagree by writing blocks on one alone
-# (write_except), and the comparison's own control (seek_agree_break).
+# (write_except), and the comparison's own control (seek_agree_break); and
+# a seek and a map beside a writeback held between the masters
+# (write_gap_ms), with the wait turned off as their control (write_wait_off).
 QVOTE=${H2_QUORUM_SEEKVOTE:-0}
 case $QVOTE in 0|1) ;; *) echo "quorum: COULD-NOT-RUN: H2_QUORUM_SEEKVOTE is 0 or 1" >&2; exit 2 ;; esac
 case $QCONTEND in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_CONTEND is not a count of MiB without a leading zero" >&2; exit 2 ;; esac
@@ -234,7 +236,7 @@ rm -f /mnt/h2q/seekf
 # say which reader answered.
 if [ "${VOTE:-0}" = 1 ]; then
 P=/sys/module/hammer2/parameters
-for k in seek_scanall seek_walked seek_fellback seek_agree_break seek_depth_max seek_fail_elm write_except; do
+for k in seek_scanall seek_walked seek_fellback seek_agree_break seek_depth_max seek_fail_elm write_except write_gap_ms write_waits write_wait_off; do
 	[ -e $P/$k ] || { echo "vote-setup no $k"; exit 1; }
 done
 vdump() {	# file tag
@@ -344,6 +346,25 @@ echo $((0x8000)) > /sys/module/hammer2/parameters/debug
 sync
 vshow "vote after"
 rm /mnt/h2q/dis; echo "vote rm exit $?"
+# A writeback beside the seek and the map. write_gap_ms holds each block's
+# write between the first master and the second, so a call made 500 ms
+# after the writeback began finds block 1 on the first alone, which the
+# collect fails as a disagreement; hammer2_write_wait() has the call wait
+# for the write and read again. write_wait_off, set, refuses that wait,
+# and is the control: the same call must then fail EIO, or the window was
+# never reached.
+echo 2000 > $P/write_gap_ms
+for off in 0 1; do
+	echo $off > $P/write_wait_off
+	w0=$(cat $P/write_waits)
+	for k in hole map; do
+		/tmp/h2seekprobe wbrace /mnt/h2q/wb $k 500 | sed -n "s/^seekm-wbrace /vote wbrace$off-/p"
+		rm -f /mnt/h2q/wb
+	done
+	echo "vote wbwaits$off waits $(( $(cat $P/write_waits) - w0 ))"
+done
+echo 0 > $P/write_wait_off
+echo 0 > $P/write_gap_ms
 fi
 # CONTEND=n prints what a seek through the quorum costs a writer: a dense
 # file of n MiB, writes timed alone and beside a SEEK_HOLE loop.
@@ -506,6 +527,13 @@ if [ "$QCONTEND" != 0 ]; then
 		a=$(sed -n 's/^seekm-time dense-hole median-ns \([0-9]*\) n .*/\1/p' "$W/out" | head -1)
 		[ -n "$a" ] && [ "$a" -le $((QRULE * 1000000)) ]
 		check "the two-master dense SEEK_HOLE median is within $QRULE ms" $? "${a:-none} ns"
+		# The writer beside the loop has waited 1.68 to 2.09 times the
+		# seek's median in the readings doc/README.status.md lists,
+		# unattributed, so the bound held on it is three times the
+		# rule rather than a figure inferred from the seek's.
+		w=$(sed -n 's/^seekm-contend seeking median-ns \([0-9]*\) .*/\1/p' "$W/out" | head -1)
+		[ -n "$w" ] && [ "$w" -le $((3 * QRULE * 1000000)) ]
+		check "the writer's median beside the SEEK_HOLE loop is within $((3 * QRULE)) ms" $? "${w:-none} ns"
 	fi
 	if [ "$QSPLIT" = 1 ]; then
 		a=$(sed -n 's/^split-write exit \([0-9]*\) \([0-9]*\) fellback \([0-9]*\)$/\1 \2 \3/p' "$W/out"); set -- $a
@@ -520,6 +548,8 @@ if [ "$QCONTEND" != 0 ]; then
 		if [ "$QRULE" != 0 ]; then
 			[ -n "$1" ] && [ "$1" -le $((QRULE * 1000000)) ]
 			check "the split SEEK_HOLE median is within $QRULE ms" $? "${1:-none} ns"
+			[ -n "$w" ] && [ "$w" -le $((3 * QRULE * 1000000)) ]
+			check "the writer's median beside the split SEEK_HOLE loop is within $((3 * QRULE)) ms" $? "${w:-none} ns"
 		fi
 	fi
 fi
@@ -594,6 +624,20 @@ if [ "$QVOTE" = 1 ]; then
 	done
 	a=$(vote rm); [ "$a" = "exit 0" ]
 	check "the file the masters disagree on is removed through the quorum" $? "${a:-no line}"
+	# A block on one master because its write has not reached the next is
+	# not a disagreement: the call waits for the write. With the wait off
+	# the same call fails EIO, which shows the call met the held window.
+	for k in hole map; do
+		a=$(vf wbrace0-$k answer); w=$(vf wbrace0-$k want); e=$(vf wbrace0-$k errno); y=$(vf wbrace0-$k sync)
+		[ -n "$a" ] && [ "$a" = "$w" ] && [ "$e" = 0 ] && [ "$y" = inside ]
+		check "$k beside a writeback held between the masters waits for it and answers" $? "answer ${a:-none} want ${w:-none} errno ${e:-none} sync ${y:-none}"
+		a=$(vf wbrace1-$k answer); e=$(vf wbrace1-$k errno)
+		[ -n "$a" ] && [ "$a" -lt 0 ] 2>/dev/null && [ "$e" = 5 ]
+		check "$k with write_wait_off fails EIO in the held window, so the call met it" $? "answer ${a:-none} errno ${e:-none}"
+	done
+	a=$(vf wbwaits0 waits); b=$(vf wbwaits1 waits)
+	[ "${a:-0}" -ge 2 ] 2>/dev/null && [ "$b" = 0 ]
+	check "write_waits moved for each call with the wait on, and not with it off" $? "on ${a:-none} off ${b:-none}"
 fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 a=$(val threads-after); [ "${a:-1}" = 0 ]; check "no thread is left" $? "${a:-none}"

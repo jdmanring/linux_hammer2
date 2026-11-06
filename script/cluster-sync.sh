@@ -1251,6 +1251,33 @@ if [ "${H2SEEKVOTE:-0}" = 1 ]; then
 	svmods seekvote-mod-after
 	echo "seekvote-slave lines $(wc -l < /tmp/sv.walk) differ $(cmp -s /tmp/sv.walk /tmp/sv.scan && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0))"
 	diff /tmp/sv.walk /tmp/sv.scan | head -5 | sed 's/^/seekvote-diff /'
+	# A reading, not a check: a partial write into the stale block. Its
+	# pages are dropped and the block is read cold, which leaves page-sized
+	# folios, and 4 KiB of it is rewritten. The writeback assembles the
+	# rest of the block from each element's own chain
+	# (hammer2_strategy_assemble()), so from the code the slave keeps its
+	# stale 60 KiB under the master's new tid, which the sync pass, reading
+	# tids alone, leaves. Each volume's tid and data check for block 3 are
+	# read from its media before and after; a slave current before the
+	# write voids the reading.
+	svsums() {	# prefix: block 3's modify_tid and xxh on each volume's media
+		for v in m:vdb s:vdc; do
+			hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v p="$1" -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
+			/^ *inode\.[0-9]/ { mode = "inode"; next }
+			mode == "inode" && $1 == "inum" { inum = $2 }
+			/^ *data\.[0-9]/ { mode = "data"; key = $3; m = ""; next }
+			mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m) }
+			mode == "data" && /xxh=/ { x = $0; sub(/.*xxh=/, "", x); sub(/ .*/, "", x); if (inum == n && key ~ /^0000000000030000\//) print p, t, m, x; mode = "" }'
+		done
+	}
+	sync
+	echo 3 > /proc/sys/vm/drop_caches
+	svsums seekvote-partial-before
+	dd if=/mnt/h2c/sv of=/dev/null bs=64k skip=3 count=1 2>/dev/null
+	dd if=/dev/urandom of=/mnt/h2c/sv bs=4k seek=$((3 * 16 + 1)) count=1 conv=notrunc 2>/dev/null; s=$?
+	sync
+	svsums seekvote-partial-after
+	echo "seekvote-partial write $s"
 	rm -f /mnt/h2c/sv; sync
 fi
 if [ "${H2_FAULT:-0}" != 0 ]; then
@@ -1950,6 +1977,18 @@ if [ "$SEEKVOTE" = 1 ]; then
 	[ "${2:-0}" -gt 0 ] 2>/dev/null && [ "$4" = 0 ] && [ "${6:-0}" -gt 0 ] 2>/dev/null && [ "$8" = 0 ]
 	check "a MASTER with a stale SLAVE seeks by its own walk and answers as the scan" $? "${a:-no line}"
 	sed -n 's/^seekvote-diff /        /p' "$W/out"
+	# The partial write's reading (the guest's svsums), a known defect
+	# recorded in doc/README.status.md and not a check.
+	bm=$(sed -n 's/^seekvote-partial-before m //p' "$W/out" | head -1); bs=$(sed -n 's/^seekvote-partial-before s //p' "$W/out" | head -1)
+	am=$(sed -n 's/^seekvote-partial-after m //p' "$W/out" | head -1); as=$(sed -n 's/^seekvote-partial-after s //p' "$W/out" | head -1)
+	set -- $bm; bmt=$1; set -- $bs; bst=$1
+	set -- $am; amt=$1; amx=$2; set -- $as; ast=$1; asx=$2
+	if [ -z "$bmt" ] || [ -z "$bst" ] || [ "$bmt" = "$bst" ]; then r="void: the slave was not stale before the write"
+	elif [ -z "$amt" ] || [ -z "$ast" ]; then r="void: a volume's block 3 was not read after the write"
+	elif [ "$amt" = "$ast" ] && [ "$amx" != "$asx" ]; then r="the defect: one tid, two contents"
+	elif [ "$amt" = "$ast" ]; then r="not shown: one tid, one content"
+	else r="not shown: the tids still differ"; fi
+	echo "  note  stale slave under a partial write ($(val seekvote-partial)): before ${bm:-absent} / ${bs:-absent}, after ${am:-absent} / ${as:-absent}: $r"
 fi
 p=$(val change-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the thread keeps passing after the master changes" $? "${p:-0} passes in 30 s"
 p=$(val change-files); [ "${p:-0}" = 35 ]; check "the changes leave 35 files on the master" $? "${p:-none}"
