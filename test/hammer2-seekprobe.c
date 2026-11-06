@@ -32,7 +32,11 @@
  *                                             beside a SEEK_HOLE loop,
  *                                             see contend(); contendgap
  *                                             beside SEEK_DATA across a
- *                                             hole into the data
+ *                                             hole into the data;
+ *                                             contendon <path> <n> <MiB>
+ *                                             on a file the caller made,
+ *                                             its first hole at MiB
+ *     hammer2-seekprobe fill <path> <MiB>     contend's dense file, kept
  *     hammer2-seekprobe corrupt <path>        a file whose data block
  *                                             fails its check: both
  *                                             seeks at every block
@@ -645,6 +649,13 @@ cold(const char *path, long mib)
  * shorten the read being timed.
  */
 static int gap;
+/*
+ * With reuse set (contendon) the file is the caller's, whose first hole the
+ * caller placed at the dense size: it is neither made nor synced, SEEK_HOLE
+ * from 0 is timed alone first and its answer printed, and the writes stay
+ * below that hole, as the loop's check requires.
+ */
+static int reuse;
 
 static int
 contend(const char *path, long n)
@@ -662,14 +673,36 @@ contend(const char *path, long n)
 	first = stop + 2;
 	if (n < 1 || buf == NULL || stop == MAP_FAILED ||
 	    (ns = calloc(n, sizeof(*ns))) == NULL ||
-	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
+	    (fd = open(path, reuse ? O_RDWR : O_CREAT | O_TRUNC | O_RDWR,
+	    0644)) < 0)
 		return (2);
 	fill(buf, 1);
-	for (i = 0; i < dense; i += BSIZE)
-		if (pwrite(fd, buf, BSIZE, base + i) != BSIZE)
+	if (reuse) {
+		long hs[10], a = -1;
+
+		for (i = 0; i < 10; i++) {
+			long t0 = now_ns();
+
+			a = lseek(fd, 0, SEEK_HOLE);
+			hs[i] = now_ns() - t0;
+			if (a != dense)
+				break;
+		}
+		if (i < 10) {
+			printf("seekm-fail contend: SEEK_HOLE from 0 answered %ld, "
+			    "not %ld\n", a, dense);
+			return (1);
+		}
+		qsort(hs, 10, sizeof(*hs), cmp_long);
+		printf("seekm-contend hole median-ns %ld n 10 answer %ld\n",
+		    hs[5], a);
+	} else {
+		for (i = 0; i < dense; i += BSIZE)
+			if (pwrite(fd, buf, BSIZE, base + i) != BSIZE)
+				return (2);
+		if (fsync(fd) != 0)
 			return (2);
-	if (fsync(fd) != 0)
-		return (2);
+	}
 	for (ph = 0; ph < 2; ph++) {
 		*stop = 0;
 		*seeks = 0;
@@ -728,10 +761,37 @@ contend(const char *path, long n)
 		}
 	}
 	close(fd);
-	unlink(path);
+	if (!reuse)
+		unlink(path);
 	free(ns);
 	free(buf);
 	return (fails ? 1 : 0);
+}
+
+/*
+ * The dense file contend() makes, the same blocks of the same pattern,
+ * written and synced and left for the caller: contendon's file before the
+ * caller places its hole.
+ */
+static int
+fillfile(const char *path)
+{
+	char *buf = malloc(BSIZE);
+	long i;
+	int fd;
+
+	if (buf == NULL ||
+	    (fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0)
+		return (2);
+	fill(buf, 1);
+	for (i = 0; i < dense; i += BSIZE)
+		if (pwrite(fd, buf, BSIZE, i) != BSIZE)
+			return (2);
+	if (fsync(fd) != 0 || close(fd) != 0)
+		return (2);
+	free(buf);
+	printf("seekm-ok   fill: %ld MiB made and synced\n", dense >> 20);
+	return (0);
 }
 
 /*
@@ -939,6 +999,14 @@ main(int argc, char **argv)
 		gap = 1;
 		argv[1] = "contend";
 	}
+	if (argc == 5 && strcmp(argv[1], "contendon") == 0) {
+		reuse = 1;
+		argv[1] = "contend";
+	}
+	if (argc == 4 && strcmp(argv[1], "fill") == 0) {
+		dense = strtol(argv[3], NULL, 10) << 20;
+		return (dense < BSIZE ? 2 : fillfile(argv[2]));
+	}
 	if ((argc == 5 && strcmp(argv[1], "contend") == 0) ||
 	    (argc == 6 && strcmp(argv[1], "time") == 0)) {
 		dense = strtol(argv[argc - 1], NULL, 10) << 20;
@@ -952,7 +1020,7 @@ main(int argc, char **argv)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
 	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole|map | corrupt|refuse <path> | layout|dump <path> | "
-	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | cold <path> [MiB] | contend|contendgap <path> <n> [MiB]\n",
+	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | cold <path> [MiB] | contend|contendgap <path> <n> [MiB] | contendon <path> <n> <MiB> | fill <path> <MiB>\n",
 	    argv[0]);
 	return (2);
 }

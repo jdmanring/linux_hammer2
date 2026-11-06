@@ -1230,19 +1230,25 @@ if [ "${H2SEEKVOTE:-0}" = 1 ]; then
 	dd if=/dev/urandom of=/mnt/h2c/sv bs=64k seek=3 count=1 conv=notrunc 2>/dev/null; sync
 	echo -1 > $P/write_except
 	ino=$(stat -c %i /mnt/h2c/sv)
-	for v in m:vdb s:vdc; do
-		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
-		/^ *inode\.[0-9]/ { mode = "inode"; next }
-		mode == "inode" && $1 == "inum" { inum = $2 }
-		/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
-		mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m); if (inum == n && key ~ /^0000000000030000\//) print "seekvote-mod", t, m; mode = "" }'
-	done
+	svmods() {	# prefix: block 3's modify_tid on each volume's media
+		for v in m:vdb s:vdc; do
+			hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v p="$1" -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
+			/^ *inode\.[0-9]/ { mode = "inode"; next }
+			mode == "inode" && $1 == "inum" { inum = $2 }
+			/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+			mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m); if (inum == n && key ~ /^0000000000030000\//) print p, t, m; mode = "" }'
+		done
+	}
+	svmods seekvote-mod
 	w0=$(cat $P/seek_walked); b0=$(cat $P/seek_fellback)
 	xfs_io -r -c "seek -a -r 0" -c "fiemap -v" /mnt/h2c/sv > /tmp/sv.walk 2>&1
 	w1=$(cat $P/seek_walked); b1=$(cat $P/seek_fellback)
 	echo 1 > $P/seek_scanall
 	xfs_io -r -c "seek -a -r 0" -c "fiemap -v" /mnt/h2c/sv > /tmp/sv.scan 2>&1
 	echo 0 > $P/seek_scanall
+	# Again after the seek: a sync pass in between would leave the slave
+	# current, and the check below passing on nothing stale.
+	svmods seekvote-mod-after
 	echo "seekvote-slave lines $(wc -l < /tmp/sv.walk) differ $(cmp -s /tmp/sv.walk /tmp/sv.scan && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0))"
 	diff /tmp/sv.walk /tmp/sv.scan | head -5 | sed 's/^/seekvote-diff /'
 	rm -f /mnt/h2c/sv; sync
@@ -1937,6 +1943,9 @@ if [ "$SEEKVOTE" = 1 ]; then
 	mm=$(sed -n 's/^seekvote-mod m //p' "$W/out" | head -1); ms=$(sed -n 's/^seekvote-mod s //p' "$W/out" | head -1)
 	[ -n "$mm" ] && [ -n "$ms" ] && [ "$mm" != "$ms" ]
 	check "the two elements hold block 3 at different tids, by each volume's media" $? "master ${mm:-absent} slave ${ms:-absent}"
+	sa=$(sed -n 's/^seekvote-mod-after s //p' "$W/out" | head -1)
+	[ -n "$sa" ] && [ "$sa" = "$ms" ]
+	check "the slave's block 3 is still at its old tid after the seek, so the seek ran against a stale slave" $? "before ${ms:-absent} after ${sa:-absent}"
 	a=$(val seekvote-slave); set -- $a
 	[ "${2:-0}" -gt 0 ] 2>/dev/null && [ "$4" = 0 ] && [ "${6:-0}" -gt 0 ] 2>/dev/null && [ "$8" = 0 ]
 	check "a MASTER with a stale SLAVE seeks by its own walk and answers as the scan" $? "${a:-no line}"

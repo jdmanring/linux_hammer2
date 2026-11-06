@@ -51,6 +51,23 @@ QCONTEND=${H2_QUORUM_CONTEND:-0}
 QVOTE=${H2_QUORUM_SEEKVOTE:-0}
 case $QVOTE in 0|1) ;; *) echo "quorum: COULD-NOT-RUN: H2_QUORUM_SEEKVOTE is 0 or 1" >&2; exit 2 ;; esac
 case $QCONTEND in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_CONTEND is not a count of MiB without a leading zero" >&2; exit 2 ;; esac
+# H2_QUORUM_SPLIT=1, with H2_QUORUM_SEEKVOTE=1 and H2_QUORUM_CONTEND=n, times
+# the writer again with one block past the n MiB held by the two masters at
+# two tids, so every SEEK_HOLE disagrees in its last batch and the scan
+# answers that batch: what masters that disagree cost a writer.
+QSPLIT=${H2_QUORUM_SPLIT:-0}
+case $QSPLIT in 0|1) ;; *) echo "quorum: COULD-NOT-RUN: H2_QUORUM_SPLIT is 0 or 1" >&2; exit 2 ;; esac
+if [ "$QSPLIT" = 1 ] && { [ "$QVOTE" != 1 ] || [ "$QCONTEND" = 0 ]; }; then
+	echo "quorum: COULD-NOT-RUN: H2_QUORUM_SPLIT needs H2_QUORUM_SEEKVOTE=1 and H2_QUORUM_CONTEND" >&2; exit 2
+fi
+# H2_QUORUM_RULE_MS=m, with H2_QUORUM_CONTEND, fails the run when the
+# two-master SEEK_HOLE's median, and under H2_QUORUM_SPLIT the split one's,
+# exceeds m ms: the rule seek-matrix.sh holds one element to.
+QRULE=${H2_QUORUM_RULE_MS:-0}
+case $QRULE in ''|*[!0-9]*|0?*) echo "quorum: COULD-NOT-RUN: H2_QUORUM_RULE_MS is not a count of ms without a leading zero" >&2; exit 2 ;; esac
+if [ "$QRULE" != 0 ] && [ "$QCONTEND" = 0 ]; then
+	echo "quorum: COULD-NOT-RUN: H2_QUORUM_RULE_MS needs H2_QUORUM_CONTEND" >&2; exit 2
+fi
 # The bound scales on a KASAN tree, as cluster-sync.sh's does, so a slower
 # kernel is not read as a hang.
 RUNSECS=600; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
@@ -217,7 +234,7 @@ rm -f /mnt/h2q/seekf
 # say which reader answered.
 if [ "${VOTE:-0}" = 1 ]; then
 P=/sys/module/hammer2/parameters
-for k in seek_scanall seek_walked seek_fellback seek_agree_break seek_depth_max write_except; do
+for k in seek_scanall seek_walked seek_fellback seek_agree_break seek_depth_max seek_fail_elm write_except; do
 	[ -e $P/$k ] || { echo "vote-setup no $k"; exit 1; }
 done
 vdump() {	# file tag
@@ -252,6 +269,14 @@ echo 0 > $P/seek_depth_max
 /tmp/h2seekprobe refuse /mnt/h2q/lay > /tmp/qv.refuse 2>&1; s=$?
 echo $d0 > $P/seek_depth_max
 echo "vote refuse exit $s eio $(grep -c '^seekm-ok   refuse' /tmp/qv.refuse) fellback $(( $(cat $P/seek_fellback) - b0 ))"
+# One element failing while the other answers: the call's error is the
+# collect's, the first master's, with no fallback. seek_fail_elm fails
+# the second element's walk alone.
+b0=$(cat $P/seek_fellback)
+echo 1 > $P/seek_fail_elm
+/tmp/h2seekprobe refuse /mnt/h2q/lay > /tmp/qv.fail1 2>&1; s=$?
+echo -1 > $P/seek_fail_elm
+echo "vote failone exit $s eio $(grep -c '^seekm-ok   refuse' /tmp/qv.fail1) fellback $(( $(cat $P/seek_fellback) - b0 ))"
 rm -f /mnt/h2q/lay /mnt/h2q/shp /mnt/h2q/emb
 # Masters made to disagree: blocks 0-7 and 16-23 of 24 on both, then block
 # 10 on the first only, block 12 on the second only, and block 2 rewritten
@@ -278,8 +303,13 @@ mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
 vdump /mnt/h2q/dis disagree
 vseek inside d $((8 * 65536))
 vseek outside h $((16 * 65536))
+vseek hole0 h 0
+# Each block the quorum calls a hole read on its own: dd's status, the
+# bytes it read and how many of them are not zero.
 for b in 2 10 12; do
-	echo "vote read $b nonzero $(dd if=/mnt/h2q/dis bs=64k skip=$b count=1 2>/dev/null | tr -d '\000' | wc -c)"
+	rm -f /tmp/qv.blk
+	dd if=/mnt/h2q/dis of=/tmp/qv.blk bs=64k skip=$b count=1 2>/dev/null; s=$?
+	echo "vote read $b exit $s bytes $(wc -c < /tmp/qv.blk 2>/dev/null || echo none) nonzero $(tr -d '\000' < /tmp/qv.blk 2>/dev/null | wc -c)"
 done
 # The comparison's control: 1 drops the tid from it, 2 trusts the first
 # walk unread; either must make the walk's dump differ from the scan's.
@@ -288,7 +318,7 @@ for k in 1 2; do
 	vdump /mnt/h2q/dis break$k
 done
 echo 0 > $P/seek_agree_break
-rm -f /mnt/h2q/dis; echo "vote rm exit $?"
+rm /mnt/h2q/dis; echo "vote rm exit $?"
 fi
 # CONTEND=n prints what a seek through the quorum costs a writer: a dense
 # file of n MiB, writes timed alone and beside a SEEK_HOLE loop.
@@ -296,6 +326,26 @@ fi
 # and the seek itself on a dense file of the same size, by the probe's
 # time mode: SEEK_HOLE from an offset in the first 16 MiB, ten of twenty
 [ "${CONTEND:-0}" -gt 0 ] && /tmp/h2seekprobe time /mnt/h2q/tdense dense 20 "$CONTEND" | grep '^seekm-time dense-hole median'
+# SPLIT=1 (VOTE=1): contend's dense file of n MiB, made by the probe's fill
+# with the same pattern, gains one block past its n MiB, which is then
+# rewritten on the first master alone (write_except), so the two hold it at
+# two tids and the quorum calls it a hole. Every SEEK_HOLE from 0 then walks
+# to the last batch, disagrees there, and takes the scan from that batch's
+# cursor; the writes stay below the block, so none mends it (contendon).
+if [ "${SPLIT:-0}" = 1 ]; then
+	P=/sys/module/hammer2/parameters
+	b=$((CONTEND * 16))
+	/tmp/h2seekprobe fill /mnt/h2q/contend "$CONTEND" >/dev/null 2>&1 &&
+	    dd if=/dev/urandom of=/mnt/h2q/contend bs=64k seek=$b count=1 conv=notrunc 2>/dev/null; s1=$?
+	sync
+	echo 1 > $P/write_except
+	dd if=/dev/urandom of=/mnt/h2q/contend bs=64k seek=$b count=1 conv=notrunc 2>/dev/null; s2=$?
+	sync
+	echo -1 > $P/write_except
+	f0=$(cat $P/seek_fellback)
+	/tmp/h2seekprobe contendon /mnt/h2q/contend 20 "$CONTEND" | grep -v '^seekm-contend [a-z]* [0-9]' | sed 's/^seekm-contend /seekm-split /'
+	echo "split-write exit $s1 $s2 fellback $(( $(cat $P/seek_fellback) - f0 ))"
+fi
 rm -f /mnt/h2q/contend /mnt/h2q/tdense
 sync
 # IDLE=n holds the cluster mounted n seconds after the read-back, so each
@@ -353,7 +403,7 @@ dmesg > /tmp/q.klog
 GUEST
 
 scp -q "$KO" "$W/guest.sh" "$W/h2seekprobe" "$GUEST_SSH:/tmp/" || { echo "quorum: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; chmod 755 /tmp/h2seekprobe; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=$IDLE CONTEND=$QCONTEND VOTE=$QVOTE sh /tmp/h2quorum.sh" > "$W/out" 2>&1
+$RUN "$GUEST_SSH" "mv /tmp/guest.sh /tmp/h2quorum.sh; chmod 755 /tmp/h2seekprobe; CONTROL=${H2_QUORUM_CONTROL:-0} IDLE=$IDLE CONTEND=$QCONTEND VOTE=$QVOTE SPLIT=$QSPLIT sh /tmp/h2quorum.sh" > "$W/out" 2>&1
 rc=$?
 # The guest half's exit, read before anything is inferred from its output.
 # A non-zero that is not 124 means the guest or its session ended without
@@ -421,6 +471,32 @@ a=$(sed -n 's/^map-exit \([0-9]*\) map-extents \([0-9]*\)$/\1 \2/p' "$W/out"); [
 check "FIEMAP through the quorum maps the shape's two data blocks" $? "${a:-no line} (exit, extents)"
 grep '^seekm-fail' "$W/out" | sed 's/^/        /'
 [ "$QCONTEND" = 0 ] || sed -n 's/^seekm-contend /  contend /p; s/^seekm-time dense-hole /  time dense-hole /p' "$W/out"
+if [ "$QCONTEND" != 0 ]; then
+	sed -n 's/^seekm-split /  split /p; s/^split-write /  split-write /p' "$W/out"
+	a=$(grep -c '^seekm-fail contend' "$W/out")
+	[ "$a" = 0 ] && grep -q '^seekm-contend seeking ' "$W/out"
+	check "every seek beside the writer answered as the probe required" $? "${a:-none} failure line(s)"
+	if [ "$QRULE" != 0 ]; then
+		a=$(sed -n 's/^seekm-time dense-hole median-ns \([0-9]*\) n .*/\1/p' "$W/out" | head -1)
+		[ -n "$a" ] && [ "$a" -le $((QRULE * 1000000)) ]
+		check "the two-master dense SEEK_HOLE median is within $QRULE ms" $? "${a:-none} ns"
+	fi
+	if [ "$QSPLIT" = 1 ]; then
+		a=$(sed -n 's/^split-write exit \([0-9]*\) \([0-9]*\) fellback \([0-9]*\)$/\1 \2 \3/p' "$W/out"); set -- $a
+		[ "$1" = 0 ] && [ "$2" = 0 ] && [ "${3:-0}" -gt 0 ]
+		check "the split block was written on both, then on the first alone, and the seeks fell back" $? "${a:-no line} (exits, fallbacks)"
+		h=$(sed -n 's/^seekm-split hole median-ns \([0-9]*\) n [0-9]* answer \([0-9-]*\)$/\1 \2/p' "$W/out"); set -- $h
+		[ "$2" = $((QCONTEND * 1048576)) ]
+		check "SEEK_HOLE answers the split block, a hole to the quorum" $? "${h:-no line} (median-ns, answer)"
+		w=$(sed -n 's/^seekm-split seeking median-ns \([0-9]*\) .*/\1/p' "$W/out")
+		[ -n "$w" ]
+		check "a writer was timed beside the split SEEK_HOLE loop" $? "${w:-none} ns"
+		if [ "$QRULE" != 0 ]; then
+			[ -n "$1" ] && [ "$1" -le $((QRULE * 1000000)) ]
+			check "the split SEEK_HOLE median is within $QRULE ms" $? "${1:-none} ns"
+		fi
+	fi
+fi
 if [ "$QVOTE" = 1 ]; then
 	vote() { sed -n "s/^vote $1 //p" "$W/out" | head -1; }	# vote <tag>: the line's fields after the tag
 	vf() { vote "$1" | awk -v k="$2" '{ for (i = 1; i < NF; i++) if ($i == k) { print $(i + 1); exit } }'; }
@@ -431,15 +507,19 @@ if [ "$QVOTE" = 1 ]; then
 		[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "${w:-0}" -gt 0 ] && [ "$b" = 0 ]
 		check "$t: both masters walk, agree, and answer as the scan" $? "lines ${l:-none} differ ${d:-none} walked ${w:-none} fellback ${b:-none}"
 	done
-	# A file held in its inode has no blockref tree: the seek answers from
-	# the inode before any walk (hammer2_seek_data_hole()), so neither
-	# counter moves.
+	# A file held in its inode has no blockref tree: the seek and the map
+	# answer from the inode before either reader (hammer2_seek_data_hole(),
+	# hammer2_fiemap()), under either setting of seek_scanall, so the two
+	# dumps are one early return and neither counter moves.
 	l=$(vf agree-emb lines); d=$(vf agree-emb differ); w=$(vf agree-emb walked); b=$(vf agree-emb fellback)
 	[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "$w" = 0 ] && [ "$b" = 0 ]
-	check "agree-emb: a file held in its inode answers as the scan, with no walk and no fallback" $? "lines ${l:-none} differ ${d:-none} walked ${w:-none} fellback ${b:-none}"
+	check "agree-emb: a file held in its inode answers from the inode, before any walk or scan" $? "lines ${l:-none} differ ${d:-none} walked ${w:-none} fellback ${b:-none}"
 	a=$(vote refuse); set -- $a
 	[ "$2" = 0 ] && [ "$4" = 3 ] && [ "$6" = 0 ]
 	check "a walk's error on two masters is the call's EIO, with no fallback" $? "${a:-no line}"
+	a=$(vote failone); set -- $a
+	[ "$2" = 0 ] && [ "$4" = 3 ] && [ "$6" = 0 ]
+	check "one master's walk failing while the other answers is the call's EIO, with no fallback" $? "${a:-no line}"
 	# The disagreement made, read from each volume's own media.
 	key() { sed -n "s/^vote show $1 $2\/[0-9]* \([0-9a-f]*\)$/\1/p" "$W/out" | head -1; }	# volume, the key as show prints it
 	xa=$(key a 00000000000a0000); xb=$(key b 00000000000a0000)
@@ -450,18 +530,22 @@ if [ "$QVOTE" = 1 ]; then
 	l=$(vf disagree lines); d=$(vf disagree differ); b=$(vf disagree fellback)
 	[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "${b:-0}" -gt 0 ]
 	check "masters that disagree fall back to the scan and answer as it does" $? "lines ${l:-none} differ ${d:-none} fellback ${b:-none}"
-	a=$(vf inside fellback); b=$(vf outside fellback)
-	[ "${a:-0}" -gt 0 ] && [ "$b" = 0 ]
-	check "only a call whose range holds a disagreement falls back" $? "inside ${a:-none} outside ${b:-none}"
+	a=$(vf inside fellback); b=$(vf outside fellback); o=$(vf outside answer)
+	[ "${a:-0}" -gt 0 ] && [ "$b" = 0 ] && [ "$o" = $((24 * 65536)) ]
+	check "only a call whose range holds a disagreement falls back" $? "inside ${a:-none} outside ${b:-none}, SEEK_HOLE from block 16 ${o:-none}"
+	a=$(vf hole0 answer)
+	[ "$a" = $((2 * 65536)) ]
+	check "SEEK_HOLE from 0 answers block 2, held at two tids, a hole to the quorum" $? "${a:-none}"
 	# What the seek calls a hole must read as zeros: SEEK_DATA from block 8.
-	r=$(vf inside answer); bad=0
-	for blk in 10 12; do
-		n=$(sed -n "s/^vote read $blk nonzero //p" "$W/out")
-		[ "$r" = $((16 * 65536)) ] || bad=$((bad + 1))
-		[ "$n" = 0 ] || bad=$((bad + 1))
+	r=$(vf inside answer); bad=0; rd=
+	[ "$r" = $((16 * 65536)) ] || bad=$((bad + 1))
+	for blk in 2 10 12; do
+		x=$(sed -n "s/^vote read $blk //p" "$W/out" | head -1)
+		[ "$x" = "exit 0 bytes 65536 nonzero 0" ] || bad=$((bad + 1))
+		rd="$rd $blk: ${x:-no line};"
 	done
 	[ "$bad" = 0 ]
-	check "no block the seek calls a hole reads back data" $? "SEEK_DATA from block 8 ${r:-none}, nonzero bytes: 10 $(sed -n 's/^vote read 10 nonzero //p' "$W/out") 12 $(sed -n 's/^vote read 12 nonzero //p' "$W/out")"
+	check "no block the seek calls a hole reads back data: each read whole, as zeros" $? "SEEK_DATA from block 8 ${r:-none};$rd"
 	for k in 1 2; do
 		d=$(vf break$k differ)
 		[ "$d" = 1 ]
