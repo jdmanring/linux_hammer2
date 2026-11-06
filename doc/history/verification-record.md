@@ -23405,7 +23405,7 @@ failed on `h2debug-7.3tls` (`:81`), on `h2kasan-7.3tls` (`:1266`) and in
 the split run (`:1542`): blocks 2, 10 and 12 each `exit 1 bytes 0`. A rerun
 keeping dd's message, with debug bit 0x0100 set around the reads
 (`n10-6-readerr.log`, the harness edit uncommitted and hashed at `:1`),
-gave errno 115, EINPROGRESS, for all three (`:37-39`). Its kept log
+gave errno 115, EINPROGRESS, for all three (`:37-39`). That was a miss: `p7-notes/n10-6-expected6.md` had predicted each read `exit 0 bytes 65536` and the debug, KASAN and split quorum runs rc 0, and those runs failed (`n10-6-seq11.log:102`, `:1287`, `:1563`). Its kept log
 (`fixtures/quorum-run-20261105-214813.klog`) holds 51 `H2 READ` lines, 17
 per block (a 64 KiB folio, then 16 single pages), each `collect=00000800`
 with both elements holding no chain and no error. The strategy read feeds
@@ -23469,7 +23469,7 @@ calls disagree at the split block. Seq12's prediction was written to that.
 
 **The early user-mode refusal, twice.** Seq12's user-mode fill failed
 "the volume reports free space after the sync" with 3 blocks available
-after the sync (`n10-6-seq12.log:1105`, rc 1 at `:1112`), the reading the
+after the sync (`n10-6-seq12.log:1105`, rc 1 at `:1112`), a miss against `p7-notes/n10-6-expected7.md`, which predicted rc 0; the reading the
 1.0.88 entry left unattributed at 1 in 16 (`n10-6-seq.log:1219-1221`).
 The write check charges what is dirty or under writeback on the device,
 read through `wb_stat()`, the per-CPU counter's cheap read, which may read
@@ -23487,8 +23487,8 @@ predictions `p7-notes/n10-6-expected8.md`). As root the gate passed with 2
 admissions (`:257-258`, rc 0 at `:443`). As a user, `H2_REPEAT=10` passed
 10 of 10 (`:813`), every run with 0 blocks available after the sync and
 every file intact. The admissions per run read 1, 3, 3, 7, 2, 0, 3, 4, 5
-and 3 (`:464` to `:797`). Each run's last admission was a 64 KiB write the
-cheap count refused at 16 to 128 pages above the exact sum, once with the
+and 3 (`:464` to `:797`). In each of the nine runs with one, the last
+admission was a 64 KiB write the cheap count refused at 16 to 128 pages above the exact sum, once with the
 exact sum at 0 (`:465`). On `h2kasan-7.3tls` the user fill passed with 5
 admissions, the last at an exact sum of 0 against a cheap count of 109
 pages (`:1045-1046`), and 0 reports (`:1232`). Ten passes is a rate the old
