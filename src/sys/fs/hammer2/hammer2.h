@@ -1609,9 +1609,15 @@ void hammer2_remote_dev_drop(hammer2_dev_t *);
 
 /*
  * Linux: a connection device holds a remote element's proxy chains and no
- * block device; hammer2_remote.c.
+ * block device; hammer2_remote.c.  A function rather than a macro, so a
+ * slot read as the argument is loaded once and cannot be NULL at the
+ * second read.
  */
-#define hammer2_dev_is_conn(hmp)	((hmp) != NULL && (hmp)->rconn != NULL)
+static inline int
+hammer2_dev_is_conn(const hammer2_dev_t *hmp)
+{
+	return (hmp != NULL && hmp->rconn != NULL);
+}
 
 /*
  * Linux: the most entries one readdir XOP feeds, which with the end marker

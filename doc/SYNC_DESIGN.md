@@ -1252,7 +1252,7 @@ before it: the candidate is the post-sync generation, and any inequality
 across the snapshot window proper, from whatever flusher, runs that pass
 unpruned. The check fails closed; its cost is availability (one unpruned
 pass per syncer volume flush in-window), not correctness. Each read takes
-the voldata lock (`hammer2_voldata_lock()`, `hammer2_vfsops.c:390`, declared at `hammer2.h:1654`) and is done
+the voldata lock (`hammer2_voldata_lock()`, `hammer2_vfsops.c:390`, declared at `hammer2.h:1660`) and is done
 twice requiring equal: the FREEMAP bump runs outside that lock (taken
 only in the VOLUME arm, `hammer2_flush.c:710`), so the reads rest on the counter's
 monotonicity and double-read equality, not on exclusion. A subtree prunes only when its root's

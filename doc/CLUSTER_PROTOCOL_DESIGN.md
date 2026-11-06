@@ -977,7 +977,7 @@ is a constraint on the write-capable pass of stage 3, which must either
 raise the bound with the size it asks for or ask in pieces, and stage
 2b's read-only pass never reaches it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
-(`:1717-1718`), and retires normally; a connection that closes fails every
+(`:1723-1724`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
 `hammer2_admin.c:484` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`
@@ -1636,7 +1636,7 @@ issues it twice.
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
-(`hammer2.h:1686-1730`), and the collect turns `ESRCH` and `EDEADLK` at
+(`hammer2.h:1692-1736`), and the collect turns `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). With fewer than `nquorum` masters
 agreeing the check returns at `hammer2_cluster.c:353-366`, before pass 3,
 and `RDHARD` is set for a MASTER only in pass 3 (`:409-410`), so there is
@@ -1711,7 +1711,7 @@ state, read in the `quorum_loss` cell from `cat` and `ls` after the
 caches are dropped and from a `stat` of an uncached inode, which stage
 2's read-only remote element can already read. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
-errno map has no `pmp` (`hammer2.h:1692-1693`), the collect's skip (C7)
+errno map has no `pmp` (`hammer2.h:1698-1699`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
 **Taken: `ENOTCONN` for an uncached read with no quorum
