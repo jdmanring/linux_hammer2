@@ -76,10 +76,11 @@
 #   H2_SEEK_COLD=1  a SEEK_HOLE at 0 across a dense file of
 #                   H2_SEEK_DENSE_MB (64 by default) with nothing in
 #                   memory, H2_REPEAT times (5 by default): before each,
-#                   the guest unmounts and drops its caches, the host
-#                   syncs the image and drops its pages
-#                   (POSIX_FADV_DONTNEED, resident pages printed after),
-#                   and the guest mounts. Medians as the time mode's,
+#                   the guest unmounts and drops its caches, the image
+#                   is detached, the host syncs it and drops its pages
+#                   (POSIX_FADV_DONTNEED) and counts what stays resident
+#                   (mincore, at most 1024 pages or the run fails), the
+#                   image is attached again, and the guest mounts. Medians as the time mode's,
 #                   H2_SEEK_RULE_MS applying to them.
 #   H2_SEEK_CONTEND=1  what a seek costs a writer (seekprobe contend):
 #                   H2_SEEK_TIME_N one-block writes to a 64 MiB file,
@@ -138,8 +139,8 @@ IMGMB=1024; [ -n "$DMB" ] && [ $((DMB * 2)) -gt $IMGMB ] && IMGMB=$((DMB * 2))
 [ -x "$NEWFS" ] || { echo "seek-matrix: COULD-NOT-RUN: no newfs_hammer2 at $NEWFS" >&2; exit 2; }
 [ -x "$FSCK" ] || { echo "seek-matrix: COULD-NOT-RUN: no fsck_hammer2 at $FSCK" >&2; exit 2; }
 [ "$RACE" = 0 ] || [ -x "$H2" ] || { echo "seek-matrix: COULD-NOT-RUN: no hammer2 at $H2 to find an indirect block" >&2; exit 2; }
-[ "$COLD" = 0 ] || { command -v python3 >/dev/null 2>&1 && command -v fincore >/dev/null 2>&1; } || {
-	echo "seek-matrix: COULD-NOT-RUN: the cold mode drops the host's pages with python3 and reads them with fincore" >&2; exit 2; }
+[ "$COLD" = 0 ] || command -v python3 >/dev/null 2>&1 || {
+	echo "seek-matrix: COULD-NOT-RUN: the cold mode drops and counts the host's pages with python3" >&2; exit 2; }
 [ -d "$FIXDIR" ] || { echo "seek-matrix: COULD-NOT-RUN: no $FIXDIR" >&2; exit 2; }
 [ -f "$KDIR/Makefile" ] || { echo "seek-matrix: COULD-NOT-RUN: KDIR=$KDIR is not a kernel tree" >&2; exit 2; }
 command -v virsh >/dev/null 2>&1 || { echo "seek-matrix: COULD-NOT-RUN: no virsh" >&2; exit 2; }
@@ -267,13 +268,30 @@ mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP cold mount failed"; exit 0
 /tmp/h2seekprobe cold /mnt/sm/c
 '
 # The host's copy of the image, synced and dropped, so the guest's read
-# reaches the disk; the resident page count after says whether it did.
+# reaches the disk; the resident page count after says whether it did. It
+# is read by mincore(2) on a read-only mapping while the image is detached:
+# libvirt gives an attached image to its own user, and for a file the
+# caller neither owns nor can write mincore(2) reports every page resident
+# and cachestat(2), which fincore uses, refuses, so a count taken then is
+# no reading. Not owning the image fails the drop.
 hostdrop() {
-	python3 -c 'import os, sys
+	[ -O "$IMG" ] || { echo "the image is owned by $(stat -c %U "$IMG"), so its pages cannot be counted"; return 1; }
+	python3 -c 'import ctypes, os, sys
 fd = os.open(sys.argv[1], os.O_RDONLY)
 os.fsync(fd)
-os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)' "$IMG" || return 1
-	echo "cold host-resident $(fincore -nb -o RES "$IMG" 2>/dev/null | tr -d ' ')"
+os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+n = os.fstat(fd).st_size
+libc = ctypes.CDLL(None, use_errno=True)
+libc.mmap.restype = ctypes.c_void_p
+libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+a = libc.mmap(None, n, 1, 1, fd, 0)
+if a in (None, ctypes.c_void_p(-1).value):
+    sys.exit(1)
+pg = os.sysconf("SC_PAGE_SIZE")
+v = (ctypes.c_ubyte * ((n + pg - 1) // pg))()
+if libc.mincore(ctypes.c_void_p(a), ctypes.c_size_t(n), v) != 0:
+    sys.exit(1)
+print(sum(b & 1 for b in v))' "$IMG"
 }
 time_body='
 for k in sparse dense dirty hole deep; do
@@ -289,8 +307,11 @@ if [ "$RACE$TIME$CONTEND$COLD" != 0000 ]; then
 		i=0
 		while [ "$i" -lt "$REPEAT" ]; do
 			o1=$(ssh "$GUEST_SSH" "$cold_drop" 2>&1)
-			o2=$(hostdrop 2>&1) || o2="$o2
+			detach
+			o2=$(hostdrop 2>&1) && o2="cold host-resident $o2" || o2="$o2
 SETUP cold host drop failed"
+			attach || o2="$o2
+SETUP cold reattach failed"
 			o3=$(ssh "$GUEST_SSH" "$cold_seek" 2>&1)
 			out=$(printf '%s\n%s\n%s\n%s' "$out" "$o1" "$o2" "$o3")
 			i=$((i + 1))
@@ -407,7 +428,18 @@ SETUP cold host drop failed"
 		[ "$c" -eq "$REPEAT" ] || { echo "  FAIL  $c cold seek(s) for $REPEAT repeat(s)"; fail=$((fail + 1)); }
 		mm=$(printf '%s\n' "$m" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')
 		echo "  cold SEEK_HOLE ns: $(printf '%s\n' "$m" | tr '\n' ' ')median ${mm:-none}"
-		echo "  cold host-resident pages after each drop: $(printf '%s\n' "$out" | sed -n 's/^cold host-resident //p' | tr '\n' ' ')"
+		# Each drop's resident count must be a number and at most 1024
+		# pages, 4 MiB, an eighth of the indirect blocks a 16 GiB walk
+		# reads, or the seek after it read the host's memory.
+		hr=$(printf '%s\n' "$out" | sed -n 's/^cold host-resident //p')
+		echo "  cold host-resident pages after each drop: $(printf '%s\n' "$hr" | tr '\n' ' ')"
+		hn=$(printf '%s\n' "$hr" | command grep -c '^[0-9][0-9]*$')
+		hbig=$(printf '%s\n' "$hr" | awk '$1 ~ /^[0-9]+$/ && $1 > 1024' | wc -l)
+		if [ "$hn" -eq "$REPEAT" ] && [ "$hbig" -eq 0 ]; then
+			echo "  ok    the host held at most 1024 pages of the image after each of $REPEAT drop(s)"
+		else
+			echo "  FAIL  host residency: $hn count(s) for $REPEAT drop(s), $hbig above 1024 pages"; fail=$((fail + 1))
+		fi
 		if [ -n "$RULE" ]; then
 			if [ -n "$mm" ] && [ "$mm" -le $((RULE * 1000000)) ]; then
 				echo "  ok    the cold SEEK_HOLE median is within $RULE ms"
