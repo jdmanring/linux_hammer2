@@ -199,6 +199,8 @@ echo "seek-ok $(grep -c '^seekm-ok' /tmp/q.seek) seek-fail $(grep -c '^seekm-fai
 grep '^seekm-fail' /tmp/q.seek | head -5
 /tmp/h2seekprobe dump /mnt/h2q/seekf > /tmp/q.dump 2>&1; s=$?
 echo "map-exit $s map-extents $(sed -n 's/^seekm-dump extents //p' /tmp/q.dump)"
+# Removed again, so the media checks below count the set's 24 files.
+rm -f /mnt/h2q/seekf
 # CONTEND=n prints what a seek through the quorum costs a writer: a dense
 # file of n MiB, writes timed alone and beside a SEEK_HOLE loop.
 [ "${CONTEND:-0}" -gt 0 ] && /tmp/h2seekprobe contend /mnt/h2q/contend 20 "$CONTEND" | grep -v '^seekm-contend [a-z]* [0-9]'
@@ -341,13 +343,16 @@ a=$(val kernel-warnings); [ "${a:-1}" = 0 ]; check "no kernel warning, lockdep, 
 # A scan that refused is not an empty report. An earlier control run can
 # switch kmemleak off, after which it reports nothing and stays off until a
 # reboot, so a refusal fails here rather than reading as a clean scan. A
-# kernel built without kmemleak has no file to write and fails the same
-# way, which is right for the two kernels this runs on, both built with
-# it. No value at all means the guest stopped before this point.
+# kernel built without kmemleak has no file to write either, and fails
+# the same way unless KDIR's own .config configures no kmemleak, which is
+# h2release-7.3tls under H2_QUORUM_CONTEND: there the reading is noted as
+# not taken. No value at all means the guest stopped before this point.
+kml=$(sed -n 's/^CONFIG_DEBUG_KMEMLEAK=//p' "$KDIR/.config")
 c=$(grep -o kmemleak-cleared "$W/out" | wc -l); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 case "$l" in
 0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
-unusable) check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on" ;;
+unusable) if [ "$kml" = y ]; then check "kmemleak is usable, so a leak would be reported" 1 "the scan refused; an earlier control run switched it off and only a reboot turns it back on"
+	else echo "  note  kmemleak not read: $KDIR configures none"; fi ;;
 "") check "kmemleak was read before the unload" 1 "no reading before the unload, $n after it with $r range line(s)" ;;
 *) check "kmemleak reports nothing of hammer2's" 1 "$l" ;;
 esac
