@@ -151,12 +151,12 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	int ttlslaves;
 	int nmasters;
 	/*
-	 * Upstream reads this in its early return, to tell ESRCH (the quorum
-	 * does not agree on the key) from EDEADLK (it agrees on the key but
-	 * not on the tid).  The port has no bit for either, both collapse
-	 * to EIO, so it is counted and not read.
+	 * Read in the early return, as upstream reads it, to tell ESRCH (the
+	 * quorum does not agree on the key) from EDEADLK (it agrees on the
+	 * key but not on the tid).
 	 */
-	int nmasters_keymatch __maybe_unused;
+	int nmasters_keymatch;
+	int nmasters_nokey;	/* XXX Linux: masters that answered without it */
 	int nslaves;
 	int nquorum;
 	int umasters;
@@ -255,6 +255,7 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 	xmasters = 0;
 	nmasters = 0;
 	nmasters_keymatch = 0;
+	nmasters_nokey = 0;
 	quorum_tid = 0;
 
 	while (nmasters < nquorum && last_best_quorum_tid != 0) {
@@ -262,6 +263,7 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 		xmasters = 0;
 		nmasters = 0;
 		nmasters_keymatch = 0;
+		nmasters_nokey = 0;
 		quorum_tid = 0;
 
 		for (i = 0; i < cluster->nchains; ++i) {
@@ -323,6 +325,14 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 						cluster->focus_index = i;
 					}
 				}
+			} else if (chain != NULL ||
+				   (error & ~HAMMER2_ERROR_ENOENT) == 0) {
+				/*
+				 * XXX Linux: past the key, or ended clean, so
+				 * this master says it holds no such key.  An
+				 * element that ended on an error says nothing.
+				 */
+				++nmasters_nokey;
 			}
 		}
 		if (nmasters >= nquorum)
@@ -360,8 +370,20 @@ hammer2_cluster_check(hammer2_cluster_t *cluster, hammer2_key_t key, int flags)
 		 */
 		if (xmasters > 0 || (int)pmp->pfs_nmasters > ttlmasters)
 			return (HAMMER2_ERROR_ENOTCONN);
-		if (nmasters_keymatch < nquorum)
+		/*
+		 * XXX Linux: a key some masters hold and the rest do not,
+		 * neither side a quorum, is the masters disagreeing on media,
+		 * not the quorum saying there is no such key, and returns as
+		 * a disagreement on the tid does (doc/CLUSTER_PROTOCOL_DESIGN.md,
+		 * decision C).  On two masters that is a key one holds alone.
+		 * A key no master holds, a slave's, stays ESRCH and is
+		 * stepped over, and so does one a quorum lacks.
+		 */
+		if (nmasters_keymatch < nquorum) {
+			if (nmasters_keymatch > 0 && nmasters_nokey < nquorum)
+				return (HAMMER2_ERROR_EDEADLK);
 			return (HAMMER2_ERROR_ESRCH);
+		}
 		return (HAMMER2_ERROR_EDEADLK);
 	}
 

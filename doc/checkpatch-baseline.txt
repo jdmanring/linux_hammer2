@@ -266,6 +266,10 @@
 # 1,661 to 1,662: the space check's recount on the exact dirty sum
 # (hammer2_enospace_dirty()) nets one more `return (x);`. No category is
 # new. See README.kernel-style.md.
+# 1,662 unchanged: hammer2_error_to_errno() returns a positive EIO for
+# HAMMER2_ERROR_EDEADLK, the masters disagreeing, where it returned a
+# positive EDEADLK, so one hit moves from the -EDEADLK row to the -EIO
+# row. No category is new. See README.kernel-style.md.
 22 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -300,13 +304,12 @@
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)
-1 return of an errno should typically be negative (ie: return -EDEADLK)
 2 return of an errno should typically be negative (ie: return -EDOM)
 4 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)
 2 return of an errno should typically be negative (ie: return -EINTR)
 73 return of an errno should typically be negative (ie: return -EINVAL)
-15 return of an errno should typically be negative (ie: return -EIO)
+16 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 1 return of an errno should typically be negative (ie: return -EKEYEXPIRED)
 5 return of an errno should typically be negative (ie: return -ENOENT)

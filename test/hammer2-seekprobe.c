@@ -35,7 +35,11 @@
  *                                             hole into the data;
  *                                             contendon <path> <n> <MiB>
  *                                             on a file the caller made,
- *                                             its first hole at MiB
+ *                                             its first hole at MiB;
+ *                                             contendeio the same with
+ *                                             the block at MiB one the
+ *                                             masters disagree on, each
+ *                                             SEEK_HOLE failing EIO
  *     hammer2-seekprobe fill <path> <MiB>     contend's dense file, kept
  *     hammer2-seekprobe corrupt <path>        a file whose data block
  *                                             fails its check: both
@@ -656,6 +660,18 @@ static int gap;
  * below that hole, as the loop's check requires.
  */
 static int reuse;
+/*
+ * With want_eio set (contendeio, a contendon) the caller's block at the
+ * dense size is one the masters disagree on, so every SEEK_HOLE from 0
+ * must fail with EIO rather than answer.
+ */
+static int want_eio;
+
+static int
+hole_ok(long a)
+{
+	return (want_eio ? a == -1 && errno == EIO : a == dense);
+}
 
 static int
 contend(const char *path, long n)
@@ -679,23 +695,26 @@ contend(const char *path, long n)
 	fill(buf, 1);
 	if (reuse) {
 		long hs[10], a = -1;
+		int e = 0;
 
 		for (i = 0; i < 10; i++) {
 			long t0 = now_ns();
 
+			errno = 0;
 			a = lseek(fd, 0, SEEK_HOLE);
+			e = errno;
 			hs[i] = now_ns() - t0;
-			if (a != dense)
+			if (!hole_ok(a))
 				break;
 		}
 		if (i < 10) {
-			printf("seekm-fail contend: SEEK_HOLE from 0 answered %ld, "
-			    "not %ld\n", a, dense);
+			printf("seekm-fail contend: SEEK_HOLE from 0 answered %ld "
+			    "errno %d, not %s\n", a, e, want_eio ? "EIO" : "the hole");
 			return (1);
 		}
 		qsort(hs, 10, sizeof(*hs), cmp_long);
-		printf("seekm-contend hole median-ns %ld n 10 answer %ld\n",
-		    hs[5], a);
+		printf("seekm-contend hole median-ns %ld n 10 answer %ld errno %d\n",
+		    hs[5], a, e);
 	} else {
 		for (i = 0; i < dense; i += BSIZE)
 			if (pwrite(fd, buf, BSIZE, base + i) != BSIZE)
@@ -718,7 +737,7 @@ contend(const char *path, long n)
 					    __ATOMIC_RELEASE);
 				__atomic_add_fetch(seeks, 1, __ATOMIC_RELEASE);
 				if (gap ? lseek(sfd, 0, SEEK_DATA) != base :
-				    lseek(sfd, 0, SEEK_HOLE) != dense)
+				    !hole_ok(lseek(sfd, 0, SEEK_HOLE)))
 					_exit(1);
 			}
 			_exit(0);
@@ -999,7 +1018,9 @@ main(int argc, char **argv)
 		gap = 1;
 		argv[1] = "contend";
 	}
-	if (argc == 5 && strcmp(argv[1], "contendon") == 0) {
+	if (argc == 5 && (strcmp(argv[1], "contendon") == 0 ||
+	    strcmp(argv[1], "contendeio") == 0)) {
+		want_eio = strcmp(argv[1], "contendeio") == 0;
 		reuse = 1;
 		argv[1] = "contend";
 	}
@@ -1020,7 +1041,7 @@ main(int argc, char **argv)
 		return (timing(argv[2], argv[3], strtol(argv[4], NULL, 10)));
 	fprintf(stderr, "usage: %s make <path> [rand] | dedup <path> <n> | "
 	    "check|agree <path> <what> | race <path> | wbrace <path> data|hole|map | corrupt|refuse <path> | layout|dump <path> | "
-	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | cold <path> [MiB] | contend|contendgap <path> <n> [MiB] | contendon <path> <n> <MiB> | fill <path> <MiB>\n",
+	    "time <path> sparse|dense|dirty|hole|deep <n> [MiB] | cold <path> [MiB] | contend|contendgap <path> <n> [MiB] | contendon|contendeio <path> <n> <MiB> | fill <path> <MiB>\n",
 	    argv[0]);
 	return (2);
 }

@@ -244,13 +244,27 @@ vdump() {	# file tag
 	echo 1 > $P/seek_scanall
 	/tmp/h2seekprobe dump "$1" > /tmp/qv-scan.$2
 	echo 0 > $P/seek_scanall
-	echo "vote $2 lines $(wc -l < /tmp/qv-walk.$2) extents $(grep -c '^seekm-dump extent ' /tmp/qv-walk.$2) differ $(cmp -s /tmp/qv-walk.$2 /tmp/qv-scan.$2 && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0))"
+	echo "vote $2 lines $(wc -l < /tmp/qv-walk.$2) extents $(grep -c '^seekm-dump extent ' /tmp/qv-walk.$2) differ $(cmp -s /tmp/qv-walk.$2 /tmp/qv-scan.$2 && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0)) maperr $(sed -n 's/^seekm-fail dump: FIEMAP errno //p' /tmp/qv-walk.$2 | head -1 | grep . || echo none)"
 	diff /tmp/qv-walk.$2 /tmp/qv-scan.$2 | head -5 | sed "s/^/vote $2 diff /"
 }
-vseek() {	# tag d|h offset: one SEEK_DATA or SEEK_HOLE through xfs_io, and the fallbacks it took
+vseek() {	# tag d|h offset: one SEEK_DATA or SEEK_HOLE through xfs_io, the fallbacks it took, and whether it failed EIO
 	b0=$(cat $P/seek_fellback)
-	r=$(xfs_io -r -c "seek -$2 $3" /mnt/h2q/dis 2>&1 | awk '$1 ~ /^(DATA|HOLE)$/ {print $2}')
-	echo "vote $1 answer ${r:-none} fellback $(( $(cat $P/seek_fellback) - b0 ))"
+	o=$(xfs_io -r -c "seek -$2 $3" /mnt/h2q/dis 2>&1)
+	r=$(printf '%s\n' "$o" | awk '$1 ~ /^(DATA|HOLE)$/ {print $2}')
+	echo "vote $1 answer ${r:-none} fellback $(( $(cat $P/seek_fellback) - b0 )) eio $(printf '%s\n' "$o" | grep -c 'Input/output error')"
+}
+vshow() {	# tag: each data block of dis with its modify_tid, from each volume's own media
+	ino=$(stat -c %i /mnt/h2q/dis)
+	umount /mnt/h2q
+	for v in a:vdb b:vdc; do
+		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v p="$1" -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
+		/^ *inode\.[0-9]/ { mode = "inode"; next }
+		mode == "inode" && $1 == "inum" { inum = $2 }
+		/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
+		mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m); if (inum == n) print p, t, key, m; mode = "" }'
+	done
+	echo 3 > /proc/sys/vm/drop_caches
+	mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
 }
 # Agreeing masters: a file across the walk's 1024-block batch edge, the
 # probe's shape, and a file held in its inode.
@@ -270,8 +284,9 @@ echo 0 > $P/seek_depth_max
 echo $d0 > $P/seek_depth_max
 echo "vote refuse exit $s eio $(grep -c '^seekm-ok   refuse' /tmp/qv.refuse) fellback $(( $(cat $P/seek_fellback) - b0 ))"
 # One element failing while the other answers: the call's error is the
-# collect's, the first master's, with no fallback. seek_fail_elm fails
-# the second element's walk alone.
+# collect's, the first master's error that is not zero, here the second
+# master's, with no fallback. seek_fail_elm fails the second element's
+# walk alone.
 b0=$(cat $P/seek_fellback)
 echo 1 > $P/seek_fail_elm
 /tmp/h2seekprobe refuse /mnt/h2q/lay > /tmp/qv.fail1 2>&1; s=$?
@@ -290,32 +305,30 @@ for xb in 1:10 0:12 1:2; do
 	sync
 done
 echo -1 > $P/write_except
-ino=$(stat -c %i /mnt/h2q/dis)
-for v in a:vdb b:vdc; do
-	hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
-	/^ *inode\.[0-9]/ { mode = "inode"; next }
-	mode == "inode" && $1 == "inum" { inum = $2 }
-	/^ *data\.[0-9]/ { mode = "data"; key = $3; next }
-	mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m); if (inum == n) print "vote show", t, key, m; mode = "" }'
-done
-umount /mnt/h2q; echo 3 > /proc/sys/vm/drop_caches
-mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
+vshow "vote show"
 vdump /mnt/h2q/dis disagree
 vseek inside d $((8 * 65536))
 vseek outside h $((16 * 65536))
 vseek hole0 h 0
-# Each block the quorum calls a hole read on its own: dd's status, the
-# bytes it read and how many of them are not zero.
-# Debug bit 0x0100 prints each failed read with what every element fed,
-# and dd's own message is kept, so a failure names its errno.
+# Each block the masters disagree on read on its own, and block 0, which
+# they agree on, beside them: dd's status, the bytes it read and how many
+# of them are not zero. Debug bit 0x0100 prints each failed read with what
+# every element fed, and dd's own message is kept, so a failure names its
+# errno.
 echo $((0x8000 | 0x0100)) > /sys/module/hammer2/parameters/debug
-for b in 2 10 12; do
+for b in 0 2 10 12; do
 	rm -f /tmp/qv.blk
 	dd if=/mnt/h2q/dis of=/tmp/qv.blk bs=64k skip=$b count=1 2>/tmp/qv.err; s=$?
 	echo "vote read $b exit $s bytes $(wc -c < /tmp/qv.blk 2>/dev/null || echo none) nonzero $(tr -d '\000' < /tmp/qv.blk 2>/dev/null | wc -c)"
 	[ "$s" = 0 ] || echo "vote readerr $b $(tr '\n' ' ' < /tmp/qv.err)"
 done
+# A 4 KiB write into block 2 reads the block's folio first; it must fail
+# and leave both masters' copies as they were, read again from the media.
+dd if=/dev/urandom of=/mnt/h2q/dis bs=4k seek=$((2 * 16 + 1)) count=1 conv=notrunc 2>/tmp/qv.err; s=$?
+echo "vote pwrite exit $s eio $(grep -c 'Input/output error' /tmp/qv.err)"
+sync
 echo $((0x8000)) > /sys/module/hammer2/parameters/debug
+vshow "vote after"
 # The comparison's control: 1 drops the tid from it, 2 trusts the first
 # walk unread; either must make the walk's dump differ from the scan's.
 for k in 1 2; do
@@ -334,9 +347,10 @@ fi
 # SPLIT=1 (VOTE=1): contend's dense file of n MiB, made by the probe's fill
 # with the same pattern, gains one block past its n MiB, which is then
 # rewritten on the first master alone (write_except), so the two hold it at
-# two tids and the quorum calls it a hole. Every SEEK_HOLE from 0 then walks
-# to the last batch, disagrees there, and takes the scan from that batch's
-# cursor; the writes stay below the block, so none mends it (contendon).
+# two tids and the collect fails it. Every SEEK_HOLE from 0 then walks to
+# the last batch, disagrees there, and takes the scan from that batch's
+# cursor to the block, where it fails EIO; the writes stay below the block,
+# so none mends it (contendeio).
 if [ "${SPLIT:-0}" = 1 ]; then
 	P=/sys/module/hammer2/parameters
 	b=$((CONTEND * 16))
@@ -348,7 +362,7 @@ if [ "${SPLIT:-0}" = 1 ]; then
 	sync
 	echo -1 > $P/write_except
 	f0=$(cat $P/seek_fellback)
-	/tmp/h2seekprobe contendon /mnt/h2q/contend 20 "$CONTEND" | grep -v '^seekm-contend [a-z]* [0-9]' | sed 's/^seekm-contend /seekm-split /'
+	/tmp/h2seekprobe contendeio /mnt/h2q/contend 20 "$CONTEND" | grep -v '^seekm-contend [a-z]* [0-9]' | sed 's/^seekm-contend /seekm-split /'
 	echo "split-write exit $s1 $s2 fellback $(( $(cat $P/seek_fellback) - f0 ))"
 fi
 rm -f /mnt/h2q/contend /mnt/h2q/tdense
@@ -490,9 +504,9 @@ if [ "$QCONTEND" != 0 ]; then
 		a=$(sed -n 's/^split-write exit \([0-9]*\) \([0-9]*\) fellback \([0-9]*\)$/\1 \2 \3/p' "$W/out"); set -- $a
 		[ "$1" = 0 ] && [ "$2" = 0 ] && [ "${3:-0}" -gt 0 ]
 		check "the split block was written on both, then on the first alone, and the seeks fell back" $? "${a:-no line} (exits, fallbacks)"
-		h=$(sed -n 's/^seekm-split hole median-ns \([0-9]*\) n [0-9]* answer \([0-9-]*\)$/\1 \2/p' "$W/out"); set -- $h
-		[ "$2" = $((QCONTEND * 1048576)) ]
-		check "SEEK_HOLE answers the split block, a hole to the quorum" $? "${h:-no line} (median-ns, answer)"
+		h=$(sed -n 's/^seekm-split hole median-ns \([0-9]*\) n [0-9]* answer \([0-9-]*\) errno \([0-9]*\)$/\1 \2 \3/p' "$W/out"); set -- $h
+		[ "$2" = -1 ] && [ "$3" = 5 ]
+		check "SEEK_HOLE fails EIO at the split block, which the masters disagree on" $? "${h:-no line} (median-ns, answer, errno)"
 		w=$(sed -n 's/^seekm-split seeking median-ns \([0-9]*\) .*/\1/p' "$W/out")
 		[ -n "$w" ]
 		check "a writer was timed beside the split SEEK_HOLE loop" $? "${w:-none} ns"
@@ -527,31 +541,45 @@ if [ "$QVOTE" = 1 ]; then
 	check "one master's walk failing while the other answers is the call's EIO, with no fallback" $? "${a:-no line}"
 	# The disagreement made, read from each volume's own media.
 	key() { sed -n "s/^vote show $1 $2\/[0-9]* \([0-9a-f]*\)$/\1/p" "$W/out" | head -1; }	# volume, the key as show prints it
+	key2() { sed -n "s/^vote after $1 $2\/[0-9]* \([0-9a-f]*\)$/\1/p" "$W/out" | head -1; }	# the same, read after the partial write
 	xa=$(key a 00000000000a0000); xb=$(key b 00000000000a0000)
 	ya=$(key a 00000000000c0000); yb=$(key b 00000000000c0000)
 	za=$(key a 0000000000020000); zb=$(key b 0000000000020000)
 	[ -n "$xa" ] && [ -z "$xb" ] && [ -z "$ya" ] && [ -n "$yb" ] && [ -n "$za" ] && [ -n "$zb" ] && [ "$za" != "$zb" ]
 	check "the masters disagree on media: block 10 on the first only, 12 on the second only, 2 at two tids" $? "10 ${xa:-absent}/${xb:-absent} 12 ${ya:-absent}/${yb:-absent} 2 ${za:-absent}/${zb:-absent}"
-	l=$(vf disagree lines); d=$(vf disagree differ); b=$(vf disagree fellback)
-	[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "${b:-0}" -gt 0 ]
-	check "masters that disagree fall back to the scan and answer as it does" $? "lines ${l:-none} differ ${d:-none} fellback ${b:-none}"
+	# The map crosses block 2 whichever reader answers, so both dumps end
+	# in FIEMAP's EIO; the seeks between them must still answer alike.
+	l=$(vf disagree lines); d=$(vf disagree differ); b=$(vf disagree fellback); m=$(vf disagree maperr)
+	[ "${l:-0}" -gt 0 ] && [ "$d" = 0 ] && [ "${b:-0}" -gt 0 ] && [ "$m" = 5 ]
+	check "masters that disagree fall back to the scan and answer as it does, the map failing EIO" $? "lines ${l:-none} differ ${d:-none} fellback ${b:-none} map errno ${m:-none}"
 	a=$(vf inside fellback); b=$(vf outside fellback); o=$(vf outside answer)
 	[ "${a:-0}" -gt 0 ] && [ "$b" = 0 ] && [ "$o" = $((24 * 65536)) ]
 	check "only a call whose range holds a disagreement falls back" $? "inside ${a:-none} outside ${b:-none}, SEEK_HOLE from block 16 ${o:-none}"
-	a=$(vf hole0 answer)
-	[ "$a" = $((2 * 65536)) ]
-	check "SEEK_HOLE from 0 answers block 2, held at two tids, a hole to the quorum" $? "${a:-none}"
-	# What the seek calls a hole must read as zeros: SEEK_DATA from block 8.
-	r=$(vf inside answer); bad=0; rd=
-	[ "$r" = $((16 * 65536)) ] || bad=$((bad + 1))
+	a=$(vf hole0 answer); e=$(vf hole0 eio)
+	[ "$a" = none ] && [ "$e" = 1 ]
+	check "SEEK_HOLE from 0 fails EIO at block 2, held at two tids" $? "answer ${a:-none} eio ${e:-none}"
+	a=$(vf inside answer); e=$(vf inside eio)
+	[ "$a" = none ] && [ "$e" = 1 ]
+	check "SEEK_DATA from block 8 fails EIO at block 10, held by the first master alone" $? "answer ${a:-none} eio ${e:-none}"
+	# Each disputed block's read fails with EIO, not EINPROGRESS and not
+	# zeros, while block 0 of the same file, which both hold at one tid,
+	# reads whole.
+	bad=0; rd=
+	x=$(sed -n "s/^vote read 0 //p" "$W/out" | head -1); set -- $x
+	{ [ "$2" = 0 ] && [ "$4" = 65536 ] && [ "${6:-0}" -gt 0 ]; } 2>/dev/null || bad=$((bad + 1))
+	rd=" 0: ${x:-no line};"
 	for blk in 2 10 12; do
-		x=$(sed -n "s/^vote read $blk //p" "$W/out" | head -1)
-		[ "$x" = "exit 0 bytes 65536 nonzero 0" ] || bad=$((bad + 1))
-		rd="$rd $blk: ${x:-no line};"
+		x=$(sed -n "s/^vote read $blk //p" "$W/out" | head -1); set -- $x
+		e=$(sed -n "s/^vote readerr $blk //p" "$W/out" | head -1)
+		[ -n "$2" ] && [ "$2" != 0 ] && case $e in *'Input/output error'*) true ;; *) false ;; esac || bad=$((bad + 1))
+		rd="$rd $blk: ${x:-no line} (${e:-no message});"
 	done
 	[ "$bad" = 0 ]
-	check "no block the seek calls a hole reads back data: each read whole, as zeros" $? "SEEK_DATA from block 8 ${r:-none};$rd"
-	sed -n 's/^vote readerr /        read error: /p' "$W/out"
+	check "each block the masters disagree on fails its read with EIO, and block 0 reads whole" $? "$rd"
+	a=$(vote pwrite); set -- $a
+	za2=$(key2 a 0000000000020000); zb2=$(key2 b 0000000000020000)
+	[ -n "$2" ] && [ "$2" != 0 ] && [ "$4" = 1 ] && [ -n "$za" ] && [ "$za2" = "$za" ] && [ "$zb2" = "$zb" ]
+	check "a partial write into block 2 fails EIO and leaves both masters' copies" $? "${a:-no line}; block 2 before ${za:-absent}/${zb:-absent} after ${za2:-absent}/${zb2:-absent}"
 	for k in 1 2; do
 		d=$(vf break$k differ)
 		[ "$d" = 1 ]

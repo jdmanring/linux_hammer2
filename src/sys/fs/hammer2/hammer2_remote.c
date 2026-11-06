@@ -2154,7 +2154,9 @@ hammer2_remote_xop(hammer2_xop_head_t *xop, int clindex)
 		 * A clean close with no end fed is an answer only from a
 		 * one-chain descriptor, after that chain: a readdir or a
 		 * scan always feeds its end.  Any other is a reply with no
-		 * answer, which would leave the element counted in progress.
+		 * answer: having fed chains, the element's empty FIFO would
+		 * read as the end the peer never sent (hammer2_xop_collect()),
+		 * and having fed none, as an element still running.
 		 */
 		if (!call->eof && error == 0 && !(onechain && fed == 1))
 			error = HAMMER2_ERROR_ENOTCONN;

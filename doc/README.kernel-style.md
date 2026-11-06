@@ -259,7 +259,7 @@ hits, read by line number. No category is new.
 
 1,600 to 1,602 with the refusal of any mount of a pass's source
 snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
-(`hammer2_remote.c:2777`), the same form checkpatch reads at
+(`hammer2_remote.c:2779`), the same form checkpatch reads at
 `hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype
 argument, its declaration in `hammer2.h`. No category is new.
 
@@ -372,7 +372,7 @@ new.
 depth argument, `hammer2_xops.c:1566`, is a continuation-line indent; the
 debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
 `return (x);`; and the chunked scan's fatal-signal check returns a positive
-`EINTR` at `hammer2_vnops.c:1607`, which is the module's errno convention
+`EINTR` at `hammer2_vnops.c:1620`, which is the module's errno convention
 and is negated at the VFS boundary like every other. No category is new.
 
 1,659 to 1,661 with the seek's vote on several MASTERs
@@ -384,6 +384,14 @@ frontend functions net one more `return (x);`. No category is new.
 1,661 to 1,662 with the space check judging a refusal again on the exact
 dirty sum (`hammer2_enospace_dirty()`), which nets one more `return (x);`.
 No category is new.
+
+1,662 unchanged when the masters' disagreement became EIO, with one hit
+moved between rows of a category the list already holds:
+`hammer2_error_to_errno()` returns a positive `EIO` for
+`HAMMER2_ERROR_EDEADLK` where it returned a positive `EDEADLK`, so the
+`-EDEADLK` row goes and the `-EIO` row reads 16 (decision C of
+`doc/CLUSTER_PROTOCOL_DESIGN.md`; `doc/README.porting.md`, "A key the
+masters disagree on").
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

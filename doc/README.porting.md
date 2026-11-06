@@ -1604,8 +1604,14 @@ addresses aside, is the quorum's answer at every key, since each block in
 the range is then held by every voting element at one tid. Anything else
 goes to `hammer2_seek_scanall()` from the cursor, the chunked scan through
 `hammer2_xop_scanall()` that every seek used before, whose collect decides
-key by key as a read does; a block fewer than a quorum hold, or held at
-two tids, is a hole there as read(2) zero-fills it. A slave does not walk:
+key by key as a read does: a block a quorum lacks is a hole, and one the
+masters disagree on fails the call with EIO, as its read does (below). A
+hole the scan reaches before a disputed key is still the answer. The
+backend's branch for an inode whose data is embedded
+(`HAMMER2_OPFLAG_DIRECTDATA`) is reached by no test: the frontend answers
+such a file from `ip->meta` before any walk, so the branch runs only when
+an element's inode chain disagrees with `ip->meta` on that flag, which no
+harness builds. A slave does not walk:
 it never decides a key, and one behind its master would send every seek to
 the scan. Feeding the deciding chains to the collect instead, as the
 carried readdir does, was rejected: every element runs to completion
@@ -1665,3 +1671,43 @@ can dirty a block between the two reads; iomap's seek leaves the same
 window. A writeback that fails leaves its folio clean with no block in
 the tree, so the seek and the map call that block a hole while read(2)
 returns the cached bytes, and fsync(2) reports the error.
+
+## A key the masters disagree on
+
+Upstream's `hammer2_cluster_check()` returns ESRCH when fewer than a
+quorum of masters hold the key and EDEADLK when a quorum holds it at
+differing transaction ids, and its collect steps over both ("a repair is
+needed, for now we loop"). The port carried that step for ESRCH, which a
+listing needs: a key only a slave holds is not the cluster's, and
+stopping there left `getdents(2)` beginning at the same entry forever.
+Carried for EDEADLK, and for the ESRCH of two masters where one holds the
+block, the step made a disputed block read as a hole: read(2) zero-filled
+it, measured in 1.0.91's quorum runs. From the code, read by the fourth
+review of N10.6 and not run, a partial write into it read those zeros
+through `->read_folio` in `hammer2_write_begin()` and wrote them back
+over both masters' copies; `cluster-quorum.sh` now requires that write to
+fail and both copies to keep their tids.
+
+`doc/CLUSTER_PROTOCOL_DESIGN.md` took decision C: `EIO` for a reachable
+quorum that disagrees on media. The check now tells a disagreement from
+an absence by counting, beside the masters that hold the key, those that
+answered without it: a key some masters hold and the rest do not, where
+neither side is a quorum, returns EDEADLK as a disagreement on the tid
+does. On two masters that is any key one holds alone. A key no master
+holds stays ESRCH and is stepped over, and so does a key a quorum lacks
+on three or more, a minority's. The collect fails EDEADLK at its key
+rather than looping, with `collect_key` already past it, and the errno
+map turns it into EIO. A master that ended on an error counts on neither
+side, so it cannot turn a disagreement into an absence.
+
+The rule is the same for every XOP. A read, the lookup by name or by
+inode number, `bmap`, a listing, the name-collision scan a create and a
+rename run, and the sync thread's collects each fail on the disputed key,
+where the step answered "no such key" or went on past it; the
+collision scan stepping over a disputed entry could hand out its key a
+second time. SEEK_DATA, SEEK_HOLE and FIEMAP fail with EIO when their
+answer depends on a disputed block, since a seek that called it a hole
+would have `cp --sparse` and `tar --sparse` skip it silently; a hole the
+scan reaches before a disputed key is answered. What repairs the
+disagreement is the protocol note's (C12 and C13); until then the block
+fails.

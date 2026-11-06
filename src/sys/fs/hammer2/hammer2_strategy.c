@@ -107,10 +107,11 @@ hammer2_dedup_clear(hammer2_dev_t *hmp)
  * XXX Linux: both handlers below are floors, not translations.
  *
  * The XOP protocol requires exactly one hammer2_xop_feed() per handler
- * call, since the frontend in hammer2_xop_collect() waits on the FIFO and
- * a handler that returns without feeding hangs the caller rather than
- * failing it.  Feeding a NULL chain with an error is how every carried
- * handler reports one, so that is what these do.
+ * call: upstream's frontend waits on the FIFO, and here, where the
+ * elements run before the collect, an element that fed nothing reads as
+ * still running and the call fails EINPROGRESS (hammer2_xop_collect()).
+ * Feeding a NULL chain with an error is how every carried handler reports
+ * one, so that is what these do.
  *
  * WARN_ONCE rather than KKASSERT: this is code written for the OS half,
  * where the port's rule is a warning plus recovery plus an errno, and the
@@ -475,7 +476,8 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 		/*
 		 * No chain covers this offset, which is a hole rather than
 		 * a failure.  Upstream zeroes the buffer and reports
-		 * success at the same place.
+		 * success at the same place.  A block the masters disagree
+		 * on is not one: the collect fails it, and it reads EIO.
 		 */
 		folio_zero_range(folio, 0, folio_size(folio));
 		error = 0;

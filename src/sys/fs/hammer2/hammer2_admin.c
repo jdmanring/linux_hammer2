@@ -770,19 +770,24 @@ again:
 			xop->cluster.array[i].chain = NULL;
 			/* Retain any CITEM_NULL setting. */
 			/*
-			 * XXX Linux: an element started (chk_mask) and
-			 * already retired (run_mask) will feed nothing more,
-			 * so its empty FIFO is its end.  A one-chain XOP such
-			 * as the strategy read feeds no end after its chain,
-			 * and a key the quorum skips (ESRCH, EDEADLK) drained
-			 * every element to here, so the check read them all
-			 * as in progress and the read failed EINPROGRESS
-			 * where upstream's read waits for a feed that never
-			 * comes.  An element left out by
-			 * hammer2_xop_start_except() was never started and
-			 * stays in progress, as the sync thread reads it.
+			 * XXX Linux: an element started (chk_mask), already
+			 * retired (run_mask) and having fed (wi) will feed
+			 * nothing more, so its empty FIFO is its end.  A
+			 * one-chain XOP (the strategy read, nresolve, the
+			 * lookup by inode number, bmap) feeds no end after
+			 * its chain, and a key the quorum steps over (ESRCH)
+			 * drained every element to here, so the check read
+			 * them all as in progress and the call failed
+			 * EINPROGRESS.  Upstream runs its elements on worker
+			 * threads, and from its code, not run, its strategy
+			 * read would leave the bio uncompleted in this state.
+			 * An element left out by hammer2_xop_start_except()
+			 * was never started, and one that fed nothing has
+			 * not answered; both stay in progress, as the sync
+			 * thread reads the first.
 			 */
-			if ((xop->chk_mask & ~xop->run_mask & (1U << i)) != 0)
+			if ((xop->chk_mask & ~xop->run_mask & (1U << i)) != 0 &&
+			    fifo->wi != 0)
 				xop->cluster.array[i].flags |=
 				    HAMMER2_CITEM_NULL;
 		}
@@ -809,8 +814,9 @@ again:
 	 * XXX Linux: the two skips were dropped with the codes when the port
 	 * collapsed the check's result to EIO, and came back on 2026-10-18
 	 * with a listing that returned the entry before a slave-only key on
-	 * every getdents(2).  The elements run to completion before the
-	 * collect, so upstream's EINPROGRESS wait has nothing to wait for.
+	 * every getdents(2); the EDEADLK skip went again in 1.0.92, below.
+	 * The elements run to completion before the collect, so upstream's
+	 * EINPROGRESS wait has nothing to wait for.
 	 */
 	error = hammer2_cluster_check(&xop->cluster, lokey, keynull);
 
@@ -824,13 +830,19 @@ again:
 			goto again;
 		error = HAMMER2_ERROR_ENOENT;
 	}
+	/*
+	 * XXX Linux: masters that disagree on media fail the key rather than
+	 * loop past it (doc/CLUSTER_PROTOCOL_DESIGN.md, decision C: EIO for a
+	 * reachable quorum that disagrees).  Stepped over, the key read as a
+	 * hole: a read zero-filled the block, and from the code a partial
+	 * write into it would read those zeros and write them back over both
+	 * masters' copies.  collect_key is already past the key.  The print
+	 * is rate-limited.
+	 */
 	if (error == HAMMER2_ERROR_EDEADLK) {
 		/* XXX Linux: %jx, which printk does not implement */
-		kprintf("hammer2: no quorum possible lokey %016llx\n",
+		pr_warn_ratelimited("hammer2: no quorum possible lokey %016llx\n",
 			(unsigned long long)lokey);
-		if (lokey != HAMMER2_KEY_MAX)
-			goto again;
-		error = HAMMER2_ERROR_ENOENT;
 	}
 
 	return (error);

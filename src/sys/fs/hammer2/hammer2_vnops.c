@@ -996,8 +996,9 @@ const struct file_operations hammer2_dir_fops = {
  *
  * wb_stat() is the per-CPU counter's cheap read, which may sit up to
  * wb_stat_error() pages (nr_cpu_ids * WB_STAT_BATCH, 384 on twelve CPUs)
- * above the count.  exact asks wb_stat_sum() instead, which takes each
- * counter's lock and adds every CPU's part.
+ * from the count either way, so the two counters of one bdi_writeback can
+ * be off by twice that, 768 pages.  exact asks wb_stat_sum() instead,
+ * which takes each counter's lock and adds every CPU's part.
  */
 static loff_t
 hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact)
@@ -1025,11 +1026,15 @@ hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact)
 /*
  * Linux: hammer2_vfs_enospace() for a write of bytes, with what is dirty
  * on the device counted against the reserve beside it.  The cheap count
- * decides unless it refuses; a refusal is judged again on the exact sum,
- * as the kernel's own dirty throttle (wb_dirty_limits()) sums when its
- * threshold is within the counter's error.  On the cheap count alone a
+ * decides unless it refuses; every refusal is judged again on the exact
+ * sum, where the kernel's dirty throttle (wb_dirty_limits()) sums only
+ * when its threshold is within the counter's error.  The sum is two
+ * per-CPU walks per bdi_writeback, taken only after a refusal.  A cheap
+ * read below the sum admits on that read and is not judged again, which
+ * is the check as it was before the sum.  On the cheap count alone a
  * user's 64 KiB write after syncfs(2) was refused while statfs still
- * reported three blocks free past the reserve.
+ * reported three blocks free past the reserve, the counter's error the
+ * candidate cause.
  */
 static int
 hammer2_enospace_dirty(hammer2_inode_t *ip, struct inode *inode, loff_t bytes)
@@ -1574,12 +1579,20 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
  * doubles only up to HAMMER2_SEEK_DATA_MAX, since each of its blocks costs
  * a chain.
  *
- * On two voting elements the quorum is both, so a block the walks disagree
- * on is a hole to the collect, and a SEEK_HOLE that falls back stops there,
- * inside the batch that disagreed; SEEK_DATA's scan crosses holes a GiB at
- * a time, and a map falls back one batch at a time.  On three or more a
- * block two of them hold at one tid is data to the quorum while the slots
- * differ, so the scan can run on to the next block the quorum lacks.
+ * On two voting elements the quorum is both, so the first block the walks
+ * differ on is held by one alone or by the two at two tids, which the
+ * collect fails (hammer2_cluster_check()), and a call that falls back ends
+ * there with EIO: SEEK_HOLE and the map inside the batch that disagreed,
+ * SEEK_DATA after crossing the holes before the block, which cost a lookup
+ * per chunk and no chain.  A hole the scan reaches first is the answer.
+ * On three or more a block a quorum holds at one tid is data and one a
+ * quorum lacks is a hole while the slots differ, so the scan runs on key
+ * by key, and a run only a minority hold costs it a chain per block.  A
+ * writer beside a two-master SEEK_HOLE loop waits about two tree reads
+ * (68.85 and 74.13 ms beside 34.36 and 35.53 at 16 GiB), a seek that finds
+ * the mapping tagged dirty reading the tree again from its hole, so the
+ * 50 ms rule on the seek bounds the writer near 100 ms; the split's
+ * reading is taken on the HAMMER2_LOCKDEBUG module H2_QUORUM_SPLIT needs.
  * DEFER(H2_WIRE_SEEKTIME's 1 GiB SEEK_HOLE above 2.5 s on h2debug-7.3tls, a PFS with a remote element mounted read-write, cluster-quorum.sh's two-master 16 GiB SEEK_HOLE above 50 ms on h2release-7.3tls with or without H2_QUORUM_SPLIT, or a third MASTER in cluster-quorum.sh):
  * a seek request the cluster transport carries would let a remote element
  * walk, and a quorum over the elements' blockref lists would let masters
@@ -1648,6 +1661,15 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 			r->key = next;
 		}
 		if (error == HAMMER2_ERROR_ENOENT)
+			error = 0;
+		/*
+		 * A key the masters disagree on fails the collect at that key,
+		 * collect_key past it.  Past r->key, the hole at r->key is
+		 * every master's and is the answer; at it, the call fails.
+		 */
+		if (error == HAMMER2_ERROR_EDEADLK &&
+		    r->mode == HAMMER2_SEEK_MODE_HOLE &&
+		    sxop->head.collect_key - 1 > r->key)
 			error = 0;
 		hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
 		hammer2_inode_unlock(ip);
