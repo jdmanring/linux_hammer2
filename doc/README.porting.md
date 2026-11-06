@@ -1598,9 +1598,13 @@ walk runs only on a cluster of one local element. Several elements need
 the quorum's agreement on every key and a remote element has no blockref
 array on this host, so those take `hammer2_seek_scanall()`, the chunked
 scan through `hammer2_xop_scanall()` that every seek used before, under
-a `DEFER` whose trigger is a PFS with a remote element mounted read-write,
-or a cluster of several local elements in use. A PFS with a remote
-element is read-only today, so no writer waits behind its scan.
+a `DEFER` with three triggers: the remote 1 GiB SEEK_HOLE of
+`cluster-wire.sh` under `H2_WIRE_SEEKTIME=1` above 2.5 s, a writer's
+median beside the two-master SEEK_HOLE loop of `cluster-quorum.sh` under
+`H2_QUORUM_CONTEND=512` above 100 ms, or a PFS with a remote element
+mounted read-write. A PFS with a remote element is read-only today, so
+no writer waits behind its scan; on a cluster of several local elements
+one does.
 
 Both hold `i_rwsem` shared for the whole call, as
 `btrfs_file_llseek()` holds it for the seek and `xfs_vn_fiemap()`,
