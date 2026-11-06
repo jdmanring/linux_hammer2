@@ -263,6 +263,9 @@
 # fallback and walk counters have a non-debug macro of ((void)0), its
 # argument unused, as the hold helper's is, and the new frontend functions
 # net one more `return (x);`. No category is new. See README.kernel-style.md.
+# 1,661 to 1,662: the space check's recount on the exact dirty sum
+# (hammer2_enospace_dirty()) nets one more `return (x);`. No category is
+# new. See README.kernel-style.md.
 22 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -293,7 +296,7 @@
 4 please, no space before tabs
 247 please, no spaces at the start of a line
 86 quoted string split across lines
-399 return is not a function, parentheses are not required
+400 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)

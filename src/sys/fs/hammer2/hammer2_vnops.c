@@ -993,9 +993,14 @@ const struct file_operations hammer2_dir_fops = {
  * and lost, about one fill in eight.  A page whose block is already
  * allocated is counted twice for the rest of its writeback, which
  * refuses a little early and loses nothing.
+ *
+ * wb_stat() is the per-CPU counter's cheap read, which may sit up to
+ * wb_stat_error() pages (nr_cpu_ids * WB_STAT_BATCH, 384 on twelve CPUs)
+ * above the count.  exact asks wb_stat_sum() instead, which takes each
+ * counter's lock and adds every CPU's part.
  */
 static loff_t
-hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi)
+hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact)
 {
 	struct bdi_writeback *wb;
 	s64 pages = 0;
@@ -1004,12 +1009,47 @@ hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi)
 	list_for_each_entry_rcu(wb, &bdi->wb_list, bdi_node) {
 		if (!wb_tryget(wb))
 			continue;
-		pages += wb_stat(wb, WB_RECLAIMABLE);
-		pages += wb_stat(wb, WB_WRITEBACK);
+		if (exact) {
+			pages += wb_stat_sum(wb, WB_RECLAIMABLE);
+			pages += wb_stat_sum(wb, WB_WRITEBACK);
+		} else {
+			pages += wb_stat(wb, WB_RECLAIMABLE);
+			pages += wb_stat(wb, WB_WRITEBACK);
+		}
 		wb_put(wb);
 	}
 	rcu_read_unlock();
 	return ((loff_t)pages << PAGE_SHIFT);
+}
+
+/*
+ * Linux: hammer2_vfs_enospace() for a write of bytes, with what is dirty
+ * on the device counted against the reserve beside it.  The cheap count
+ * decides unless it refuses; a refusal is judged again on the exact sum,
+ * as the kernel's own dirty throttle (wb_dirty_limits()) sums when its
+ * threshold is within the counter's error.  On the cheap count alone a
+ * user's 64 KiB write after syncfs(2) was refused while statfs still
+ * reported three blocks free past the reserve.
+ */
+static int
+hammer2_enospace_dirty(hammer2_inode_t *ip, struct inode *inode, loff_t bytes)
+{
+	struct backing_dev_info *bdi = inode->i_sb->s_bdi;
+	loff_t cheap, exact;
+	int r;
+
+	cheap = hammer2_bdi_dirty_bytes(bdi, false);
+	r = hammer2_vfs_enospace(ip, bytes + cheap, current_cred());
+	if (r < 2)
+		return (r);
+	exact = hammer2_bdi_dirty_bytes(bdi, true);
+	if (exact >= cheap)
+		return (r);
+	r = hammer2_vfs_enospace(ip, bytes + exact, current_cred());
+	if (r < 2)
+		pr_debug("hammer2: enospace admits %lld bytes on the exact dirty count %lld, the cheap count %lld refused\n",
+		    (long long)bytes, (long long)exact, (long long)cheap);
+	return (r);
 }
 
 /*
@@ -1057,8 +1097,7 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	 * found the reserve already eaten by data the count had not seen.
 	 */
 	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */
-	switch (hammer2_vfs_enospace(ip, iov_iter_count(from) +
-	    hammer2_bdi_dirty_bytes(inode->i_sb->s_bdi), current_cred())) {
+	switch (hammer2_enospace_dirty(ip, inode, iov_iter_count(from))) {
 	case 2:
 		return (-ENOSPC);
 	case 1:
@@ -1431,8 +1470,8 @@ hammer2_page_mkwrite(struct vm_fault *vmf)
 	if (ip->pmp->rdonly)
 		return (VM_FAULT_SIGBUS);
 	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */
-	if (hammer2_vfs_enospace(ip, folio_size(page_folio(vmf->page)) +
-	    hammer2_bdi_dirty_bytes(inode->i_sb->s_bdi), current_cred()) > 1)
+	if (hammer2_enospace_dirty(ip, inode,
+	    folio_size(page_folio(vmf->page))) > 1)
 		return (VM_FAULT_SIGBUS);
 	return (filemap_page_mkwrite(vmf));
 }

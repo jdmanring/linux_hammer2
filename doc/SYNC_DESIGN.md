@@ -694,10 +694,10 @@ rather than detected. While a remote element is registered no frontend
 can write the PFS: a read-write mount and a read-write remount are
 refused (`hammer2_vfsops.c:1860-1866`, `:2786`), the vnode operations
 refuse a write on a read-only PFS (`hammer2_vnops.c:374`, `:500`,
-`:1431`), and the registration itself refuses a PFS mounted read-write
+`:1470`), and the registration itself refuses a PFS mounted read-write
 (`hammer2_remote.c:2643-2647`). A mapping a read-write mount dirtied before a read-only remount leaves no
 gap: the write fault stamps the inode through `->update_time`, which
-queues it (`hammer2_vnops.c:2973`), so the remount's sync walks it, and
+queues it (`hammer2_vnops.c:3012`), so the remount's sync walks it, and
 since 1.0.65 the remount also calls `sync_filesystem()`
 (`hammer2_vfsops.c:2765`), as ext4 does on that transition. The fifth
 candidate is refuted on its path, with its probe kept in
@@ -920,7 +920,7 @@ source before it was applied, and no lever-2 code precedes it.
    both read inside the root chain's lock, which is the lock the flush
    holds when it refreshes the slot (`hammer2_flush.c:1170-1177`). The
    slot can still be refreshed between the cut and the copy, by an
-   `fsync` of the PFS root directory (`hammer2_vnops.c:1364`) or any
+   `fsync` of the PFS root directory (`hammer2_vnops.c:1403`) or any
    other flush of the root; what that brings into the copy was written
    after the cut, stamped `G + 1`, and harmless to the proof. These are
    absolute readings, not deltas. The body's own work all follows the cut (the source root's
@@ -955,7 +955,7 @@ source before it was applied, and no lever-2 code precedes it.
      a path that modifies under an unqueued inode breaks this way and
      not the count's.
    - its inode still queued, including after an `fsync`, which leaves
-     the inode on the sideq for the syncer (`hammer2_vnops.c:1340-1342`):
+     the inode on the sideq for the syncer (`hammer2_vnops.c:1379-1381`):
      the queues see it.
    - written, `MODIFIED` cleared, with the parent's update failed: a
      parent modify that fails in the flush sets `UPDATE` on the child
@@ -1100,7 +1100,7 @@ source before it was applied, and no lever-2 code precedes it.
    skip by its tid. Under the knob they skip the slave whoever starts
    them, and the pass copies the change, data included. Twenty-one
    allocation sites carry the flag, the strategy write
-   (`hammer2_vnops.c:2596`) among them; the reads, lookups and readdirs
+   (`hammer2_vnops.c:2635`) among them; the reads, lookups and readdirs
    still run on every element. The shape also reads both queues empty
    at every sync the thread starts while the knob is armed, so a stage
    1 that found work there is a reading, not an assumption. The shape has one slave; with two, the thread's
