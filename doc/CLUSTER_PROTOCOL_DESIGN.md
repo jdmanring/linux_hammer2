@@ -1276,11 +1276,11 @@ rather than from the design document alone.
 - **C6. Elements run to completion before the collect, which waits on
   nothing and re-feeds nothing** (`hammer2_xop_start_except()` runs each
   storage function and retires it in the caller, `hammer2_admin.c:478-482`;
-  the collect's comment at `:791-797` says so); a proxy's fields are its
+  the collect's comment at `:807-813` says so); a proxy's fields are its
   feed frame's. A visibility rule that asks the collect
   to wait for a peer's apply has no feed to wait on.
 - **C7. The collect skips a key the check returns `ESRCH` or `EDEADLK`
-  for and ends the scan in `ENOENT`** (`hammer2_admin.c:806-818`,
+  for and ends the scan in `ENOENT`** (`hammer2_admin.c:822-834`,
   carried), and `readdir` ends on any collect error at the position it
   reached (`hammer2_vnops.c:252-255`) and maps the scan's final `ENOENT`
   to success (`:335-337`), so a disputed key vanishes from a listing that

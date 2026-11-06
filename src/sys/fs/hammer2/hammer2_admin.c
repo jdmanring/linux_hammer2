@@ -769,6 +769,22 @@ again:
 			 */
 			xop->cluster.array[i].chain = NULL;
 			/* Retain any CITEM_NULL setting. */
+			/*
+			 * XXX Linux: an element started (chk_mask) and
+			 * already retired (run_mask) will feed nothing more,
+			 * so its empty FIFO is its end.  A one-chain XOP such
+			 * as the strategy read feeds no end after its chain,
+			 * and a key the quorum skips (ESRCH, EDEADLK) drained
+			 * every element to here, so the check read them all
+			 * as in progress and the read failed EINPROGRESS
+			 * where upstream's read waits for a feed that never
+			 * comes.  An element left out by
+			 * hammer2_xop_start_except() was never started and
+			 * stays in progress, as the sync thread reads it.
+			 */
+			if ((xop->chk_mask & ~xop->run_mask & (1U << i)) != 0)
+				xop->cluster.array[i].flags |=
+				    HAMMER2_CITEM_NULL;
 		}
 	}
 
