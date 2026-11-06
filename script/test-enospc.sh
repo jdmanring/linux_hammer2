@@ -220,6 +220,9 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(mmap on the full volume .*\)$/      \1/p;\
 		    s/^  \(user write after the sync .*\)$/      \1/p;\
 		    s/^  \(root write after the sync .*\)$/      \1/p;\
+		    s/^  \(after-sync .*\)$/      \1/p;\
+		    s/^  \(exact-sum admissions [0-9]*\)$/      \1/p;\
+		    s/^  \(last exact-sum .*\)$/      \1/p;\
 		    s/^  \(cycles [0-9]*\)$/      \1/p;\
 		    s/^  \(drop-with-lock warns [0-9]*\)$/      \1/p;\
 		    s/^  \(oops [0-9]*\)$/      \1/p;\
@@ -718,6 +721,7 @@ out=$(ssh "$GUEST_SSH" '
 	# has the VFS refuse root the open of a file another user owns in
 	# a sticky world-writable directory, EACCES, read once as the
 	# reserve refusing root.
+	n0=$(wc -l < /tmp/kmsg.log)
 	msg=$(setpriv --reuid=65534 --regid=65534 --clear-groups \
 	    dd if=/dev/urandom of=/mnt/h2enospc/user.after bs=64K count=1 \
 	    status=none 2>&1); st=$?
@@ -725,6 +729,14 @@ out=$(ssh "$GUEST_SSH" '
 	msg=$(dd if=/dev/urandom of=/mnt/h2enospc/root.after bs=64K count=1 \
 	    status=none 2>&1); st=$?
 	echo "root write after the sync exit $st : ${msg:-accepted}"
+	# What the two writes were judged by: a refusal names the bytes it
+	# charged, dirty pages included, and an admission on the exact dirty
+	# sum names both counts.  The admissions of the whole run are counted.
+	sleep 1
+	tail -n +$((n0 + 1)) /tmp/kmsg.log | command grep "enospace refuses" | sed "s/^.*hammer2: enospace /after-sync refusal /"
+	tail -n +$((n0 + 1)) /tmp/kmsg.log | command grep "enospace admits" | sed "s/^.*hammer2: enospace /after-sync /"
+	echo "exact-sum admissions $(command grep -c "enospace admits" /tmp/kmsg.log)"
+	command grep "enospace admits" /tmp/kmsg.log | tail -1 | sed "s/^.*hammer2: enospace /last exact-sum /"
 	# An accepted file joins the content check, flushed first so the
 	# check reads it from the media like the rest.
 	for f in user.after root.after; do
