@@ -102,8 +102,9 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
     unsigned int flags __maybe_unused)
 {
 	hammer2_xop_nresolve_t *xop;
-	hammer2_inode_t *dip = VTOI(dir), *ip;
+	hammer2_inode_t *dip = VTOI(dir), *ip, *tip = NULL;
 	struct inode *inode = NULL;
+	bool guarded = false;	/* Linux */
 	int error;
 
 	/*
@@ -120,6 +121,7 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
 		return (ERR_PTR(-ENAMETOOLONG));	/* Linux: negative */
 
 	hammer2_inode_lock(dip, HAMMER2_RESOLVE_SHARED);
+again:
 	xop = hammer2_xop_alloc(dip, 0);
 	/*
 	 * The cast is the sign difference and nothing else: d_name.name is
@@ -132,7 +134,22 @@ hammer2_vop_lookup(struct inode *dir, struct dentry *dentry,
 	    dentry->d_name.len);	/* Linux */
 	hammer2_xop_start(&xop->head, &hammer2_nresolve_desc);
 
-	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
+	error = hammer2_xop_collect(&xop->head, 0);
+	/*
+	 * Linux: the target changed beside the call, once more under its
+	 * order; the fed chain is the target's inode, keyed by its number,
+	 * and collect_key is one past it (hammer2.h).
+	 */
+	if (error == HAMMER2_ERROR_EDEADLK && !guarded) {
+		hammer2_key_t inum = xop->head.collect_key - 1;
+
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		tip = hammer2_xop_rerun_begin(dip->pmp, inum);
+		guarded = true;
+		goto again;
+	}
+	hammer2_xop_rerun_end(tip);	/* Linux: before the target is locked */
+	error = hammer2_error_to_errno(error);
 	if (error == 0)
 		ip = hammer2_inode_get(dip->pmp, &xop->head, -1, -1);
 	else
@@ -519,7 +536,18 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 	hammer2_trans_init(dip->pmp, 0);
 	hammer2_inode_lock(dip, 0);
 
-	xop = hammer2_xop_alloc(dip, HAMMER2_XOP_MODIFYING);
+	/*
+	 * Linux: the target's order too, held through the collect
+	 * (hammer2.h).  The first element removes the name, then feeds the
+	 * target's inode chain, so a change to the target between two
+	 * elements or during the collect would fail the collect with the
+	 * name already gone and leave the inode linked with no name.  The
+	 * target is not ip2, which would take an XOP dependency held until
+	 * the retire, after hammer2_inode_get() locks it.
+	 */
+	xop = hammer2_xop_alloc(dip, HAMMER2_XOP_MODIFYING |
+	    HAMMER2_XOP_ORDERHOLD);
+	xop->head.order_ip = VTOI(inode);
 	hammer2_xop_setname(&xop->head,
 	    (const char *)dentry->d_name.name,	/* Linux: u8 */
 	    dentry->d_name.len);
@@ -527,6 +555,7 @@ hammer2_vop_nremove(struct inode *dir, struct dentry *dentry, int isdir)
 	xop->dopermanent = 0;
 	hammer2_xop_start(&xop->head, &hammer2_unlink_desc);
 	error = hammer2_xop_collect(&xop->head, 0);
+	hammer2_xop_order_release(&xop->head);	/* Linux: before inode_get */
 	error = hammer2_error_to_errno(error);
 	if (error == 0) {
 		ip = hammer2_inode_get(dip->pmp, &xop->head, -1, -1);

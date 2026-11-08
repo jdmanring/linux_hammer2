@@ -499,6 +499,77 @@ q3 a 0 0 1
 q3 b-alone 5 0 0
 q3 b 5 0 1
 q3 c 5 1 1
+# Q4 and Q5. The inode chain sync held between the masters
+# (xop_gap_desc=inode_chain_sync): a lookup made 500 ms into it, cold, and
+# an unlink. `touch -m` dirties a file so the sync's chain sync of it is
+# the held XOP. The lookup's collect meets the file's inode chain at two
+# tids, reruns under the file's order and waits the chain sync out; the
+# unlink holds the file's order with the directory's and waits for it
+# before its first element removes the name. With xop_order_off the
+# lookup fails EIO, and the unlink fails EIO with the name already gone
+# on both masters while the inode keeps its link: the orphan, read from
+# each volume's media by the inode's nlinks, beside a file the same dump
+# must show (the reader's control).
+echo inode_chain_sync > $P/xop_gap_desc
+mkdir -p /mnt/h2q/q45
+q4() {	# off
+	touch /mnt/h2q/q45/f; sync
+	echo $1 > $P/xop_order_off
+	echo $GAP > $P/xop_gap_ms
+	touch -m /mnt/h2q/q45/f
+	r0=$(cat $P/xop_reruns); t0=$(date +%s%N)
+	sync & sp=$!
+	sleep $((DELAY / 1000)).$(printf %03d $((DELAY % 1000)))
+	echo 2 > /proc/sys/vm/drop_caches
+	stat -c %i /mnt/h2q/q45/f > /tmp/q4.out 2>&1; s=$?
+	t1=$(date +%s%N); r1=$(cat $P/xop_reruns)
+	wait $sp
+	echo 0 > $P/xop_gap_ms
+	echo 0 > $P/xop_order_off
+	echo "vote q4$1 exit $s eio $(grep -c 'Input/output error' /tmp/q4.out) reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 ))"
+}
+q5media() {	# inum keep-inum: each volume's nlinks for both, - where absent
+	umount /mnt/h2q
+	for v in a:vdb b:vdc; do
+		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} \
+		    -v f="$(printf '0x%016x' "$1")" -v k="$(printf '0x%016x' "$2")" '
+		$1 == "inum" { cur = $2 }
+		$1 == "nlinks" { if (cur == f) fn = $2; if (cur == k) kn = $2 }
+		END { printf " %s-f2 %s %s-keep %s", t, fn == "" ? "-" : fn, t, kn == "" ? "-" : kn }'
+	done
+	mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
+}
+q5() {	# off
+	touch /mnt/h2q/q45/keep /mnt/h2q/q45/f2; sync
+	fi=$(stat -c %i /mnt/h2q/q45/f2); ki=$(stat -c %i /mnt/h2q/q45/keep)
+	echo $1 > $P/xop_order_off
+	echo $GAP > $P/xop_gap_ms
+	touch -m /mnt/h2q/q45/f2
+	r0=$(cat $P/xop_reruns); t0=$(date +%s%N)
+	sync & sp=$!
+	sleep $((DELAY / 1000)).$(printf %03d $((DELAY % 1000)))
+	# unlink(1), not rm: rm stats its argument first, and getattr takes
+	# ip->lock shared, which the chain sync holds exclusive through the
+	# gap, so rm's unlink ran after the window closed and the control
+	# with the order out could not fire (n10-6-seq19, 2050 and 2021 ms).
+	unlink /mnt/h2q/q45/f2 > /tmp/q5.out 2>&1; s=$?
+	t1=$(date +%s%N); r1=$(cat $P/xop_reruns)
+	wait $sp
+	echo 0 > $P/xop_gap_ms
+	echo 0 > $P/xop_order_off
+	sync; sync
+	echo 2 > /proc/sys/vm/drop_caches
+	named=$(ls /mnt/h2q/q45 | grep -c '^f2$')
+	echo "vote q5$1 exit $s eio $(grep -c 'Input/output error' /tmp/q5.out) ms $(( (t1 - t0) / 1000000 )) named $named$(q5media $fi $ki)"
+	rm -rf /mnt/h2q/q45; mkdir -p /mnt/h2q/q45
+}
+for off in 0 1; do
+	q4 $off
+	q5 $off
+done
+echo 0 > $P/xop_order_off
+echo 0 > $P/xop_gap_ms
+echo strategy_write > $P/xop_gap_desc
 sync
 # order_check counts a modify of an inode chain made without its order;
 # it exists only where lockdep does. order_check_off counts the ones made
@@ -841,6 +912,33 @@ if [ "$QVOTE" = 1 ]; then
 	ba=$(vf q3-b-alone ms); bl=$(vf q3-b ms)
 	[ -n "$ba" ] && [ -n "$bl" ] && [ "$bl" -gt $((2 * ba)) ] 2>/dev/null &&
 		echo "  note  Q3(b)'s writeback beside the loop took more than twice its time alone: the trigger to scope the seek's guard to its chunk (doc/README.porting.md)"
+	# Q4. A cold lookup made while the file's inode chain sync is held
+	# between the masters reruns under the file's order and answers, with
+	# its rerun delta and its wait. With the order out it fails EIO, so the
+	# lookup met the held window.
+	x=$(vote q40); s=$(vf q40 exit); e=$(vf q40 eio); r=$(vf q40 reruns); m=$(vf q40 ms)
+	[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null
+	check "Q4 a cold lookup beside the file's chain sync held between the masters reruns under the order and answers" $? "${x:-no line} (want exit 0, eio 0, reruns at least 1, ms at least $((QGAP - QDELAY)))"
+	x=$(vote q41); e=$(vf q41 eio)
+	[ "${e:-0}" -ge 1 ] 2>/dev/null
+	check "Q4 with xop_order_off the lookup fails EIO in the held window, so it met it" $? "${x:-no line}"
+	# Q5. An unlink in the same window holds the file's order with the
+	# directory's and waits the chain sync out before its first element
+	# removes the name: exit 0, name gone, the inode absent or at nlinks 0
+	# on both volumes' media, beside a kept file the same dump shows at
+	# nlinks 1 (the reader's control). With the order out the unlink fails
+	# EIO after the name is gone on both masters, leaving the inode linked
+	# on media with no name: the orphan the order exists to prevent.
+	gone() {	# tag: 0 when the volume's media has no link to the inode
+		case $(vf q5$1 $2-f2) in -|0) return 0 ;; esac; return 1
+	}
+	x=$(vote q50); s=$(vf q50 exit); e=$(vf q50 eio); m=$(vf q50 ms); n=$(vf q50 named)
+	[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$n" = 0 ] && gone 0 a && gone 0 b &&
+	    [ "$(vf q50 a-keep)" = 1 ] && [ "$(vf q50 b-keep)" = 1 ]
+	check "Q5 an unlink beside the file's chain sync held between the masters waits it out and leaves no orphan on either volume" $? "${x:-no line} (want exit 0, eio 0, ms at least $((QGAP - QDELAY)), named 0, f2 - or 0 and keep 1 on both)"
+	x=$(vote q51); e=$(vf q51 eio); n=$(vf q51 named)
+	[ "${e:-0}" -ge 1 ] 2>/dev/null && [ "$n" = 0 ] && { ! gone 1 a || ! gone 1 b; }
+	check "Q5 with xop_order_off the unlink fails EIO with the name gone and the inode still linked on media: the orphan" $? "${x:-no line} (want eio 1, named 0, f2 nlinks 1 on a volume)"
 	o=$(vote order-check | cut -d' ' -f1); oo=$(vf order-check off)
 	case $o in
 	absent|'') echo "  note  order_check not read: ${o:-no line}, a module or kernel without lockdep" ;;

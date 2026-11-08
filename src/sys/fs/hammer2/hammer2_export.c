@@ -74,7 +74,8 @@ static hammer2_inode_t *
 hammer2_vget(hammer2_pfs_t *pmp, hammer2_tid_t inum)
 {
 	hammer2_xop_lookup_t *xop;
-	hammer2_inode_t *ip;
+	hammer2_inode_t *ip, *tip = NULL;
+	bool guarded = false;	/* Linux */
 	int error;
 
 	ip = hammer2_inode_lookup(pmp, inum);
@@ -84,10 +85,20 @@ hammer2_vget(hammer2_pfs_t *pmp, hammer2_tid_t inum)
 		return (ip);
 	}
 
+again:
 	xop = hammer2_xop_alloc(pmp->iroot, 0);
 	xop->lhc = inum;
 	hammer2_xop_start(&xop->head, &hammer2_lookup_desc);
-	error = hammer2_error_to_errno(hammer2_xop_collect(&xop->head, 0));
+	error = hammer2_xop_collect(&xop->head, 0);
+	/* Linux: a change beside the call, once more under its order (hammer2.h) */
+	if (error == HAMMER2_ERROR_EDEADLK && !guarded) {
+		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+		tip = hammer2_xop_rerun_begin(pmp, inum);
+		guarded = true;
+		goto again;
+	}
+	hammer2_xop_rerun_end(tip);	/* Linux: before the target is locked */
+	error = hammer2_error_to_errno(error);
 	if (error == 0) {
 		ip = hammer2_inode_get(pmp, &xop->head, -1, -1);
 	} else {

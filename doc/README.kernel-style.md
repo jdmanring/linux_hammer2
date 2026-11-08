@@ -372,7 +372,7 @@ new.
 depth argument, `hammer2_xops.c:1586`, is a continuation-line indent; the
 debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
 `return (x);`; and the chunked scan's fatal-signal check returns a positive
-`EINTR` at `hammer2_vnops.c:1647`, which is the module's errno convention
+`EINTR` at `hammer2_vnops.c:1676`, which is the module's errno convention
 and is negated at the VFS boundary like every other. No category is new.
 
 1,659 to 1,661 with the seek's vote on several MASTERs
@@ -406,6 +406,12 @@ unnamed arguments and one comes in with one, `hammer2_xop_order_init()`;
 the two functions go with two `return (x);`; and the declaration of the
 debug build's `xop_gap_desc` string parameter adds one continuation
 indent. No category is new.
+
+1,663 to 1,668 when the lookups began to rerun by their target
+(`doc/README.porting.md`, the same section): the three prototypes added to
+`hammer2.h`, `hammer2_xop_order_release()`, `hammer2_xop_rerun_begin()` and
+`hammer2_xop_rerun_end()`, carry four unnamed arguments between them, and
+`hammer2_xop_rerun_begin()` returns `(ip)`. No category is new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

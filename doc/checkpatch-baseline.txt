@@ -280,6 +280,11 @@
 # takes two `return (x);` away; the xop_gap_desc parameter's declaration
 # adds one continuation indent. No category is new. See
 # README.kernel-style.md.
+# 1,663 to 1,668: the lookups rerun by their target. The three prototypes
+# added to hammer2.h, hammer2_xop_order_release(), hammer2_xop_rerun_begin()
+# and hammer2_xop_rerun_end(), carry four unnamed arguments, and
+# hammer2_xop_rerun_begin() returns `(ip)`. No category is new. See
+# README.kernel-style.md.
 22 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -305,12 +310,12 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-517 function definition argument 'X' should also have an identifier name
+521 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 248 please, no spaces at the start of a line
 86 quoted string split across lines
-399 return is not a function, parentheses are not required
+400 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)

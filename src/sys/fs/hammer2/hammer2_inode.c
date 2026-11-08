@@ -2041,9 +2041,10 @@ hammer2_checkpath(const hammer2_inode_t *dip, hammer2_inode_t *tdip)
 {
 	hammer2_xop_lookup_t *xop;
 	hammer2_chain_t *chain;
-	hammer2_inode_t *ip;
+	hammer2_inode_t *ip, *aip;	/* Linux: aip */
 	const hammer2_inode_data_t *ipdata;
 	hammer2_tid_t inum = tdip->meta.inum;
+	bool guarded;	/* Linux */
 	int error;
 
 	KKASSERT(dip != tdip);
@@ -2084,10 +2085,22 @@ hammer2_checkpath(const hammer2_inode_t *dip, hammer2_inode_t *tdip)
 				return (EIO);
 			}
 		} else {
+			guarded = false;	/* Linux */
+			aip = NULL;
+again:
 			xop = hammer2_xop_alloc(dip->pmp->iroot, 0);
 			xop->lhc = inum;
 			hammer2_xop_start(&xop->head, &hammer2_lookup_desc);
 			error = hammer2_xop_collect(&xop->head, 0);
+			/* Linux: once more under the ancestor's order (hammer2.h) */
+			if (error == HAMMER2_ERROR_EDEADLK && !guarded) {
+				hammer2_xop_retire(&xop->head,
+				    HAMMER2_XOPMASK_VOP);
+				aip = hammer2_xop_rerun_begin(dip->pmp, inum);
+				guarded = true;
+				goto again;
+			}
+			hammer2_xop_rerun_end(aip);	/* Linux */
 			if (error == 0) {
 				ipdata = &hammer2_xop_gdata(&xop->head)->ipdata;
 				if (dip->meta.inum == ipdata->meta.iparent) {

@@ -420,7 +420,8 @@ hammer2_xop_order_init(hammer2_inode_t *ip)
 static void
 hammer2_xop_order_take(hammer2_xop_head_t *xop)
 {
-	hammer2_inode_t *ips[] = { xop->ip1, xop->ip2, xop->ip3, xop->ip4 };
+	hammer2_inode_t *ips[] = { xop->ip1, xop->ip2, xop->ip3, xop->ip4,
+	    xop->order_ip };
 	hammer2_inode_t *ip;
 	int i, j, n = 0;
 
@@ -444,7 +445,7 @@ hammer2_xop_order_take(hammer2_xop_head_t *xop)
 	xop->norder = n;
 }
 
-static void
+void
 hammer2_xop_order_release(hammer2_xop_head_t *xop)
 {
 	if (xop->norder == 0)
@@ -452,6 +453,36 @@ hammer2_xop_order_release(hammer2_xop_head_t *xop)
 	while (xop->norder > 0)
 		up_write(&xop->order[--xop->norder]->xop_sem);
 	hammer2_nofs_leave();
+}
+
+/*
+ * Linux: the rerun of a lookup whose collect failed EDEADLK on an inode's
+ * chain (hammer2.h).  The inode is found by number in the hash, which an
+ * inode with a local XOP in flight does not leave (a frontend holding it
+ * holds a reference), and its read side is taken.  A miss means no local
+ * XOP on it is in flight, and the rerun runs unguarded.  The caller holds
+ * no inode lock it would need after this; hammer2_xop_rerun_end() is
+ * called before hammer2_inode_get() locks the target.
+ */
+hammer2_inode_t *
+hammer2_xop_rerun_begin(hammer2_pfs_t *pmp, hammer2_tid_t inum)
+{
+	hammer2_inode_t *ip;
+
+	HAMMER2_XOP_RERUN();
+	ip = hammer2_inode_lookup(pmp, inum);
+	if (ip)
+		down_read(&ip->xop_sem);
+	return (ip);
+}
+
+void
+hammer2_xop_rerun_end(hammer2_inode_t *ip)
+{
+	if (ip == NULL)
+		return;
+	up_read(&ip->xop_sem);
+	hammer2_inode_drop(ip);
 }
 
 #ifdef HAMMER2_INVARIANTS
@@ -541,7 +572,8 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 	 * thread and the unmount behind it.
 	 *
 	 * Linux: the order is taken first, before the dependencies, and
-	 * released after the element loop (hammer2.h).  With xop_order_off
+	 * released after the element loop (hammer2.h), or by the frontend
+	 * after its collect where it asked (HAMMER2_XOP_ORDERHOLD).  With xop_order_off
 	 * set, hammer2_xop_withdrawn counts the ordered XOP for the length
 	 * of its loop instead, which is what order_check reads.
 	 * DEFER(a guarded read failing EIO on a PFS with a remote MASTER mounted read-write, or P8's lease step):
@@ -621,7 +653,8 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 			hammer2_xop_retire(xop, mask);
 		}
 	}
-	hammer2_xop_order_release(xop);	/* Linux */
+	if (!(xop->flags & HAMMER2_XOP_ORDERHOLD))	/* Linux */
+		hammer2_xop_order_release(xop);
 	if (withdrawn)
 		HAMMER2_XOP_WITHDRAW(-1);	/* Linux */
 }

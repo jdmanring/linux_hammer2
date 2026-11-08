@@ -1723,7 +1723,8 @@ collapsing an emptied indirect block beneath it modifies the chain at
 that block's transaction id (`hammer2_chain_indirect_maintenance()`), so
 a lookup of the inode meets it at two tids between the masters' flushes.
 The guarded readers compare data leaves, whose tids a flush does not
-move; the lookups compare the inode chain and do not rerun yet. A
+move; the lookups compare the inode chain and rerun by their target
+(below). A
 flush of the PFS root is not ordered, whichever caller makes it: the
 root's chain is keyed by its name and no reader compares it, and the
 sync's last flush of the root begins the super-root's flush transaction
@@ -1763,13 +1764,36 @@ outside any order, master or not: a lookup can meet that between the
 two elements' passes, which predates the order and is not read yet. A peer's write arriving through the server path
 (`hammer2_remote.c`) takes no order, which is P8's lease step.
 
-The lookups by name and by inode number do not run again under the order
-yet. The inode chain sync holds its inode's order across its elements,
-but a lookup holds only the directory and reads the target's inode chain,
-so from the code a cold lookup between two of them still meets that
-chain at two tids and fails EIO on a healthy cluster; an insert that
-creates a file's first indirect block reaches the same state through the
-strategy write. No run has made either.
+The lookups rerun by their target. The inode chain sync holds its
+inode's order across its elements, but a lookup holds only the directory
+and reads the target's inode chain, so a cold lookup between two of them
+met that chain at two tids and failed EIO on a healthy cluster. On
+EDEADLK the lookup by name (`hammer2_vop_lookup()`), by inode number
+(`hammer2_vget()`) and the ancestor walk a rename makes
+(`hammer2_checkpath()`) take the read side of the target's order through
+`hammer2_xop_rerun_begin()` in `hammer2_admin.c`, which finds the inode by
+number in the hash, and run the XOP once more; the target of a lookup by
+name is the inode number the failed collect stopped at. A target not yet
+in the hash has no order to wait on and the EDEADLK stands. The unlink
+holds its target's order with the directory's across its collect
+(`HAMMER2_XOP_ORDERHOLD`, `order_ip`): its first element removes the name
+and then feeds the target's inode chain, so a chain sync between the two
+elements or during the collect failed the collect with the name gone and
+the inode linked with no name. The unlink is the only taker of two orders
+that are not both XOP operands, and the release moves ahead of
+`hammer2_inode_get()`, which locks the target. `cluster-quorum.sh` holds a
+chain sync between the masters and requires a cold lookup and an unlink
+in that window to wait it out and answer, the lookup with a rerun
+counted, the unlink leaving the inode absent or at zero links on both
+volumes' media beside a kept file at one link; with the order out the
+lookup fails EIO. The unlink's control is the orphan: the name gone and
+the inode still linked on a volume. In the first run (seq19) that control
+did not fire because `rm` stats its argument before `unlinkat`, and
+`getattr` takes the inode lock shared, which the chain sync held
+exclusive through the window, so the unlink started after it; the harness
+calls `unlink(1)` since, and the record names the run that first fired
+it. An insert that creates a file's first indirect block reaches the
+two-tid state through the strategy write; no run has made it.
 
 The rule is the same for every XOP. A read, the lookup by name or by
 inode number, `bmap`, a listing, the name-collision scan a create and a

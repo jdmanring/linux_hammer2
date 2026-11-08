@@ -540,7 +540,12 @@ struct hammer2_inode {
  * address order, across its element loop.  A frontend collect that fails
  * EDEADLK runs once more holding the inode's read side, inode lock first
  * and xop_sem second, and an EDEADLK under it is a disagreement on media.
- * Upstream steps over the key.
+ * The read, bmap and the seek's scan hold their own file's; a lookup, by
+ * name or by number, holds its target's, found by number in the hash
+ * (hammer2_xop_rerun_begin()), where an inode with a local XOP in flight
+ * stays.  An unlink names its target in order_ip and holds the order
+ * through its collect (HAMMER2_XOP_ORDERHOLD), since its first element
+ * has already removed the name.  Upstream steps over the key.
  */
 
 /*
@@ -678,7 +683,8 @@ struct hammer2_xop_head {
 	char			*name2;
 	size_t			name2_len;
 	void			*scratch;
-	hammer2_inode_t		*order[4];	/* Linux: xop_sem held, by address */
+	hammer2_inode_t		*order_ip;	/* Linux: ordered, no dependency */
+	hammer2_inode_t		*order[5];	/* Linux: xop_sem held, by address */
 	int			norder;		/* Linux */
 };
 
@@ -904,6 +910,7 @@ union hammer2_xop {
 #define HAMMER2_XOP_INODE_STOP		0x00000004
 #define HAMMER2_XOP_VOLHDR		0x00000008
 #define HAMMER2_XOP_FSSYNC		0x00000010
+#define HAMMER2_XOP_ORDERHOLD		0x00000020	/* Linux: frontend releases */
 
 /*
  * Block device management structure.
@@ -1386,6 +1393,9 @@ void hammer2_xop_start(hammer2_xop_head_t *, hammer2_xop_desc_t *);
 void hammer2_xop_start_except(hammer2_xop_head_t *, hammer2_xop_desc_t *, int);
 void hammer2_xop_retire(hammer2_xop_head_t *, uint32_t);
 void hammer2_xop_order_init(hammer2_inode_t *);	/* Linux */
+void hammer2_xop_order_release(hammer2_xop_head_t *);	/* Linux */
+hammer2_inode_t *hammer2_xop_rerun_begin(hammer2_pfs_t *, hammer2_tid_t);	/* Linux */
+void hammer2_xop_rerun_end(hammer2_inode_t *);	/* Linux */
 int hammer2_xop_feed(hammer2_xop_head_t *, hammer2_chain_t *, int, int);
 int hammer2_xop_collect(hammer2_xop_head_t *, int);
 
