@@ -388,9 +388,10 @@ race(const char *path)
  *
  * A trailing count of milliseconds delays the call by that much after the
  * fork, so it can land inside the writeback rather than before it: on two
- * MASTERs with the module's write_gap_ms holding the write between its
+ * MASTERs with the module's xop_gap_ms holding the write between its
  * elements, block 1 is then on the first master and not the second when
- * the tree is read (script/cluster-quorum.sh).
+ * the tree is read (script/cluster-quorum.sh).  seek-ms runs from before
+ * the fork, so it includes the delay.
  */
 static long
 mapped(int fd, long off)

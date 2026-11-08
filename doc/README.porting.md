@@ -1708,36 +1708,43 @@ hold data in. `cluster-quorum.sh` ends one master's scan on EIO
 requires SEEK_HOLE from 0 to fail EIO, and with the knob unset to answer
 0.
 
-A strategy write runs its elements one after another on the writeback
-thread with no inode lock across them, so a call beside a writeback can
-find a block on one master and not yet on the next, or a removed one still
-on the next. That is not a disagreement. The inode counts the strategy
-writes begun on it and completed, and the read, `bmap` and the scan the
-seek and the map fall back to sample the count before their XOP; on
-EDEADLK, if a write was in flight then or began since, the call waits for
-those writes and runs again, up to eight times (`hammer2_write_wait()`). A
-disagreement no write ran beside fails. The count is per inode, so a write
-to another block also earns a run; the bound keeps a stream of writes from
-holding one call, and so a stream can still fail it: each run waits only
-for the writes begun at its check, the next block's write starts as soon
-as those complete, and the eight runs are one budget across the scan's
-chunks, so a healthy two-master SEEK_HOLE or FIEMAP beside a long
-writeback can fail EIO (the sixth review of N10.6, read from the code, not
-run). `cluster-quorum.sh` holds one write between its two masters with
-the debug build's `write_gap_ms` and requires a SEEK_HOLE and a FIEMAP
-made inside that window to answer, and the same calls with
-`write_wait_off` set, which refuses the wait, to fail EIO, so a pass shows
-the window was met. The read's and `bmap`'s waits are the same code and
-have not been run in the window.
+An XOP runs its elements one after another on the calling thread, so a
+call beside one that changes a tree can find the change on one master and
+not yet on the next, or a removed block still on the next. That is not a
+disagreement. Each inode carries a read-write semaphore, the order
+(`xop_sem`, `hammer2.h`). An XOP whose descriptor is declared with
+`H2XOPDESCRIPTOR_ORDERED()` in `hammer2_admin.c`, which marks the XOPs
+that change a tree, the strategy write and the inode chain sync among
+them, holds the order for write on every inode it names across its
+element loop, taken in address order before the XOP dependency and
+released after the loop. The read, `bmap` and the scan the seek and the
+map fall back to run once more on EDEADLK, with the inode lock shared and
+then the order's read side, which waits out the ordered XOP in flight on
+that file and holds off the next; an EDEADLK under it is a disagreement
+on media and fails. Each chunk of the scan has a rerun of its own, so the
+chunks of a long file under writeback share no count, where 1.0.93's
+eight runs were one budget for the whole scan. The read side sleeps
+uninterruptibly, so a cycle would show as a hung-task report with its
+stacks. `cluster-quorum.sh` holds a strategy write between its two masters
+with the debug build's `xop_gap_ms` and requires a SEEK_HOLE and a FIEMAP
+made in that window to rerun and answer, a read, a FIBMAP and the read
+`hammer2_write_begin()` makes to do the same, and a SEEK_HOLE and FIEMAP
+loop beside a 256 MiB writeback to answer every call, each with the order
+taken out (`xop_order_off`) as its control. All of this is read from the
+code until that run: no run has exercised the order. In a debug build on
+a kernel with lockdep, `order_check` counts a modify of a hashed inode's
+chain at a nonzero transaction id made without that inode's order held
+for write, which would show the order missing a change it was meant to
+cover. A peer's write arriving through the server path
+(`hammer2_remote.c`) takes no order, which is P8's lease step.
 
-Nor does the count reach the other modifying XOPs. The inode chain sync
-(`hammer2_inode_chain_sync()`) changes the inode chain's tid on one master
-and then the next under the target's lock alone, and a lookup by name or
-inode number holds only the directory, so from the code a cold lookup
-between the two elements meets the inode chain at two tids and fails EIO
-on a healthy cluster; an insert that creates a file's first indirect block
-reaches the same state through the strategy write, which counts but which
-no lookup samples. No run has made either.
+The lookups by name and by inode number do not run again under the order
+yet. The inode chain sync holds its inode's order across its elements,
+but a lookup holds only the directory and reads the target's inode chain,
+so from the code a cold lookup between two of them still meets that
+chain at two tids and fails EIO on a healthy cluster; an insert that
+creates a file's first indirect block reaches the same state through the
+strategy write. No run has made either.
 
 The rule is the same for every XOP. A read, the lookup by name or by
 inode number, `bmap`, a listing, the name-collision scan a create and a

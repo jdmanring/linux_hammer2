@@ -476,10 +476,12 @@ check "hammer2_vnops.c: invariants off"     pass src/sys/fs/hammer2/hammer2_vnop
 # The debug build's blocks, which the fleet's build was the only compiler
 # of: every .c carrying HAMMER2_LOCKDEBUG is compiled with it here, and a
 # file that gains a block with no line below fails the population check.
+check "hammer2_admin.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_admin.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_chain.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_chain.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_flush.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_flush.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_freemap.c: lockdebug"  pass src/sys/fs/hammer2/hammer2_freemap.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_iocom.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_iocom.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
+check "hammer2_inode.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_inode.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_ioctl.c: lockdebug"    pass src/sys/fs/hammer2/hammer2_ioctl.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED
 check "hammer2_strategy.c: lockdebug" pass src/sys/fs/hammer2/hammer2_strategy.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS
 check "hammer2_synchro.c: lockdebug"  pass src/sys/fs/hammer2/hammer2_synchro.c -DHAMMER2_LOCKDEBUG -DHAMMER2_INVARIANTS $CARRIED

@@ -443,6 +443,7 @@ hammer2_remote_handle(hammer2_pfs_t *pmp, hammer2_chain_t *chain, int clindex)
 	hammer2_mtx_init_recurse(&ip->lock, "h2ip");
 	hammer2_inode_lockdep_nest(&ip->lock);
 	hammer2_mtx_init(&ip->truncate_lock, "h2ip_tr");
+	hammer2_xop_order_init(ip);
 	TAILQ_INIT(&ip->depend_static.sideq);
 
 	hammer2_chain_ref(chain);

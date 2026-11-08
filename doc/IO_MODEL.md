@@ -225,7 +225,7 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:1262` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:454` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:236,254` | freemap leaf and node geometry in the 64 KiB slot |
-| `hammer2.h:620` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
+| `hammer2.h:613` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
 Bootstrap, being this port's page-cache strategy, and a different
 strategy would meet the same format.

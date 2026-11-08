@@ -576,6 +576,63 @@ hammer2_inode_lookup(hammer2_pfs_t *pmp, hammer2_tid_t inum)
 	return (ip);
 }
 
+#if defined(HAMMER2_LOCKDEBUG) && defined(CONFIG_LOCKDEP)
+/*
+ * Linux: the falsifier of the order (hammer2.h).  A modify at a nonzero
+ * mtid of an inode chain of a user PFS, whose inode is in the hash, must
+ * be made by a task holding that inode's xop_sem for write; order_check
+ * counts the ones that were not, and the first warns.  The PFS root's
+ * chain is keyed by its name in the super-root and is not looked up,
+ * since hammer2_inode_chain_ins() and _des() change it under the
+ * inserted inode's order alone.  A chain with no parent is one no
+ * collect can reach: hammer2_xop_inode_create_det() modifies the new
+ * inode's chain detached, with the new inode hashed and the directory's
+ * order held.  The PFS's synchronization threads are not counted: they
+ * modify the element their pass copies into directly, outside any XOP
+ * (hammer2_synchro.c), which is a slave or a master the quorum already
+ * outvotes, and a pass writes nothing where the masters disagree.  The
+ * hash is walked under its spin with no reference taken, so the check
+ * drops nothing in the middle of a modify.  With
+ * lockdep off after a report, lockdep_is_held_type() answers that the
+ * lock is held, and the count stops.
+ */
+static unsigned int hammer2_order_check;
+module_param_named(order_check, hammer2_order_check, uint, 0444);
+
+void
+hammer2_inode_order_check(hammer2_chain_t *chain, hammer2_tid_t mtid)
+{
+	hammer2_pfs_t *pmp = chain->pmp;
+	hammer2_inum_hash_t *hash;
+	hammer2_inode_t *ip;
+	hammer2_key_t inum = chain->bref.key;
+	int held = 1;
+	int i;
+
+	if (mtid == 0 || chain->bref.type != HAMMER2_BREF_TYPE_INODE ||
+	    pmp == NULL || pmp->spmp_hmp != NULL || chain->parent == NULL ||
+	    (chain->bref.flags & HAMMER2_BREF_FLAG_PFSROOT))
+		return;
+	for (i = 0; i < HAMMER2_MAXCLUSTER; ++i)
+		if (pmp->sync_thrs[i].td == current)
+			return;
+	hash = inumhash(pmp, inum);
+	hammer2_spin_sh(&hash->spin);
+	for (ip = hash->base; ip; ip = ip->next) {
+		if (ip->meta.inum == inum) {
+			held = lockdep_is_held_type(&ip->xop_sem, 0);
+			break;
+		}
+	}
+	hammer2_spin_unsh(&hash->spin);
+	if (held)
+		return;
+	__atomic_fetch_add(&hammer2_order_check, 1, __ATOMIC_RELAXED);
+	WARN_ONCE(1, "hammer2: inode %016llx modified at %016llx without its order\n",
+	    (unsigned long long)inum, (unsigned long long)mtid);
+}
+#endif
+
 /*
  * Adding a ref to an inode is only legal if the inode already has at least
  * one ref.
@@ -1121,6 +1178,7 @@ again:
 	hammer2_mtx_init_recurse(&nip->lock, "h2ip");
 	hammer2_inode_lockdep_nest(&nip->lock);	/* XXX Linux: its level */
 	hammer2_mtx_init(&nip->truncate_lock, "h2ip_tr");
+	hammer2_xop_order_init(nip);	/* Linux */
 	hammer2_mtx_ex_fresh(&nip->lock);	/* XXX Linux: no order recorded */
 	TAILQ_INIT(&nip->depend_static.sideq);
 	/* XXX Linux: FreeBSD's cluster_init_vn() initializes the clustered

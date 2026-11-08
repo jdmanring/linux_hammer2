@@ -1563,12 +1563,13 @@ hammer2_bmap_lbn(struct inode *inode, sector_t lbn, hammer2_off_t *poff)
 {
 	hammer2_inode_t *ip = VTOI(inode);
 	hammer2_xop_bmap_t *xop;
-	unsigned int done;
-	int cerror, tries = 0;
+	bool guarded = false;
+	int cerror;
 
 again:
-	done = hammer2_write_sample(ip);
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+	if (guarded)
+		down_read(&ip->xop_sem);
 	xop = hammer2_xop_alloc(ip, 0);
 	xop->lbn = lbn;
 	hammer2_xop_start(&xop->head, &hammer2_bmap_desc);
@@ -1576,10 +1577,15 @@ again:
 	if (cerror == 0)
 		*poff = hammer2_bmap_offset(&xop->head.cluster, xop->offset);
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	if (guarded)
+		up_read(&ip->xop_sem);
 	hammer2_inode_unlock(ip);
-	if (cerror == HAMMER2_ERROR_EDEADLK &&
-	    hammer2_write_wait(ip, done, &tries))
+	/* a change beside the call: once more under the order (hammer2.h) */
+	if (cerror == HAMMER2_ERROR_EDEADLK && !guarded) {
+		guarded = true;
+		HAMMER2_XOP_RERUN();
 		goto again;
+	}
 
 	return (hammer2_error_to_errno(cerror));
 }
@@ -1629,9 +1635,8 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 	hammer2_blockref_t *bref;
 	hammer2_key_t cur = r->key_beg, end, next, chunk = HAMMER2_SEEK_CHUNK;
 	hammer2_key_t key0;
-	unsigned int done;
-	bool held;
-	int error, n0, tries = 0;
+	bool held, guarded = false;
+	int error, n0;
 
 	r->key = r->key_beg;
 	r->found = 0;
@@ -1644,8 +1649,9 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 		held = false;
 		key0 = r->key;
 		n0 = r->n;
-		done = hammer2_write_sample(ip);
 		hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+		if (guarded)
+			down_read(&ip->xop_sem);
 		sxop = hammer2_xop_alloc(ip, 0);
 		sxop->key_beg = cur;
 		sxop->key_end = end;
@@ -1697,14 +1703,23 @@ hammer2_seek_scanall(hammer2_inode_t *ip, struct hammer2_seek_req *r)
 		    sxop->head.collect_key - 1 > r->key)
 			error = 0;
 		hammer2_xop_retire(&sxop->head, HAMMER2_XOPMASK_VOP);
+		if (guarded)
+			up_read(&ip->xop_sem);
 		hammer2_inode_unlock(ip);
-		/* a write beside the chunk: run it again (hammer2_write_wait()) */
-		if (error == HAMMER2_ERROR_EDEADLK &&
-		    hammer2_write_wait(ip, done, &tries)) {
+		/*
+		 * A change beside the chunk: the chunk once more under the
+		 * order (hammer2.h), from its entry state.  Each chunk has a
+		 * rerun of its own, so the chunks of a long file under
+		 * writeback share no count.
+		 */
+		if (error == HAMMER2_ERROR_EDEADLK && !guarded) {
+			guarded = true;
+			HAMMER2_XOP_RERUN();
 			r->key = key0;
 			r->n = n0;
 			continue;
 		}
+		guarded = false;
 		if (error != 0 || r->found || end == r->key_end ||
 		    (r->mode == HAMMER2_SEEK_MODE_HOLE && r->key <= end) ||
 		    (r->mode == HAMMER2_SEEK_MODE_MAP && r->n == r->max))
@@ -2684,47 +2699,6 @@ module_param_named(write_except, hammer2_write_except, int, 0644);
 #define HAMMER2_WRITE_EXCEPT	(-1)
 #endif
 
-/*
- * Linux: what hammer2.h says of wr_begun and wr_done.  The debug build's
- * write_waits counts the runs hammer2_write_wait() has granted, and
- * write_wait_off, set, refuses them, which is the control for a test that
- * holds the window open with write_gap_ms (hammer2_strategy.c).
- */
-#define HAMMER2_WRITE_RETRIES	8
-#if defined(HAMMER2_LOCKDEBUG)
-static unsigned int hammer2_write_waits;
-module_param_named(write_waits, hammer2_write_waits, uint, 0444);
-static unsigned int hammer2_write_wait_off;
-module_param_named(write_wait_off, hammer2_write_wait_off, uint, 0644);
-#endif
-
-unsigned int
-hammer2_write_sample(hammer2_inode_t *ip)
-{
-	unsigned int done = atomic_read(&ip->wr_done);
-
-	smp_mb();	/* the sample before the XOP's chain reads */
-	return (done);
-}
-
-bool
-hammer2_write_wait(hammer2_inode_t *ip, unsigned int done, int *tries)
-{
-	unsigned int begun;
-
-	smp_mb();	/* the XOP's chain reads before the count */
-	begun = atomic_read(&ip->wr_begun);
-	if (begun == done || ++*tries > HAMMER2_WRITE_RETRIES)
-		return (false);
-#if defined(HAMMER2_LOCKDEBUG)
-	if (READ_ONCE(hammer2_write_wait_off))
-		return (false);
-	WRITE_ONCE(hammer2_write_waits, hammer2_write_waits + 1);
-#endif
-	return (wait_var_event_killable(&ip->wr_done,
-	    (int)((unsigned int)atomic_read(&ip->wr_done) - begun) >= 0) == 0);
-}
-
 static int
 hammer2_writepages(struct address_space *mapping,
     struct writeback_control *wbc)
@@ -2752,14 +2726,9 @@ hammer2_writepages(struct address_space *mapping,
 		xop->folio = folio;
 		xop->siblings = &siblings;
 		xop->lbase = folio_pos(folio);
-		atomic_inc(&ip->wr_begun);	/* Linux: hammer2_write_wait() */
-		smp_mb__after_atomic();	/* the count before any element writes */
+		/* the descriptor takes the order across the elements */
 		hammer2_xop_start_except(&xop->head,
 		    &hammer2_strategy_write_desc, HAMMER2_WRITE_EXCEPT);
-		smp_mb__before_atomic();	/* every element has written */
-		atomic_inc(&ip->wr_done);
-		smp_mb__after_atomic();	/* the count before the waiters' test */
-		wake_up_var(&ip->wr_done);
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 		folio_batch_release(&siblings);
 		error = 0;

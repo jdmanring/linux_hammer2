@@ -457,12 +457,13 @@ hammer2_read_folio(struct file *file __maybe_unused, struct folio *folio)
 	hammer2_inode_t *ip = VTOI(folio->mapping->host);
 	hammer2_chain_t *focus;
 	const char *data;
-	unsigned int done;
-	int cerror, error, tries = 0;
+	bool guarded = false;	/* Linux: the rerun under the order */
+	int cerror, error;
 
 again:
-	done = hammer2_write_sample(ip);	/* Linux */
 	hammer2_inode_lock(ip, HAMMER2_RESOLVE_SHARED);
+	if (guarded)
+		down_read(&ip->xop_sem);	/* Linux */
 	xop = hammer2_xop_alloc(ip, HAMMER2_XOP_STRATEGY);
 	xop->lbase = folio_pos(folio);
 	xop->folio = folio;
@@ -509,11 +510,19 @@ again:
 		}
 	}
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	if (guarded)
+		up_read(&ip->xop_sem);	/* Linux */
 	hammer2_inode_unlock(ip);
-	/* Linux: a write beside the read, not a disagreement on media */
-	if (cerror == HAMMER2_ERROR_EDEADLK &&
-	    hammer2_write_wait(ip, done, &tries))
+	/*
+	 * Linux: a write beside the read, not a disagreement on media, is
+	 * waited out by running once more under the order's read side
+	 * (hammer2.h); an EDEADLK under it is final.
+	 */
+	if (cerror == HAMMER2_ERROR_EDEADLK && !guarded) {
+		guarded = true;
+		HAMMER2_XOP_RERUN();
 		goto again;
+	}
 
 	/*
 	 * Linux: the block is copied whole and a file's last block can
@@ -1465,17 +1474,6 @@ out:
  * starts it, one folio per XOP, and reads back what it fed the
  * mapping's error.
  */
-#if defined(HAMMER2_LOCKDEBUG)
-/*
- * Linux: the debug build's write_gap_ms sleeps before each element of a
- * strategy write after the first, so a test can hold open the window in
- * which a block is on one master and not yet on the next
- * (hammer2_write_wait(), script/cluster-quorum.sh).
- */
-static unsigned int hammer2_write_gap_ms;
-module_param_named(write_gap_ms, hammer2_write_gap_ms, uint, 0644);
-#endif
-
 void
 hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 {
@@ -1490,11 +1488,6 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 	uint64_t before = 0;	/* Linux: the folio's hash around the read */
 	int error, lblksize, pblksize;
 
-#if defined(HAMMER2_LOCKDEBUG)
-	if (READ_ONCE(hammer2_write_gap_ms) &&
-	    (xop->head.chk_mask & ((1U << clindex) - 1)))
-		msleep(READ_ONCE(hammer2_write_gap_ms));	/* Linux */
-#endif
 	lblksize = hammer2_calc_logical(ip, lbase, &lbase, NULL);
 	pblksize = hammer2_calc_physical(ip, lbase);
 	KKASSERT(lblksize <= MAXPHYS);

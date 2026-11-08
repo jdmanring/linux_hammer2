@@ -259,7 +259,7 @@ hits, read by line number. No category is new.
 
 1,600 to 1,602 with the refusal of any mount of a pass's source
 snapshot. One more `return (x);`, in `hammer2_remote_is_source()`
-(`hammer2_remote.c:2779`), the same form checkpatch reads at
+(`hammer2_remote.c:2780`), the same form checkpatch reads at
 `hammer2_remote_has_slot()`'s beside it, and one more unnamed prototype
 argument, its declaration in `hammer2.h`. No category is new.
 
@@ -372,7 +372,7 @@ new.
 depth argument, `hammer2_xops.c:1586`, is a continuation-line indent; the
 debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
 `return (x);`; and the chunked scan's fatal-signal check returns a positive
-`EINTR` at `hammer2_vnops.c:1642`, which is the module's errno convention
+`EINTR` at `hammer2_vnops.c:1647`, which is the module's errno convention
 and is negated at the VFS boundary like every other. No category is new.
 
 1,659 to 1,661 with the seek's vote on several MASTERs
@@ -399,6 +399,13 @@ prototypes of `hammer2_write_sample()` and `hammer2_write_wait()` in
 the two functions net one more `return (x);`. Each memory barrier they
 and `hammer2_writepages()` add carries its comment, which checkpatch
 asks for. No category is new.
+
+1,667 to 1,663 when the order replaced that count (`doc/README.porting.md`,
+"A key the masters disagree on"): the two prototypes go with their four
+unnamed arguments and one comes in with one, `hammer2_xop_order_init()`;
+the two functions go with two `return (x);`; and the declaration of the
+debug build's `xop_gap_desc` string parameter adds one continuation
+indent. No category is new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded

@@ -43,26 +43,41 @@
 		.id = #label					\
 	}
 
+/*
+ * XXX Linux: a descriptor declared with this one takes the order, xop_sem
+ * for write on every inode the XOP names, across its element loop (see
+ * hammer2.h and hammer2_xop_start_except()).  These are the XOPs that
+ * change a tree.  HAMMER2_XOP_MODIFYING is not the selector: scanlhc,
+ * ipcluster and the sync thread's scanall carry it and change nothing,
+ * and inode_flush moves no modify_tid, passing an mtid of 0.
+ */
+#define H2XOPDESCRIPTOR_ORDERED(label)				\
+	hammer2_xop_desc_t hammer2_##label##_desc = {		\
+		.storage_func = hammer2_xop_##label,		\
+		.id = #label,					\
+		.ordered = 1					\
+	}
+
 H2XOPDESCRIPTOR(ipcluster);
 H2XOPDESCRIPTOR(readdir);
 H2XOPDESCRIPTOR(nresolve);
-H2XOPDESCRIPTOR(unlink);
-H2XOPDESCRIPTOR(nrename);
+H2XOPDESCRIPTOR_ORDERED(unlink);
+H2XOPDESCRIPTOR_ORDERED(nrename);
 H2XOPDESCRIPTOR(scanlhc);
 H2XOPDESCRIPTOR(scanall);
 H2XOPDESCRIPTOR(lookup);
-H2XOPDESCRIPTOR(delete);
-H2XOPDESCRIPTOR(inode_mkdirent);
-H2XOPDESCRIPTOR(inode_create);
-H2XOPDESCRIPTOR(inode_create_det);
-H2XOPDESCRIPTOR(inode_create_ins);
-H2XOPDESCRIPTOR(inode_destroy);
-H2XOPDESCRIPTOR(inode_chain_sync);
-H2XOPDESCRIPTOR(inode_unlinkall);
-H2XOPDESCRIPTOR(inode_connect);
+H2XOPDESCRIPTOR_ORDERED(delete);
+H2XOPDESCRIPTOR_ORDERED(inode_mkdirent);
+H2XOPDESCRIPTOR_ORDERED(inode_create);
+H2XOPDESCRIPTOR_ORDERED(inode_create_det);
+H2XOPDESCRIPTOR_ORDERED(inode_create_ins);
+H2XOPDESCRIPTOR_ORDERED(inode_destroy);
+H2XOPDESCRIPTOR_ORDERED(inode_chain_sync);
+H2XOPDESCRIPTOR_ORDERED(inode_unlinkall);
+H2XOPDESCRIPTOR_ORDERED(inode_connect);
 H2XOPDESCRIPTOR(inode_flush);
 H2XOPDESCRIPTOR(strategy_read);
-H2XOPDESCRIPTOR(strategy_write);
+H2XOPDESCRIPTOR_ORDERED(strategy_write);
 H2XOPDESCRIPTOR(bmap);
 H2XOPDESCRIPTOR(seek);		/* Linux */
 
@@ -342,6 +357,83 @@ hammer2_xop_unset_ipdep(hammer2_inode_t *ip)
 	hammer2_lk_unlock(mtx);
 }
 
+/*
+ * Linux: the order (hammer2.h).  The debug build's xop_order_off, set,
+ * takes nothing, which leaves a guarded rerun unprotected and is the
+ * control for a test that holds an ordered XOP open.  xop_gap_ms sleeps
+ * that long between the elements of the XOP whose descriptor id
+ * xop_gap_desc names ("strategy_write", "inode_chain_sync"), so the
+ * window in which a change is on one master and not yet the next is held
+ * where the XOP runs, with the order held across it.  xop_reruns counts
+ * the frontends' guarded reruns (script/cluster-quorum.sh).
+ */
+#if defined(HAMMER2_LOCKDEBUG)
+static unsigned int hammer2_xop_order_off;
+module_param_named(xop_order_off, hammer2_xop_order_off, uint, 0644);
+static unsigned int hammer2_xop_gap_ms;
+module_param_named(xop_gap_ms, hammer2_xop_gap_ms, uint, 0644);
+static char hammer2_xop_gap_desc[32];
+module_param_string(xop_gap_desc, hammer2_xop_gap_desc,
+    sizeof(hammer2_xop_gap_desc), 0644);
+unsigned int hammer2_xop_reruns;
+module_param_named(xop_reruns, hammer2_xop_reruns, uint, 0444);
+#define HAMMER2_XOP_ORDER_OFF	READ_ONCE(hammer2_xop_order_off)
+#else
+#define HAMMER2_XOP_ORDER_OFF	0
+#endif
+
+/* Linux: one init_rwsem() call site, so every inode's is one lockdep class. */
+void
+hammer2_xop_order_init(hammer2_inode_t *ip)
+{
+	init_rwsem(&ip->xop_sem);
+}
+
+/*
+ * Linux: xop_sem for write on every inode the XOP names, sorted by
+ * address with NULLs and duplicates dropped, each at its position as the
+ * lockdep subclass.  Lockdep records only that the subclasses ascend and
+ * cannot see an address-order violation; the sort makes one impossible.
+ * A held order is a NOFS scope, as every lock the shim takes is
+ * (hammer2_nofs_enter()): the strategy write holds it with no inode lock.
+ */
+static void
+hammer2_xop_order_take(hammer2_xop_head_t *xop)
+{
+	hammer2_inode_t *ips[] = { xop->ip1, xop->ip2, xop->ip3, xop->ip4 };
+	hammer2_inode_t *ip;
+	int i, j, n = 0;
+
+	BUILD_BUG_ON(ARRAY_SIZE(ips) > ARRAY_SIZE(xop->order));
+	for (i = 0; i < (int)ARRAY_SIZE(ips); ++i) {
+		ip = ips[i];
+		for (j = 0; ip != NULL && j < n; ++j)
+			if (xop->order[j] == ip)
+				ip = NULL;
+		if (ip == NULL)
+			continue;
+		for (j = n++; j > 0 &&
+		    (uintptr_t)xop->order[j - 1] > (uintptr_t)ip; --j)
+			xop->order[j] = xop->order[j - 1];
+		xop->order[j] = ip;
+	}
+	for (i = 0; i < n; ++i)
+		down_write_nested(&xop->order[i]->xop_sem, i);
+	if (n > 0)
+		hammer2_nofs_enter();
+	xop->norder = n;
+}
+
+static void
+hammer2_xop_order_release(hammer2_xop_head_t *xop)
+{
+	if (xop->norder == 0)
+		return;
+	while (xop->norder > 0)
+		up_write(&xop->order[--xop->norder]->xop_sem);
+	hammer2_nofs_leave();
+}
+
 #ifdef HAMMER2_INVARIANTS
 //#define XOP_ADMIN_DEBUG
 static __inline void
@@ -427,7 +519,18 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 	 * it for good, holding whatever the caller held.  The periodic sync
 	 * did so holding the PFS root exclusively, which wedged the sync
 	 * thread and the unmount behind it.
+	 *
+	 * Linux: the order is taken first, before the dependencies, and
+	 * released after the element loop (hammer2.h).  A caller that holds
+	 * it already passes HAMMER2_XOP_ORDERED.
+	 * DEFER(a guarded read failing EIO on a PFS with a remote MASTER mounted read-write, or P8's lease step):
+	 * a peer's write runs on a local element through the server path
+	 * (hammer2_remote.c), which calls the storage function directly and
+	 * takes no order, so a local reader can meet it between elements.
 	 */
+	if (desc->ordered && !(xop->flags & HAMMER2_XOP_ORDERED) &&
+	    !HAMMER2_XOP_ORDER_OFF)
+		hammer2_xop_order_take(xop);
 	if (!(xop->flags & HAMMER2_XOP_STRATEGY))
 		hammer2_xop_testset_ipdep(ip1);
 	if (xop->ip2)
@@ -473,6 +576,12 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 		mask = 1LLU << i;
 		if ((xop->chk_mask & mask) == 0)
 			continue;
+#if defined(HAMMER2_LOCKDEBUG)
+		if ((xop->chk_mask & (mask - 1)) &&	/* Linux: xop_gap_ms */
+		    READ_ONCE(hammer2_xop_gap_ms) &&
+		    sysfs_streq(hammer2_xop_gap_desc, desc->id))
+			msleep(READ_ONCE(hammer2_xop_gap_ms));
+#endif
 		atomic_set_32(&xop->run_mask, mask);
 
 		if (hammer2_xop_active(xop)) {
@@ -485,6 +594,7 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 			hammer2_xop_retire(xop, mask);
 		}
 	}
+	hammer2_xop_order_release(xop);	/* Linux */
 }
 
 /*
@@ -586,6 +696,9 @@ hammer2_xop_retire(hammer2_xop_head_t *xop, uint32_t mask)
 		}
 		mask &= ~(1U << i);
 	}
+
+	/* Linux: an order still held, while its inodes are referenced. */
+	hammer2_xop_order_release(xop);
 
 	/* The inode is only held at this point, simply drop it. */
 	if (xop->ip1) {

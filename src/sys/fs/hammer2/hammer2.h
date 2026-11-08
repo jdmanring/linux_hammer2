@@ -527,28 +527,21 @@ struct hammer2_inode {
 	unsigned int		flags;		/* for HAMMER2_INODE_xxx */
 	uint8_t			comp_heuristic;
 	int			ipdep_idx;
-	atomic_t		wr_begun;	/* Linux: hammer2_write_wait() */
-	atomic_t		wr_done;	/* Linux */
+	struct rw_semaphore	xop_sem;	/* Linux: the order, below */
 };
 
 /*
- * Linux: a strategy write runs its elements one after another on the
- * writeback thread (hammer2_xop_start_except()) and holds no inode lock
- * across them, so a frontend XOP beside it can find a new block on one
- * master and not yet on the next, or a removed one still on the next,
- * which hammer2_cluster_check() fails as a disagreement.  The frontend
- * reads wr_done before it starts its XOP (hammer2_write_sample()), and on
- * EDEADLK, with the XOP retired and the inode unlocked, asks
- * hammer2_write_wait() whether any write was in flight then or began
- * since.  If one was, it waits for those writes and runs the XOP again; a
- * disagreement no write ran beside is on media and fails.  The count is
- * per inode, so a write to another block also earns a run, and
- * HAMMER2_WRITE_RETRIES (hammer2_vnops.c) bounds the runs a stream of
- * writes can cost one call before the disagreement fails.  Upstream steps
- * over the key.
+ * Linux: the order.  The port runs an XOP's elements one after another
+ * on the calling thread (hammer2_xop_start_except()), so a frontend XOP
+ * beside one that changes a tree can find its change on one master and
+ * not yet on the next, which hammer2_cluster_check() fails as a
+ * disagreement.  An XOP whose descriptor is marked ordered
+ * (hammer2_admin.c) holds xop_sem for write on every inode it names, in
+ * address order, across its element loop.  A frontend collect that fails
+ * EDEADLK runs once more holding the inode's read side, inode lock first
+ * and xop_sem second, and an EDEADLK under it is a disagreement on media.
+ * Upstream steps over the key.
  */
-unsigned int hammer2_write_sample(hammer2_inode_t *);
-bool hammer2_write_wait(hammer2_inode_t *, unsigned int, int *);
 
 /*
  * MODIFIED	- Inode is in a modified state, ip->meta may have changes.
@@ -649,6 +642,7 @@ typedef void (*hammer2_xop_func_t)(union hammer2_xop *, void *, int);
 struct hammer2_xop_desc {
 	hammer2_xop_func_t	storage_func;	/* local storage function */
 	const char		*id;
+	int			ordered;	/* Linux: takes the order */
 };
 
 typedef struct hammer2_xop_desc hammer2_xop_desc_t;
@@ -684,6 +678,8 @@ struct hammer2_xop_head {
 	char			*name2;
 	size_t			name2_len;
 	void			*scratch;
+	hammer2_inode_t		*order[4];	/* Linux: xop_sem held, by address */
+	int			norder;		/* Linux */
 };
 
 typedef struct hammer2_xop_head hammer2_xop_head_t;
@@ -908,6 +904,7 @@ union hammer2_xop {
 #define HAMMER2_XOP_INODE_STOP		0x00000004
 #define HAMMER2_XOP_VOLHDR		0x00000008
 #define HAMMER2_XOP_FSSYNC		0x00000010
+#define HAMMER2_XOP_ORDERED		0x00000020	/* Linux: caller holds the order */
 
 /*
  * Block device management structure.
@@ -1304,11 +1301,20 @@ extern int hammer2_sync_fail_stamp;	/* Linux */
 extern int hammer2_sync_collapse_parent;	/* Linux */
 extern int hammer2_sync_assert_cn;	/* Linux */
 extern int hammer2_sync_narrow_alter;	/* Linux */
+extern unsigned int hammer2_xop_reruns;	/* Linux */
 void hammer2_chain_dump_live(void);	/* Linux */
 void hammer2_debug_hold(unsigned int, const char *);	/* Linux */
 #define HAMMER2_DEBUG_HOLD(ms, what)	hammer2_debug_hold(READ_ONCE(ms), (what))
+#define HAMMER2_XOP_RERUN()	\
+	__atomic_fetch_add(&hammer2_xop_reruns, 1, __ATOMIC_RELAXED)	/* Linux */
 #else
 #define HAMMER2_DEBUG_HOLD(ms, what)	((void)0)	/* Linux */
+#define HAMMER2_XOP_RERUN()	((void)0)	/* Linux */
+#endif
+#if defined(HAMMER2_LOCKDEBUG) && defined(CONFIG_LOCKDEP)
+void hammer2_inode_order_check(hammer2_chain_t *, hammer2_tid_t);	/* Linux */
+#else
+#define hammer2_inode_order_check(chain, mtid)	((void)(chain), (void)(mtid))	/* Linux */
 #endif
 extern int hammer2_count_dio_allocated;
 extern int hammer2_dio_limit;
@@ -1378,6 +1384,7 @@ int hammer2_thr_break(hammer2_thread_t *);
 void hammer2_xop_start(hammer2_xop_head_t *, hammer2_xop_desc_t *);
 void hammer2_xop_start_except(hammer2_xop_head_t *, hammer2_xop_desc_t *, int);
 void hammer2_xop_retire(hammer2_xop_head_t *, uint32_t);
+void hammer2_xop_order_init(hammer2_inode_t *);	/* Linux */
 int hammer2_xop_feed(hammer2_xop_head_t *, hammer2_chain_t *, int, int);
 int hammer2_xop_collect(hammer2_xop_head_t *, int);
 

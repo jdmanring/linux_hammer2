@@ -1446,6 +1446,7 @@ hammer2_chain_modify(hammer2_chain_t *chain, hammer2_tid_t mtid,
 	char *bdata;
 
 	hammer2_mtx_assert_ex(&chain->lock);
+	hammer2_inode_order_check(chain, mtid);	/* Linux: debug, hammer2_inode.c */
 
 	/*
 	 * Data is not optional for freemap chains (we must always be sure
