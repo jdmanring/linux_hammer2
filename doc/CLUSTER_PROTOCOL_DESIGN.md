@@ -1729,7 +1729,15 @@ masters hold and the rest do not, neither side a quorum, as for a key
 held at two tids, the collect fails it at its key, and the errno map
 gives `EIO`. It does not fire on a key only a slave holds or one a
 quorum lacks, and a master that ended on an error counts on neither
-side. What a disagreement is across hosts stays decision A's.
+side. At 1.0.93 two changes narrowed it: a block a strategy write has put
+on one master and not yet the next is waited for and run again
+(`hammer2_write_wait()`) rather than failed, and where a master ended on
+an error and another holds the key without a quorum the check returns
+that master's own error in place of `EDEADLK`. The wait covers the
+strategy write alone, and other modifying XOPs, the inode chain sync
+among them, still read as a disagreement beside a lookup
+(`doc/README.porting.md`, the same section). What a disagreement is
+across hosts stays decision A's.
 
 ### D. The acknowledgment modes and MESI over the wire
 
