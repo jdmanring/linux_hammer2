@@ -23576,11 +23576,20 @@ keep block 2 at `581` and `559` (`:82`), on KASAN at `5d7` and `5af`
 controls differ. The debug run's kept log
 (`fixtures/quorum-run-20261106-081820.klog`) holds 52 `H2 READ` lines,
 all `collect=00010000 error=5`, the 52nd the write's own read of the page
-at 0x21000; its `syncsnap: noquorum` lines read 2048 and 524288 as at
-seq12, and the three kept quorum logs print `no quorum possible` only at
-keys the harness disputed: ten in each vote run, 8 at 0x20000 and 2 at
-0xa0000, the count of `pr_warn_ratelimited()`'s default burst, no suppression line following, and 10 more at 0x400000000 in
-the split run. The rest passed: the race mode on both builds (`:46`,
+at 0x21000. Its `syncsnap: noquorum` lines read 2048 (22 of them) and
+524288 (one), as at seq12 and against seq14's 65536, and those values,
+not the quorum print, are the evidence that the sync thread's own
+left-out element no longer reads as a disagreement. The `no quorum
+possible` print is `pr_warn_ratelimited()`, ten to a burst, and it
+reports what it suppressed only at its next permitted print, so a log
+without a suppression line bounds nothing. Each vote log prints ten, 8 at
+0x20000 and 2 at 0xa0000, and none at 0xc0000, though block 12's reads
+failed as blocks 2 and 10 did: `n10-6-expected10.md` predicted prints at
+all three keys, a miss that fits the burst and was not reported when this
+section was first written. The split run's log prints 10 more at
+0x400000000 and `hammer2_xop_collect: 199 callbacks suppressed`
+(`quorum-run-20261106-083753.klog:275`), the function's only ratelimited
+print being this one. The rest passed: the race mode on both builds (`:46`,
 `:1166`), the sync vote (`:179`), fixtures (`:203`), enospc as root and as
 a user with 0 blocks available after the sync (`:429`, `:852`, rc 0 at
 `:632` and `:1043`), xfstests `-g seek` 8 of 8 (`:1051` to `:1115`),
@@ -23596,3 +23605,91 @@ a user with 0 blocks available after the sync (`:429`, `:852`, rc 0 at
 
 QEMU cores read 0 at the start and the end of both runs
 (`n10-6-seq14.log:1`, `:1293`; `n10-6-seq15.log:1`, `:1307`).
+
+## A write in flight is not a disagreement, and a stale slave under a partial write, 2026-11-07
+
+The fifth review of N10.6 (`p7-notes/audit-n10-6-round5.md`) found that
+on a healthy two-master cluster SEEK_HOLE and FIEMAP failed with EIO
+while a writeback created a block in their range. The strategy write runs
+its elements one after another, so a scan between them finds the block on
+one master alone, which since `7d52bd6` is a disagreement. `dcd8e54`
+counts the strategy writes begun and completed on each inode, and the
+read, `bmap` and the scan sample the count before their XOP; on EDEADLK,
+if a write was in flight then or began since, the call waits for it and
+runs again, up to eight times (`hammer2_write_wait()`). The same commit
+returns an errored master's own error where another master holds the key
+without a quorum, ends a readdir chunk at a disagreement at or past its
+resume key, reads a small folio in `hammer2_write_begin()` only when more
+than one element votes, and corrects decision C's opening. `8522527`
+drives the errored master with `scan_fail_elm` and its unset control, and
+`96667a0` drops an order the held-writeback check required that the wait
+does not give. The review's account of seq15's ratelimited print is
+corrected in the section above.
+
+**The run** (`n10-6-seq16.log`, head `96667a0`, no uncommitted change;
+predictions `p7-notes/n10-6-expected11.md`). Seq15 is the control for
+every reading it took; the new checks carry their controls in the same
+run. Every check passed: the debug vote 46 (`:110`), the KASAN vote 46
+(`:1241`) with 0 reports (`:1243`), the release split run 53 (`:1327`),
+the sync vote 62 (`:186`).
+
+- With a writeback held between the masters by the debug build's
+  `write_gap_ms`, SEEK_HOLE answered 131072 and FIEMAP 65536, each as
+  wanted; with `write_wait_off` set both failed EIO inside the window, so
+  the calls met it; `write_waits` moved 2 with the wait on and 0 with it
+  off (`:88-92`, on KASAN `:1219-1223`, on release `:1305-1309`). The
+  predicted seek-ms bands, 2000 to 2400 ms with the wait and 500 to 700
+  ms without, have no reading: the harness reads the probe's lines on
+  the guest and prints only its verdict.
+- One master's scan ending on EIO before a key the other holds failed
+  SEEK_HOLE with EIO, and with `scan_fail_elm` unset the same call
+  answered the hole at 0 (`:76-77`, `:1207-1208`, `:1293-1294`).
+- Seq15's readings held: blocks 2, 10 and 12 fail their reads with EIO
+  beside block 0 whole (`:83`); the partial write into block 2 fails with
+  both masters' tids kept (`:84`, `:1215`, `:1301`); both comparison
+  controls differ (`:85-86`).
+- The debug vote's kept log (`fixtures/quorum-run-20261107-205149.klog`)
+  holds 52 failed reads, each `collect=00010000 error=5` and followed by
+  one line per element, 156 `H2 READ` lines as in seq15's log, whose 52
+  counted the reads; `no quorum possible` 8 times at 0x20000, twice at
+  0xa0000, and three times at 0x10000 in the held-writeback phase, none
+  at `b6a9cb23fd8a8001`; `syncsnap: noquorum` 28 times at 2048 and once
+  at 524288, none at 65536. The held phase's first print follows
+  `hammer2_xop_collect: 200 callbacks suppressed` (`:309`), 7.3 s after
+  the disagreement phase's last printed line, so the disputed blocks'
+  prints were suppressed here as in seq15, which had no later print to
+  report them.
+- The rest passed: the race mode on both builds (`:46`, `:1177`),
+  fixtures (`:211`), enospc as root and as a user, each 2 GiB filled with
+  0 failures and 0 blocks available after the sync (`:437`, `:642`,
+  `:863`, `:1053`), xfstests `-g seek` 8 of 8 (`:1130`), `debug_locks` 1
+  after each group (`:112`, `:188`, `:1132`).
+
+| reading, `h2release-7.3tls`, 16 GiB | seq15 | seq16 | predicted for seq16 |
+|---|---|---|---|
+| two masters, SEEK_HOLE | 34.01 ms | 32.36 ms (`:1265`) | 30 to 38 |
+| writer beside it | 66.44 ms | 65.26 ms (`:1264`) | 60 to 75 |
+| split SEEK_HOLE, failing EIO | 33.79 ms | 32.48 ms (`:1266`) | 28 to 40 |
+| writer beside the split | 67.51 ms | 65.06 ms (`:1268`) | 55 to 80 |
+| split fallbacks | 51 | 51 (`:1269`) | 10 + 41 |
+
+**The stale slave** (`:128-130`). The review read from the code that a
+partial write into a block a SLAVE holds stale leaves the slave's own
+bytes under the master's new tid. `cluster-sync.sh` took the reading:
+the slave's block 3 at tid `22f` behind the master's `23b` and still
+there after the seek (`:128`), the block read cold, 4 KiB of it
+rewritten, a sync, then each volume's media. Both hold the block at tid
+`242`, with xxh64 `1f7a173d573f069f` on the master and `f67957fddce5660d`
+on the slave (`:130`). Each element's writeback assembled the block from
+its own chain (`hammer2_strategy_assemble()`), so the slave holds its
+stale 60 KiB under the master's tid. The sync pass replaces a block only
+when its tid differs (`hammer2_synchro.c:2384`), so from the code no later
+pass repairs it; the run read the block once after the write. The defect
+predates N10.6, since the write path has assembled per element since it
+took folios smaller than a block. The fix the review gave, one assembly
+through the quorum handed to every element as upstream's single buffer
+is, is not built; `doc/README.porting.md`, "A key the masters disagree
+on", carries the case.
+
+QEMU cores read 0 at the start and the end (`n10-6-seq16.log:1`,
+`:1334`).

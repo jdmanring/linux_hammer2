@@ -15,7 +15,10 @@ and the write path's one invariant that no check code can see is now
 measured rather than argued, a count of folios changed under the core
 reading 14160919 on a build with its guard removed and 0 with it. The cluster's synchronization thread is carried and keeps
 a SLAVE on a second local device in step with its MASTER, measured by
-`script/cluster-sync.sh`, and the quorum a two-MASTER cluster is decided
+`script/cluster-sync.sh`, with one exception that script measured at
+1.0.93 and nothing yet fixes: a write of less than a block into a block
+the slave holds stale leaves the slave's own bytes beside the new ones
+under the master's tid, which no later pass repairs, and the quorum a two-MASTER cluster is decided
 by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; a master on another host
 is read through a remote element over the transport P5 and P6 closed,

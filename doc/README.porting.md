@@ -1759,8 +1759,13 @@ assembled per element at the next write, and the dispute disappears
 under one tid. And the same assembly gives a SLAVE behind its master its
 own stale bytes under the master's new tid, which the sync pass,
 replacing only a block whose tid differs, does not repair. The fifth
-review of N10.6 read both from the code; `cluster-sync.sh` takes a
+review of N10.6 read both from the code. `cluster-sync.sh` takes a
 reading of the second (a stale block read cold, then 4 KiB of it
-rewritten, each volume's tid and check read from its media), and the
-fix both need is one assembly, from the block read through the quorum,
-handed to every element as upstream's buffer is.
+rewritten, each volume's tid and check read from its media), and at
+1.0.93 it read the defect: both volumes at one tid with two contents
+(`doc/history/verification-record.md`, "A write in flight is not a
+disagreement, and a stale slave under a partial write"). The first is
+read from the code only. The fix both need, one assembly from the block
+read through the quorum handed to every element as upstream's buffer
+is, is not built, so a SLAVE written this way can hold bytes its master
+does not under the master's tid.

@@ -24,7 +24,10 @@ page is the defect.
 - **Clustering**: the local synchronization thread
   (`hammer2_synchro.c`), the message core (`kern_dmsg.c`), and a remote
   element over the wire (`hammer2_remote.c`) through which a slave on
-  one host copies a master on another.
+  one host copies a master on another. Two MASTERs of one cluster id on
+  two local volumes are read through DragonFly's quorum check: a block
+  the masters disagree on fails its read, seek and map with EIO rather
+  than reading as a hole or as one master's copy.
 
 ## How it is verified
 
@@ -73,6 +76,13 @@ has been read back by DragonFly and the other way round
   state held until the link ends, with no bound found. P7 is closed at
   1.0.84, its closure mapping the pass's reading over TLS and the five
   criteria to their runs.
+- **A SLAVE behind its MASTER under a partial write**: a write of less
+  than a 64 KiB block into a block the slave holds stale leaves the
+  slave's old bytes beside the new ones under the master's tid, and the
+  synchronization pass, which compares tids, never repairs it. Measured
+  by `script/cluster-sync.sh` at 1.0.93; not fixed. Two MASTERs reach
+  the same assembly, from the code, through a page cached before their
+  block came to be disputed.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
   not yet written.
