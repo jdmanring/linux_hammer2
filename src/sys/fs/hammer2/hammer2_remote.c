@@ -1765,7 +1765,8 @@ hammer2_remote_desc_idx(hammer2_xop_desc_t *desc)
 	for (i = 0; i < DMSG_HM2_XOP_COUNT; ++i)
 		if (hammer2_remote_descs[i] == desc)
 			return (i);
-	if (desc == &hammer2_inode_flush_desc)
+	if (desc == &hammer2_inode_flush_desc ||
+	    desc == &hammer2_inode_flush_ordered_desc)
 		return (HAMMER2_REMOTE_IDX_FLUSH);
 	return (-1);
 }

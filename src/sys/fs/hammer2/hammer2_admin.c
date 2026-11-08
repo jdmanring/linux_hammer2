@@ -54,10 +54,13 @@
  * collapse of an emptied indirect block modifies the chain at that
  * block's tid (hammer2_chain_indirect_maintenance()).  Below the inode it
  * stops at every other inode (FLUSH_INODE_STOP).  So the flush of an
- * inode is ordered on that inode, through inode_flush_ordered, and the
- * PFS root's is not: that one begins the super-root's ISFLUSH
- * transaction (HAMMER2_XOP_VOLHDR), which no holder of the order may,
- * and the root's chain is keyed by name and compared by no reader.
+ * inode is ordered on that inode, through inode_flush_ordered, and a
+ * flush of the PFS root is not (hammer2_inode_chain_flush() selects by
+ * ip == pmp->iroot): the root's chain is keyed by name and compared by no
+ * reader, and the sync's last flush of it (HAMMER2_XOP_VOLHDR) begins the
+ * super-root's ISFLUSH transaction, which no holder of the order may.
+ * The HM2 client maps both flush descriptors to one command
+ * (hammer2_remote_desc_idx()).
  */
 #define H2XOPDESCRIPTOR_ORDERED(label)				\
 	hammer2_xop_desc_t hammer2_##label##_desc = {		\

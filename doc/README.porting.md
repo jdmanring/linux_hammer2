@@ -1723,10 +1723,11 @@ collapsing an emptied indirect block beneath it modifies the chain at
 that block's transaction id (`hammer2_chain_indirect_maintenance()`), so
 a lookup of the inode meets it at two tids between the masters' flushes.
 The guarded readers compare data leaves, whose tids a flush does not
-move; the lookups compare the inode chain and do not rerun yet. The
-PFS root's flush is not ordered: it begins the super-root's flush
-transaction for the volume header, and no holder of an order may begin
-one. The read, `bmap` and the scan the seek and the
+move; the lookups compare the inode chain and do not rerun yet. A
+flush of the PFS root is not ordered, whichever caller makes it: the
+root's chain is keyed by its name and no reader compares it, and the
+sync's last flush of the root begins the super-root's flush transaction
+for the volume header, which no holder of an order may begin. The read, `bmap` and the scan the seek and the
 map fall back to run once more on EDEADLK, with the inode lock shared and
 then the order's read side, which waits out the ordered XOP in flight on
 that file and holds off the next; an EDEADLK under it is a disagreement
@@ -1746,9 +1747,11 @@ code until that run: no run has exercised the order. In a debug build on
 a kernel with lockdep, `order_check` counts a modify of a hashed inode's
 chain at a nonzero transaction id made without that inode's order held
 for write, which would show the order missing a change it was meant to
-cover, and `order_check_off` counts the same while `xop_order_off` is
-set, which the harness requires to be nonzero as the check's own
-control. It leaves out the synchronization threads, the PFS root, a chain
+cover. While an ordered XOP anywhere in the module runs with its order
+withdrawn by `xop_order_off`, such a modify of any inode counts in
+`order_check_off` instead, without a warning, which the harness requires
+to be nonzero as the check's own control; a genuine miss inside such a
+window counts there too. It leaves out the synchronization threads, the PFS root, a chain
 with no parent and the super-root, and it cannot see a flush's raise of a
 parent's `modify_tid`, an assignment rather than a modify, or any chain
 but an inode's. A synchronization thread's pass flushes its own element
