@@ -410,7 +410,10 @@ echo 0 > $P/xop_gap_ms
 # a transaction). Milliseconds run from before the sync, as the probe's
 # do. The page read must be the one written before, and the block read
 # back cold the splice of the writes that answered. With xop_order_off
-# set each call must fail EIO.
+# set the read and the write must fail EIO. FIBMAP has no error to give:
+# ->bmap returns a block number, and hammer2_bmap() answers 0 for an
+# error as for a hole, so filefrag reports the block unmapped. Its
+# control is that: 0 extents with the order out, 1 with it.
 dd if=/dev/zero bs=4k count=1 2>/dev/null | tr '\000' '\132' > /tmp/q2.5a
 dd if=/dev/zero bs=4k count=1 2>/dev/null | tr '\000' '\245' > /tmp/q2.a5
 q2() {	# off tag
@@ -442,7 +445,8 @@ q2() {	# off tag
 	[ "$2" = read ] && { dd if=/tmp/q2.want bs=4k skip=2 count=1 2>/dev/null | cmp -s - /tmp/q2.rd && same=1 || same=0; }
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	dd if=/mnt/h2q/q2 bs=64k skip=1 count=1 2>/dev/null | cmp -s - /tmp/q2.want && final=1 || final=0
-	echo "vote q2$1-$2 exit $s eio $(grep -c 'Input/output error' /tmp/q2.out) wrote $(grep -c 'wrote 4096/4096' /tmp/q2.out) reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 )) same $same final $final"
+	ext=$(sed -n 's/.*: \([0-9][0-9]*\) extents\{0,1\} found.*/\1/p' /tmp/q2.out)
+	echo "vote q2$1-$2 exit $s eio $(grep -c 'Input/output error' /tmp/q2.out) wrote $(grep -c 'wrote 4096/4096' /tmp/q2.out) reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 )) same $same final $final ext ${ext:--}"
 	rm -f /mnt/h2q/q2
 }
 echo strategy_write > $P/xop_gap_desc
@@ -457,25 +461,36 @@ done
 # a 5 ms gap between the masters, and with that gap and the order taken
 # out, the control; and the writeback alone with each gap, for its
 # seconds beside the loop's.
+# The map is `fiemap -e`: without -e xfs_io passes FIEMAP_FLAG_SYNC, and
+# fiemap_prep() then writes the whole file back and waits before mapping,
+# so each call drained the stream it was meant to meet (the loop made 3
+# and 4 calls across a 13 to 26 s writeback, n10-6-seq17).
 q3() {	# tag gap off loop
 	rm -f /mnt/h2q/q3; sync
 	truncate -s 1G /mnt/h2q/q3
 	dd if=/dev/urandom of=/mnt/h2q/q3 bs=1M count=256 conv=notrunc 2>/dev/null
 	echo $2 > $P/xop_gap_ms
 	echo $3 > $P/xop_order_off
-	n=0; eio=0
+	n=0; eio=0; bad=0
 	r0=$(cat $P/xop_reruns); t0=$(date +%s%N)
 	sync & sp=$!
 	while [ "$4" = 1 ] && kill -0 $sp 2>/dev/null; do
-		o=$(xfs_io -r -c 'seek -h 0' -c 'fiemap' /mnt/h2q/q3 2>&1)
+		o=$(xfs_io -r -c 'seek -h 0' -c 'fiemap -e' /mnt/h2q/q3 2>&1)
 		n=$((n + 1))
-		case $o in *'Input/output error'*) eio=$((eio + 1)) ;; esac
+		# A call is EIO, or answers the hole at 256 MiB and a map with
+		# an extent line, or is bad: any other error, a usage message
+		# from an xfs_io without fiemap -e, a wrong answer.
+		case $o in
+		*'Input/output error'*) eio=$((eio + 1)) ;;
+		*)	printf '%s\n' "$o" | grep -Eq '^HOLE[[:space:]]+268435456$' &&
+			    printf '%s\n' "$o" | grep -Eq '^[[:space:]]*[0-9]+: \[' || bad=$((bad + 1)) ;;
+		esac
 	done
 	wait $sp
 	t1=$(date +%s%N); r1=$(cat $P/xop_reruns)
 	echo 0 > $P/xop_gap_ms
 	echo 0 > $P/xop_order_off
-	echo "vote q3-$1 calls $n eio $eio reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 ))"
+	echo "vote q3-$1 calls $n eio $eio bad $bad reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 ))"
 	rm -f /mnt/h2q/q3
 }
 echo strategy_write > $P/xop_gap_desc
@@ -486,8 +501,10 @@ q3 b 5 0 1
 q3 c 5 1 1
 sync
 # order_check counts a modify of an inode chain made without its order;
-# it exists only where lockdep does.
-echo "vote order-check $(cat $P/order_check 2>/dev/null || echo absent)"
+# it exists only where lockdep does. order_check_off counts the ones made
+# while xop_order_off was set, which the windows above must have made: it
+# is the check's own control.
+echo "vote order-check $(cat $P/order_check 2>/dev/null || echo absent) off $(cat $P/order_check_off 2>/dev/null || echo absent)"
 fi
 # CONTEND=n prints what a seek through the quorum costs a writer: a dense
 # file of n MiB, writes timed alone and beside a SEEK_HOLE loop.
@@ -525,7 +542,7 @@ umount /mnt/h2q && echo "cluster-umount ok" || exit 1
 umount /mnt/h2b && umount /mnt/h2a || exit 1
 echo "threads-after $(ps -eo comm | grep -c '^h2nod')"
 echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive')"
-echo "hung-task $(dmesg | grep -c 'blocked for more than')"
+echo "hung-task $(dmesg | grep -c 'blocked for more than') timeout $(cat /proc/sys/kernel/hung_task_timeout_secs 2>/dev/null || echo absent)"
 echo "debug-locks-after $(awk '/debug_locks:/ {print $2}' /proc/lockdep_stats 2>/dev/null)"
 # Before rmmod, so the report's %pS resolves the module's own symbols, and
 # after a wait past the scanner's own age rule (kmemleak.c MSECS_MIN_AGE,
@@ -775,34 +792,42 @@ if [ "$QVOTE" = 1 ]; then
 	# through the gap; the page read is the one written before, and the
 	# block read back cold is the splice of the writes. A sibling served
 	# from the page cache would answer with no rerun, which the delta
-	# catches. With the order out each fails EIO.
+	# catches. With the order out the read and the write fail EIO, and
+	# FIBMAP, which has no error to return, reports the block unmapped.
 	for k in read fibmap pwrite; do
 		x=$(vote "q20-$k")
 		s=$(vf q20-$k exit); e=$(vf q20-$k eio); r=$(vf q20-$k reruns); m=$(vf q20-$k ms); sm=$(vf q20-$k same); f=$(vf q20-$k final); wr=$(vf q20-$k wrote)
 		ok=1
 		[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$f" = 1 ] && ok=0
-		case $k in read) [ "$sm" = 1 ] || ok=1 ;; pwrite) [ "$wr" = 1 ] || ok=1 ;; esac
+		case $k in read) [ "$sm" = 1 ] || ok=1 ;; pwrite) [ "$wr" = 1 ] || ok=1 ;; fibmap) [ "$(vf q20-$k ext)" = 1 ] || ok=1 ;; esac
 		check "Q2 $k beside a writeback held between the masters reruns under the order and answers" $ok "${x:-no line} (want exit 0, eio 0, reruns at least 1, ms at least $((QGAP - QDELAY)), final 1)"
-		x=$(vote "q21-$k"); e=$(vf q21-$k eio)
-		[ "${e:-0}" -ge 1 ] 2>/dev/null
-		check "Q2 $k with xop_order_off fails EIO in the held window, so the call met it" $? "${x:-no line}"
+		x=$(vote "q21-$k"); e=$(vf q21-$k eio); r=$(vf q21-$k reruns)
+		if [ $k = fibmap ]; then
+			[ "${r:-0}" -ge 1 ] 2>/dev/null && [ "$(vf q21-$k ext)" = 0 ]
+			check "Q2 fibmap with xop_order_off reports the block unmapped in the held window, so the call met it" $? "${x:-no line} (want reruns at least 1, ext 0)"
+		else
+			[ "${e:-0}" -ge 1 ] 2>/dev/null
+			check "Q2 $k with xop_order_off fails EIO in the held window, so the call met it" $? "${x:-no line}"
+		fi
 	done
 	# Q3. A delta of 0 with no gap is a reading and not a check; with the
 	# gap and the order on, no rerun means nothing exercised the order,
 	# and with the order out no EIO means the control did not fire: both
 	# make the run COULD-NOT-RUN rather than a pass.
 	xa=$(vote q3-a); xb=$(vote q3-b); xc=$(vote q3-c)
-	n=$(vf q3-a calls); e=$(vf q3-a eio); r=$(vf q3-a reruns)
-	if [ "${r:-0}" -ge 1 ] 2>/dev/null; then
-		[ "${n:-0}" -ge 10 ] 2>/dev/null && [ "$e" = 0 ]
-		check "Q3(a) a SEEK_HOLE and FIEMAP loop beside a 256 MiB writeback answers every call" $? "${xa:-no line} (want calls at least 10, eio 0)"
+	# With the order on, an EIO or a bad call fails whether or not a rerun
+	# ran; only a clean loop that met no write in flight is not a pass.
+	n=$(vf q3-a calls); e=$(vf q3-a eio); b=$(vf q3-a bad); r=$(vf q3-a reruns)
+	if [ "${e:-1}" != 0 ] || [ "${b:-1}" != 0 ] || [ "${r:-0}" -ge 1 ] 2>/dev/null; then
+		[ "${n:-0}" -ge 10 ] 2>/dev/null && [ "$e" = 0 ] && [ "$b" = 0 ]
+		check "Q3(a) a SEEK_HOLE and FIEMAP loop beside a 256 MiB writeback answers every call" $? "${xa:-no line} (want calls at least 10, eio 0, bad 0)"
 	else
 		echo "  note  Q3(a) is a reading, not a check: no call met a write in flight (${xa:-no line})"
 	fi
-	e=$(vf q3-b eio); r=$(vf q3-b reruns)
-	if [ "${r:-0}" -ge 1 ] 2>/dev/null; then
-		[ "$e" = 0 ]
-		check "Q3(b) the loop beside the writeback held 5 ms between the masters answers every call" $? "${xb:-no line} (want eio 0)"
+	e=$(vf q3-b eio); b=$(vf q3-b bad); r=$(vf q3-b reruns)
+	if [ "${e:-1}" != 0 ] || [ "${b:-1}" != 0 ] || [ "${r:-0}" -ge 1 ] 2>/dev/null; then
+		[ "$e" = 0 ] && [ "$b" = 0 ]
+		check "Q3(b) the loop beside the writeback held 5 ms between the masters answers every call" $? "${xb:-no line} (want eio 0, bad 0)"
 	else
 		cnr="${cnr:+$cnr; }Q3(b) exercised no rerun (${xb:-no line})"
 	fi
@@ -816,13 +841,21 @@ if [ "$QVOTE" = 1 ]; then
 	ba=$(vf q3-b-alone ms); bl=$(vf q3-b ms)
 	[ -n "$ba" ] && [ -n "$bl" ] && [ "$bl" -gt $((2 * ba)) ] 2>/dev/null &&
 		echo "  note  Q3(b)'s writeback beside the loop took more than twice its time alone: the trigger to scope the seek's guard to its chunk (doc/README.porting.md)"
-	o=$(vote order-check)
+	o=$(vote order-check | cut -d' ' -f1); oo=$(vf order-check off)
 	case $o in
 	absent|'') echo "  note  order_check not read: ${o:-no line}, a module or kernel without lockdep" ;;
-	*) [ "$o" = 0 ]; check "order_check: every modify of a hashed inode's chain was made under its order" $? "$o" ;;
+	*)	if [ "${oo:-0}" -ge 1 ] 2>/dev/null; then
+			[ "$o" = 0 ]; check "order_check: every modify of a hashed inode's chain was made under its order" $? "$o, $oo with the order out"
+		else
+			cnr="${cnr:+$cnr; }order_check's control did not fire: $oo with the order out"
+		fi ;;
 	esac
-	hd=$(val hung-task)
-	[ "${hd:-1}" = 0 ]; check "no task was reported hung" $? "${hd:-none} hung-task line(s)"
+	hd=$(val hung-task | cut -d' ' -f1); ht=$(val hung-task | sed -n 's/.* timeout //p')
+	if [ "${ht:-0}" -gt 0 ] 2>/dev/null; then
+		[ "${hd:-1}" = 0 ]; check "no task was reported hung" $? "${hd:-none} hung-task line(s), detector at ${ht} s"
+	else
+		echo "  note  hung tasks not read: the detector is off or absent (timeout ${ht:-none})"
+	fi
 	da=$(val debug-locks-after)
 	if [ -n "$dl" ]; then
 		[ "$da" = 1 ]; check "lockdep is still on at the end, so no report turned it off" $? "debug_locks ${da:-none} at the end, ${dl} at the start"

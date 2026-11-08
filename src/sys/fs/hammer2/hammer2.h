@@ -904,7 +904,6 @@ union hammer2_xop {
 #define HAMMER2_XOP_INODE_STOP		0x00000004
 #define HAMMER2_XOP_VOLHDR		0x00000008
 #define HAMMER2_XOP_FSSYNC		0x00000010
-#define HAMMER2_XOP_ORDERED		0x00000020	/* Linux: caller holds the order */
 
 /*
  * Block device management structure.
@@ -1302,6 +1301,7 @@ extern int hammer2_sync_collapse_parent;	/* Linux */
 extern int hammer2_sync_assert_cn;	/* Linux */
 extern int hammer2_sync_narrow_alter;	/* Linux */
 extern unsigned int hammer2_xop_reruns;	/* Linux */
+extern unsigned int hammer2_xop_withdrawn;	/* Linux */
 void hammer2_chain_dump_live(void);	/* Linux */
 void hammer2_debug_hold(unsigned int, const char *);	/* Linux */
 #define HAMMER2_DEBUG_HOLD(ms, what)	hammer2_debug_hold(READ_ONCE(ms), (what))
@@ -1354,6 +1354,7 @@ extern hammer2_xop_desc_t hammer2_inode_chain_sync_desc;
 extern hammer2_xop_desc_t hammer2_inode_unlinkall_desc;
 extern hammer2_xop_desc_t hammer2_inode_connect_desc;
 extern hammer2_xop_desc_t hammer2_inode_flush_desc;
+extern hammer2_xop_desc_t hammer2_inode_flush_ordered_desc;	/* Linux */
 extern hammer2_xop_desc_t hammer2_strategy_read_desc;
 extern hammer2_xop_desc_t hammer2_strategy_write_desc;
 extern hammer2_xop_desc_t hammer2_bmap_desc;

@@ -48,8 +48,16 @@
  * for write on every inode the XOP names, across its element loop (see
  * hammer2.h and hammer2_xop_start_except()).  These are the XOPs that
  * change a tree.  HAMMER2_XOP_MODIFYING is not the selector: scanlhc,
- * ipcluster and the sync thread's scanall carry it and change nothing,
- * and inode_flush moves no modify_tid, passing an mtid of 0.
+ * ipcluster and the sync thread's scanall carry it and change nothing.
+ * A flush does change the inode chain it begins at: it raises the chain's
+ * modify_tid to its largest flushed child's (hammer2_flush.c), and the
+ * collapse of an emptied indirect block modifies the chain at that
+ * block's tid (hammer2_chain_indirect_maintenance()).  Below the inode it
+ * stops at every other inode (FLUSH_INODE_STOP).  So the flush of an
+ * inode is ordered on that inode, through inode_flush_ordered, and the
+ * PFS root's is not: that one begins the super-root's ISFLUSH
+ * transaction (HAMMER2_XOP_VOLHDR), which no holder of the order may,
+ * and the root's chain is keyed by name and compared by no reader.
  */
 #define H2XOPDESCRIPTOR_ORDERED(label)				\
 	hammer2_xop_desc_t hammer2_##label##_desc = {		\
@@ -76,6 +84,11 @@ H2XOPDESCRIPTOR_ORDERED(inode_chain_sync);
 H2XOPDESCRIPTOR_ORDERED(inode_unlinkall);
 H2XOPDESCRIPTOR_ORDERED(inode_connect);
 H2XOPDESCRIPTOR(inode_flush);
+hammer2_xop_desc_t hammer2_inode_flush_ordered_desc = {	/* Linux */
+	.storage_func = hammer2_xop_inode_flush,
+	.id = "inode_flush",
+	.ordered = 1
+};
 H2XOPDESCRIPTOR(strategy_read);
 H2XOPDESCRIPTOR_ORDERED(strategy_write);
 H2XOPDESCRIPTOR(bmap);
@@ -377,9 +390,13 @@ module_param_string(xop_gap_desc, hammer2_xop_gap_desc,
     sizeof(hammer2_xop_gap_desc), 0644);
 unsigned int hammer2_xop_reruns;
 module_param_named(xop_reruns, hammer2_xop_reruns, uint, 0444);
+unsigned int hammer2_xop_withdrawn;	/* ordered XOPs running with none */
 #define HAMMER2_XOP_ORDER_OFF	READ_ONCE(hammer2_xop_order_off)
+#define HAMMER2_XOP_WITHDRAW(n)	\
+	__atomic_add_fetch(&hammer2_xop_withdrawn, (n), __ATOMIC_RELAXED)
 #else
 #define HAMMER2_XOP_ORDER_OFF	0
+#define HAMMER2_XOP_WITHDRAW(n)	((void)(n))
 #endif
 
 /* Linux: one init_rwsem() call site, so every inode's is one lockdep class. */
@@ -488,7 +505,7 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 {
 	hammer2_inode_t *ip1 = xop->ip1;
 	uint32_t mask;
-	int i;
+	int i, withdrawn;	/* Linux: withdrawn */
 
 	KKASSERT(ip1);
 	hammer2_assert_cluster(&ip1->cluster);
@@ -521,16 +538,23 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 	 * thread and the unmount behind it.
 	 *
 	 * Linux: the order is taken first, before the dependencies, and
-	 * released after the element loop (hammer2.h).  A caller that holds
-	 * it already passes HAMMER2_XOP_ORDERED.
+	 * released after the element loop (hammer2.h).  With xop_order_off
+	 * set, hammer2_xop_withdrawn counts the ordered XOP for the length
+	 * of its loop instead, which is what order_check reads.
 	 * DEFER(a guarded read failing EIO on a PFS with a remote MASTER mounted read-write, or P8's lease step):
 	 * a peer's write runs on a local element through the server path
 	 * (hammer2_remote.c), which calls the storage function directly and
 	 * takes no order, so a local reader can meet it between elements.
 	 */
-	if (desc->ordered && !(xop->flags & HAMMER2_XOP_ORDERED) &&
-	    !HAMMER2_XOP_ORDER_OFF)
-		hammer2_xop_order_take(xop);
+	withdrawn = 0;
+	if (desc->ordered) {
+		if (!HAMMER2_XOP_ORDER_OFF)
+			hammer2_xop_order_take(xop);
+		else
+			withdrawn = 1;
+	}
+	if (withdrawn)
+		HAMMER2_XOP_WITHDRAW(1);
 	if (!(xop->flags & HAMMER2_XOP_STRATEGY))
 		hammer2_xop_testset_ipdep(ip1);
 	if (xop->ip2)
@@ -595,6 +619,8 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 		}
 	}
 	hammer2_xop_order_release(xop);	/* Linux */
+	if (withdrawn)
+		HAMMER2_XOP_WITHDRAW(-1);	/* Linux */
 }
 
 /*
@@ -697,8 +723,11 @@ hammer2_xop_retire(hammer2_xop_head_t *xop, uint32_t mask)
 		mask &= ~(1U << i);
 	}
 
-	/* Linux: an order still held, while its inodes are referenced. */
-	hammer2_xop_order_release(xop);
+	/*
+	 * Linux: hammer2_xop_start_except() released the order on the task
+	 * that took it; a retire can run on another, which must not.
+	 */
+	WARN_ON_ONCE(xop->norder != 0);
 
 	/* The inode is only held at this point, simply drop it. */
 	if (xop->ip1) {

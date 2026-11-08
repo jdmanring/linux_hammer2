@@ -1717,7 +1717,16 @@ disagreement. Each inode carries a read-write semaphore, the order
 that change a tree, the strategy write and the inode chain sync among
 them, holds the order for write on every inode it names across its
 element loop, taken in address order before the XOP dependency and
-released after the loop. The read, `bmap` and the scan the seek and the
+released after the loop. The flush of an inode holds that inode's order
+too: it raises the inode chain's `modify_tid` to its newest child's, and
+collapsing an emptied indirect block beneath it modifies the chain at
+that block's transaction id (`hammer2_chain_indirect_maintenance()`), so
+a lookup of the inode meets it at two tids between the masters' flushes.
+The guarded readers compare data leaves, whose tids a flush does not
+move; the lookups compare the inode chain and do not rerun yet. The
+PFS root's flush is not ordered: it begins the super-root's flush
+transaction for the volume header, and no holder of an order may begin
+one. The read, `bmap` and the scan the seek and the
 map fall back to run once more on EDEADLK, with the inode lock shared and
 then the order's read side, which waits out the ordered XOP in flight on
 that file and holds off the next; an EDEADLK under it is a disagreement
@@ -1730,12 +1739,22 @@ with the debug build's `xop_gap_ms` and requires a SEEK_HOLE and a FIEMAP
 made in that window to rerun and answer, a read, a FIBMAP and the read
 `hammer2_write_begin()` makes to do the same, and a SEEK_HOLE and FIEMAP
 loop beside a 256 MiB writeback to answer every call, each with the order
-taken out (`xop_order_off`) as its control. All of this is read from the
+taken out (`xop_order_off`) as its control. FIBMAP has no error to give
+(`->bmap` returns a block number, and `hammer2_bmap()` answers 0 for an
+error as for a hole), so its control is the block reported unmapped. All of this is read from the
 code until that run: no run has exercised the order. In a debug build on
 a kernel with lockdep, `order_check` counts a modify of a hashed inode's
 chain at a nonzero transaction id made without that inode's order held
 for write, which would show the order missing a change it was meant to
-cover. A peer's write arriving through the server path
+cover, and `order_check_off` counts the same while `xop_order_off` is
+set, which the harness requires to be nonzero as the check's own
+control. It leaves out the synchronization threads, the PFS root, a chain
+with no parent and the super-root, and it cannot see a flush's raise of a
+parent's `modify_tid`, an assignment rather than a modify, or any chain
+but an inode's. A synchronization thread's pass flushes its own element
+with `FLUSH_ALL`, which raises and collapses dirty inode chains there
+outside any order, master or not: a lookup can meet that between the
+two elements' passes, which predates the order and is not read yet. A peer's write arriving through the server path
 (`hammer2_remote.c`) takes no order, which is P8's lease step.
 
 The lookups by name and by inode number do not run again under the order

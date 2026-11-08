@@ -728,7 +728,7 @@ does. A detach keeps `pfs_nmasters`, so every collect fails
 `ENOTCONN` (`hammer2_cluster.c:377-378`) and a create fails at its
 lookup, but the gates open, and a change to an inode the mount already
 holds needs no lookup: `hammer2_inode_chain_sync()` starts its modifying
-XOP on every element before its collect fails (`hammer2_inode.c:1910-1911`).
+XOP on every element before its collect fails (`hammer2_inode.c:1930-1931`).
 Under `H2_WIRE_SILENCE=1 H2_WIRE_DETACHWRITE=1` in `script/cluster-wire.sh`
 (`wire-run-20261028-164316`), after the keepalive detached the master's
 element, B's `CL` remounted read-write, a `chmod` of its root returned 0
@@ -869,7 +869,7 @@ change executes:
 
 **Status, 2026-11-01: amended and audited to SIGN-OFF; the tree
 carries only scaffolding (the `HAMMER2_LOOKUP_PRUNE` flag,
-`hammer2.h:366`, two unused thread fields, `hammer2.h:1113-1114`, and
+`hammer2.h:366`, two unused thread fields, `hammer2.h:1112-1113`, and
 scanall clearing the flag, `hammer2_xops.c:912`) and no prune
 predicate, and, under `HAMMER2_LOCKDEBUG` alone, an instrument that
 prints what the capture and the veto below would read on each snapshot
@@ -880,7 +880,7 @@ Argon, transcript kept as
 tree) found the residue veto unsound as the design of 2026-10-30 wrote
 it: `hammer2_pfs_snapshot()` itself calls `hammer2_inode_modify()` on
 the source PFS root inside the window (`hammer2_ioctl.c:1024`), which
-queues that root on the PFS's sideq (`hammer2_inode.c:1860-1861`), so
+queues that root on the PFS's sideq (`hammer2_inode.c:1880-1881`), so
 the queue leg read after the copy would veto every pass. The failure is
 closed (nothing would prune), not a wrong prune. The same review asked
 for the generation to be bound to the attachment instance, since a
@@ -1056,7 +1056,7 @@ source before it was applied, and no lever-2 code precedes it.
    copy. The shape built for the local rates is the plan's candidate
    (i): a `HAMMER2_LOCKDEBUG` knob under which an XOP allocated with
    `HAMMER2_XOP_MODIFYING` skips every element whose `pfs_types[]` is
-   `SLAVE` when its element set is built (`hammer2_admin.c:558-561`),
+   `SLAVE` when its element set is built (`hammer2_admin.c:582-585`),
    with one exception: the PFS root's own inode flush in the sync's
    second stage, the `VOLHDR` call (`hammer2_vfsops.c:3378-3380`), runs
    on every element when the sync is the snapshot body's on the thread
@@ -1093,7 +1093,7 @@ source before it was applied, and no lever-2 code precedes it.
    third-element reading stays open. The exemption is no wider: the sync's
    first stage on the thread drains the frontend's queued inodes
    through the insert, destroy, sync and flush XOPs
-   (`hammer2_inode.c:1937, 1975, 1880, 2005`;
+   (`hammer2_inode.c:1957, 1995, 1900, 2025`;
    `hammer2_vfsops.c:3284-3319`), and run on the slave those would put
    a frontend change's metadata, at the master's transaction id, on a
    slave whose data the knob withheld, an inode the pass would then
@@ -1221,7 +1221,7 @@ cut: the cut is the snapshot flush transaction's id, taken right after
 the PFS sync (`hammer2_ioctl.c:995-1016`), and a writer that took its tid before cut N
 can land in snapshot N+1 under blocks whose propagated `modify_tid` sits
 below cut N, with no fixed slack bounding a stalled writer
-(`hammer2_flush.c:118-121`, `hammer2.h:1103-1112`,
+(`hammer2_flush.c:118-121`, `hammer2.h:1102-1111`,
 `hammer2_chain.c:2396-2406, 2603-2610, 3283-3290, 3845-3856, 4399-4404`).
 `mirror_tid` is stamped at every modify from the device's flush generation
 (`hammer2_chain.c:1671`) and is monotone per device
@@ -1252,7 +1252,7 @@ before it: the candidate is the post-sync generation, and any inequality
 across the snapshot window proper, from whatever flusher, runs that pass
 unpruned. The check fails closed; its cost is availability (one unpruned
 pass per syncer volume flush in-window), not correctness. Each read takes
-the voldata lock (`hammer2_voldata_lock()`, `hammer2_vfsops.c:390`, declared at `hammer2.h:1697`) and is done
+the voldata lock (`hammer2_voldata_lock()`, `hammer2_vfsops.c:390`, declared at `hammer2.h:1698`) and is done
 twice requiring equal: the FREEMAP bump runs outside that lock (taken
 only in the VOLUME arm, `hammer2_flush.c:710`), so the reads rest on the counter's
 monotonicity and double-read equality, not on exclusion. A subtree prunes only when its root's

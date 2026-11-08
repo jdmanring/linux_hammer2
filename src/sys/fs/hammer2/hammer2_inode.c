@@ -590,14 +590,28 @@ hammer2_inode_lookup(hammer2_pfs_t *pmp, hammer2_tid_t inum)
  * order held.  The PFS's synchronization threads are not counted: they
  * modify the element their pass copies into directly, outside any XOP
  * (hammer2_synchro.c), which is a slave or a master the quorum already
- * outvotes, and a pass writes nothing where the masters disagree.  The
+ * outvotes, and a pass writes nothing where the masters disagree.  A
+ * pass also flushes its own element with FLUSH_ALL, which raises and
+ * collapses that element's dirty inode chains outside any order, master
+ * or not, so a lookup can meet an inode at two tids between two
+ * elements' passes; that is not counted here either.  The
  * hash is walked under its spin with no reference taken, so the check
  * drops nothing in the middle of a modify.  With
  * lockdep off after a report, lockdep_is_held_type() answers that the
- * lock is held, and the count stops.
+ * lock is held, and the count stops.  While an ordered XOP runs with the
+ * order withdrawn (xop_order_off, counted in hammer2_xop_withdrawn from
+ * its start to the end of its loop), a modify counts in order_check_off
+ * and does not warn: that count is the check's own control, and one
+ * reading 0 after an order-off window means the check could not see a
+ * missing order.  A genuine miss beside such an XOP counts there too.
+ * Not seen here: a flush's raise of a parent's modify_tid to its child's,
+ * which is an assignment rather than a modify (the ordered flush covers
+ * it with the collapse it does see), and any chain but an inode's.
  */
 static unsigned int hammer2_order_check;
 module_param_named(order_check, hammer2_order_check, uint, 0444);
+static unsigned int hammer2_order_check_off;
+module_param_named(order_check_off, hammer2_order_check_off, uint, 0444);
 
 void
 hammer2_inode_order_check(hammer2_chain_t *chain, hammer2_tid_t mtid)
@@ -605,7 +619,7 @@ hammer2_inode_order_check(hammer2_chain_t *chain, hammer2_tid_t mtid)
 	hammer2_pfs_t *pmp = chain->pmp;
 	hammer2_inum_hash_t *hash;
 	hammer2_inode_t *ip;
-	hammer2_key_t inum = chain->bref.key;
+	hammer2_key_t inum;
 	int held = 1;
 	int i;
 
@@ -616,6 +630,8 @@ hammer2_inode_order_check(hammer2_chain_t *chain, hammer2_tid_t mtid)
 	for (i = 0; i < HAMMER2_MAXCLUSTER; ++i)
 		if (pmp->sync_thrs[i].td == current)
 			return;
+	/* An inode embedded in a directory on old media is keyed by name. */
+	inum = chain->data ? chain->data->ipdata.meta.inum : chain->bref.key;
 	hash = inumhash(pmp, inum);
 	hammer2_spin_sh(&hash->spin);
 	for (ip = hash->base; ip; ip = ip->next) {
@@ -627,6 +643,10 @@ hammer2_inode_order_check(hammer2_chain_t *chain, hammer2_tid_t mtid)
 	hammer2_spin_unsh(&hash->spin);
 	if (held)
 		return;
+	if (READ_ONCE(hammer2_xop_withdrawn) != 0) {
+		__atomic_fetch_add(&hammer2_order_check_off, 1, __ATOMIC_RELAXED);
+		return;
+	}
 	__atomic_fetch_add(&hammer2_order_check, 1, __ATOMIC_RELAXED);
 	WARN_ONCE(1, "hammer2: inode %016llx modified at %016llx without its order\n",
 	    (unsigned long long)inum, (unsigned long long)mtid);
@@ -2003,7 +2023,8 @@ hammer2_inode_chain_flush(hammer2_inode_t *ip, int flags)
 
 	atomic_clear_int(&ip->flags, HAMMER2_INODE_DIRTYDATA);
 	xop = hammer2_xop_alloc(ip, HAMMER2_XOP_MODIFYING | flags);
-	hammer2_xop_start(&xop->head, &hammer2_inode_flush_desc);
+	hammer2_xop_start(&xop->head, ip == ip->pmp->iroot ?	/* Linux */
+	    &hammer2_inode_flush_desc : &hammer2_inode_flush_ordered_desc);
 	error = hammer2_xop_collect(&xop->head, HAMMER2_XOP_COLLECT_WAITALL);
 	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 	if (error == HAMMER2_ERROR_ENOENT)
