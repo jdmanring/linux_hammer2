@@ -1718,11 +1718,26 @@ EDEADLK, if a write was in flight then or began since, the call waits for
 those writes and runs again, up to eight times (`hammer2_write_wait()`). A
 disagreement no write ran beside fails. The count is per inode, so a write
 to another block also earns a run; the bound keeps a stream of writes from
-holding one call. `cluster-quorum.sh` holds a write between its two
-masters with the debug build's `write_gap_ms` and requires a SEEK_HOLE and
-a FIEMAP made inside that window to answer, and the same calls with
+holding one call, and so a stream can still fail it: each run waits only
+for the writes begun at its check, the next block's write starts as soon
+as those complete, and the eight runs are one budget across the scan's
+chunks, so a healthy two-master SEEK_HOLE or FIEMAP beside a long
+writeback can fail EIO (the sixth review of N10.6, read from the code, not
+run). `cluster-quorum.sh` holds one write between its two masters with
+the debug build's `write_gap_ms` and requires a SEEK_HOLE and a FIEMAP
+made inside that window to answer, and the same calls with
 `write_wait_off` set, which refuses the wait, to fail EIO, so a pass shows
-the window was met.
+the window was met. The read's and `bmap`'s waits are the same code and
+have not been run in the window.
+
+Nor does the count reach the other modifying XOPs. The inode chain sync
+(`hammer2_inode_chain_sync()`) changes the inode chain's tid on one master
+and then the next under the target's lock alone, and a lookup by name or
+inode number holds only the directory, so from the code a cold lookup
+between the two elements meets the inode chain at two tids and fails EIO
+on a healthy cluster; an insert that creates a file's first indirect block
+reaches the same state through the strategy write, which counts but which
+no lookup samples. No run has made either.
 
 The rule is the same for every XOP. A read, the lookup by name or by
 inode number, `bmap`, a listing, the name-collision scan a create and a

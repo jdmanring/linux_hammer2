@@ -77,10 +77,11 @@ has been read back by DragonFly and the other way round
   1.0.84, its closure mapping the pass's reading over TLS and the five
   criteria to their runs.
 - **A SLAVE behind its MASTER under a partial write**: a write of less
-  than a 64 KiB block into a block the slave holds stale leaves the
-  slave's old bytes beside the new ones under the master's tid, and the
-  synchronization pass, which compares tids, never repairs it. Measured
-  by `script/cluster-sync.sh` at 1.0.93; not fixed. Two MASTERs reach
+  than a 64 KiB block into a block the slave holds stale leaves both
+  volumes holding it at the master's tid with different contents,
+  measured by `script/cluster-sync.sh` at 1.0.93; not fixed. From the
+  code, the slave keeps its old bytes beside the new ones and the
+  synchronization pass, which compares tids, never replaces them. Two MASTERs reach
   the same assembly, from the code, through a page cached before their
   block came to be disputed.
 - **Writes through a cluster with a remote master**: refused; such a

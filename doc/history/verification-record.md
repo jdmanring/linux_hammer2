@@ -23574,9 +23574,10 @@ control. Every check passed: the debug vote 39 (`:103`), the KASAN vote
 keep block 2 at `581` and `559` (`:82`), on KASAN at `5d7` and `5af`
 (`:1202`), on release at `55b` and `533` (`:1279`); both comparison
 controls differ. The debug run's kept log
-(`fixtures/quorum-run-20261106-081820.klog`) holds 52 `H2 READ` lines,
-all `collect=00010000 error=5`, the 52nd the write's own read of the page
-at 0x21000. Its `syncsnap: noquorum` lines read 2048 (22 of them) and
+(`fixtures/quorum-run-20261106-081820.klog`) holds 52 failed reads, each
+an `H2 READ` line with `collect=00010000 error=5` followed by one line per
+element (156 `H2 READ` lines in all), the 52nd the write's own read of the
+page at 0x21000. Its `syncsnap: noquorum` lines read 2048 (22 of them) and
 524288 (one), as at seq12 and against seq14's 65536, and those values,
 not the quorum print, are the evidence that the sync thread's own
 left-out element no longer reads as a disagreement. The `no quorum
@@ -23623,8 +23624,8 @@ resume key, reads a small folio in `hammer2_write_begin()` only when more
 than one element votes, and corrects decision C's opening. `8522527`
 drives the errored master with `scan_fail_elm` and its unset control, and
 `96667a0` drops an order the held-writeback check required that the wait
-does not give. The review's account of seq15's ratelimited print is
-corrected in the section above.
+does not give. The record's own account of seq15's ratelimited print,
+which the review flagged, is corrected in the section above.
 
 **The run** (`n10-6-seq16.log`, head `96667a0`, no uncommitted change;
 predictions `p7-notes/n10-6-expected11.md`). Seq15 is the control for
@@ -23654,11 +23655,16 @@ the sync vote 62 (`:186`).
   counted the reads; `no quorum possible` 8 times at 0x20000, twice at
   0xa0000, and three times at 0x10000 in the held-writeback phase, none
   at `b6a9cb23fd8a8001`; `syncsnap: noquorum` 28 times at 2048 and once
-  at 524288, none at 65536. The held phase's first print follows
-  `hammer2_xop_collect: 200 callbacks suppressed` (`:309`), 7.3 s after
-  the disagreement phase's last printed line, so the disputed blocks'
-  prints were suppressed here as in seq15, which had no later print to
-  report them.
+  at 524288, none at 65536. The held phase's first printed line follows
+  `hammer2_xop_collect: 200 callbacks suppressed`
+  (`quorum-run-20261107-205149.klog:309`), 7.3 s after the disagreement
+  phase's last printed line. The 200 are the disputed blocks' prints and,
+  from the 4.16 s spacing of the three held prints, likely the held
+  phase's first call, which would have printed inside the burst's
+  five-second window: the held phase met EDEADLK four times (two waits,
+  `:92`, and two failures with the wait off, `:89`, `:91`) and printed
+  three. Seq15 suppressed its disputed blocks' prints the same way and had
+  no later print to report them.
 - The rest passed: the race mode on both builds (`:46`, `:1177`),
   fixtures (`:211`), enospc as root and as a user, each 2 GiB filled with
   0 failures and 0 blocks available after the sync (`:437`, `:642`,
@@ -23680,9 +23686,10 @@ the slave's block 3 at tid `22f` behind the master's `23b` and still
 there after the seek (`:128`), the block read cold, 4 KiB of it
 rewritten, a sync, then each volume's media. Both hold the block at tid
 `242`, with xxh64 `1f7a173d573f069f` on the master and `f67957fddce5660d`
-on the slave (`:130`). Each element's writeback assembled the block from
-its own chain (`hammer2_strategy_assemble()`), so the slave holds its
-stale 60 KiB under the master's tid. The sync pass replaces a block only
+on the slave (`:130`). The reading shows the contents differ; that the
+difference is the slave's stale 60 KiB beside the new 4 KiB is read from
+the code, each element's writeback assembling the block from its own
+chain (`hammer2_strategy_assemble()`). The sync pass replaces a block only
 when its tid differs (`hammer2_synchro.c:2384`), so from the code no later
 pass repairs it; the run read the block once after the write. The defect
 predates N10.6, since the write path has assembled per element since it

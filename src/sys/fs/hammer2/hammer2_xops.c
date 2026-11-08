@@ -925,7 +925,7 @@ hammer2_xop_scanall(hammer2_xop_t *arg, void *scratch, int clindex)
 #if defined(HAMMER2_LOCKDEBUG)
 	if (clindex == READ_ONCE(hammer2_scan_fail_elm) &&
 	    xop->head.ip1->meta.type == HAMMER2_OBJTYPE_REGFILE) {
-		error = HAMMER2_ERROR_EIO;	/* Linux: scan_fail_elm */
+		error = HAMMER2_ERROR_EIO;	/* XXX Linux: scan_fail_elm */
 		hammer2_chain_unlock(parent);
 		hammer2_chain_drop(parent);
 		goto done;
