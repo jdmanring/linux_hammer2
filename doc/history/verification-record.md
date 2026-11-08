@@ -23700,3 +23700,124 @@ on", carries the case.
 
 QEMU cores read 0 at the start and the end (`n10-6-seq16.log:1`,
 `:1334`).
+
+## The order lock, and a flush that moved an inode's tid, 2026-11-08
+
+The sixth review of N10.6 (`p7-notes/audit-n10-6-round6.md`) found that
+the bounded wait of 1.0.93 could still fail a two-master SEEK_HOLE beside
+a stream of writebacks, and that a lookup between the elements of an
+inode chain sync met the chain at two tids. `58a3be3` replaced the wait
+with the order: a per-inode `xop_sem`, held for write across the element
+loop by every XOP whose descriptor is ordered, with the read, `bmap` and
+each chunk of the seek's scan running once more under its read side on
+EDEADLK. Its falsifier, `order_check`, counts a modify of a hashed
+inode's chain made without that inode's order.
+
+**The first run** (`n10-6-seq17.log`, head `58a3be3`, no uncommitted
+change; predictions `p7-notes/n10-6-expected12.md`). The guarded calls
+answered inside the held window on every build, each with a rerun
+(`:89-98`, KASAN `:1407-1416`, release `:1504-1513`), and the debug vote
+failed three checks (`:123`):
+
+- `order_check` read 8 with one warning, an inode chain sync in task
+  `sync` (`fixtures/quorum-run-20261108-002251.klog:534`, 164.49 s). It
+  fired 2.07 s after the order-off pwrite window's `drop_caches` at
+  162.42 s: that window's `sync &` ran with `xop_order_off` set, which
+  the harness cleared only after the sync returned. The harness's own
+  control, not a missed order.
+- FIBMAP with the order out answered `exit 0 eio 0` with a rerun and 519
+  ms (`:96`). `->bmap` returns a block number and `hammer2_bmap()`
+  answers 0 for an error as for a hole, so FIBMAP cannot carry EIO; the
+  control was wrong, and the call met the window.
+- The sync vote warned once (`:190`): inode `0x424` modified at tid
+  `0x2ad` without its order, from `hammer2_vfs_sync_pmp()` through
+  `hammer2_inode_chain_flush()` and the flush's
+  `hammer2_chain_indirect_maintenance()`, deleting an emptied indirect
+  block and modifying its parent inode chain at that block's tid
+  (`fixtures/cluster-run-20261108-002253.klog:458-460`). The design's
+  premise that a flush moves no `modify_tid` was false.
+- Q3 was blind: xfs_io's `fiemap` passes `FIEMAP_FLAG_SYNC` unless given
+  `-e`, and `fiemap_prep()` then writes the file back and waits
+  (`fs/ioctl.c:193` on 7.3), so each loop call drained the stream. The
+  loop made 3 and 1 calls in (b) and (c) (`:100-101`), and the module
+  from before the order, `a066966`, passed the same Q3(b) with `calls 3
+  eio 0` (`:1296`), so the reading said nothing about the review's
+  finding.
+- The rest passed as predicted: the race mode (`:47`, `:1365`), fixtures
+  (`:230`), enospc as root and as a user (`:653`, `:1064`), xfstests
+  `-g seek` 8 of 8 (`:1141`), storm (`:1175`), KASAN 0 reports
+  (`:1442`); the control with the errored master's return removed failed
+  its one check, `answer 0 eio 0` (`:1208`, `:1242`).
+
+`3c87b0b` orders the flush of every inode but the PFS root on that
+inode, through a second descriptor for the same storage function, and
+gives the falsifier its own control: an ordered XOP running with the
+order withdrawn is counted in `xop_withdrawn` for its loop, a modify
+beside one counts in `order_check_off` without warning, and the harness
+requires that count to be at least 1. FIBMAP's control is the block
+reported unmapped; Q3's map is `fiemap -e`, and each call is EIO, an
+answer with a map, or bad. The seventh review
+(`p7-notes/audit-n10-6-round7.md`) read the same three failures from the
+code and added the rest of that commit; the eighth
+(`p7-notes/audit-n10-6-round8.md`) found the HM2 client mapping the
+flush command by the old descriptor's pointer, which `d473bd6` fixes. No
+local run reaches that map: every element not on a connection device
+returns before it (`hammer2_remote.c:2023-2027`), so seq18's readings at
+`3c87b0b` stand for `d473bd6`.
+
+**The second run** (`n10-6-seq18.log`, head `3c87b0b`, no uncommitted
+change; predictions `p7-notes/n10-6-expected13.md`). Every check passed
+on the module: the debug vote 56 (`:123`), the KASAN vote 56 (`:1377`)
+with 0 reports (`:1379`), the release split run 61 (`:1475`), the sync
+vote 62 with no warning (`:190`, `:199`).
+
+- `order_check` 0, with 8 in `order_check_off` from the order-off
+  windows (`:103`, KASAN `:1357`); no hung task with the detector at
+  120 s (`:104`); `debug_locks` 1 after each group (`:125`, `:201`,
+  `:1178`, `:1256`).
+- FIBMAP mapped the block with the order (`ext 1`, `:95`) and reported
+  it unmapped with the order out (`ext 0`, a rerun, 517 ms, `:96`).
+
+| Q3, the loop beside a 256 MiB writeback held 5 ms between the masters | calls | EIO | bad | reruns |
+|---|---|---|---|---|
+| (b) the order, `h2debug` (`:100`) | 331 | 0 | 0 | 623 |
+| (b) the order, `h2kasan` (`:1354`) | 179 | 0 | 0 | 237 |
+| (b) the order, `h2release` (`:1452`) | 1184 | 0 | 0 | 2616 |
+| (c) the order out, `h2debug` (`:101`) | 536 | 480 | 0 | 858 |
+| (c) the order out, `h2release` (`:1453`) | 2949 | 2940 | 0 | 5407 |
+| (b) `a066966`, the bounded wait, `h2debug` (`:1231`) | 228 | 153 | 0 | 2125 |
+
+The last row is the sixth review's finding as a run: the eight-run wait
+of 1.0.93 failed 153 of 228 calls beside the stream, where the order
+failed none of 331 on the same build. Q3(a), with no gap, met no write in
+flight on any build (`:99`, `:1353`, `:1451`), a reading. The writeback
+beside the loop took 26555 ms against 24716 ms alone on `h2debug`
+(`:102`), and 25524 against 24671 on `h2release` (`:1454`).
+
+| reading, `h2release-7.3tls`, 16 GiB | seq17 (`58a3be3`) | seq18 (`3c87b0b`) |
+|---|---|---|
+| two masters, SEEK_HOLE | 33.51 ms (`seq17:1470`) | 32.26 ms (`:1407`) |
+| writer beside it | 67.19 ms (`seq17:1471`) | 64.41 ms (`:1408`) |
+| split SEEK_HOLE, failing EIO | 33.57 ms (`seq17:1475`) | 32.20 ms (`:1412`) |
+| writer beside the split | 66.31 ms (`seq17:1476`) | 64.95 ms (`:1413`) |
+| 300,000 files created, the order | 121 s (`seq17:1548`) | 119 s (`:1485`) |
+| 300,000 files created, `a066966` | 120 s (`seq17:1585`) | 119 s (`:1522`) |
+
+The ordered flush moved the create rate by nothing the whole-second
+reading resolves. The single-element runs passed as in seq17: the race
+mode (`:47`, `:1301`), fixtures (`:230`), enospc as root and as a user
+(`:653`, `:1064`), xfstests `-g seek` 8 of 8 (`:1141`), storm (`:1175`),
+with no `without its order` line in the guest's log after them
+(`:1177`).
+
+What the order does not cover yet: the lookups by name and by inode
+number compare the inode chain and do not run again under it, so a
+lookup between two masters' flushes or chain syncs of that inode can
+still fail EIO on a healthy cluster, from the code, not run; a
+synchronization thread's pass flushes its own element outside any order;
+a peer's write through the server path takes none (P8's lease step). The
+stale slave under a partial write still reads two contents under one tid
+(`:143`), as seq16 read it.
+
+QEMU cores read 0 at the start and the end of both runs
+(`n10-6-seq17.log:1`, `:1619`; `n10-6-seq18.log:1`, `:1556`).

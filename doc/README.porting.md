@@ -1742,8 +1742,11 @@ made in that window to rerun and answer, a read, a FIBMAP and the read
 loop beside a 256 MiB writeback to answer every call, each with the order
 taken out (`xop_order_off`) as its control. FIBMAP has no error to give
 (`->bmap` returns a block number, and `hammer2_bmap()` answers 0 for an
-error as for a hole), so its control is the block reported unmapped. All of this is read from the
-code until that run: no run has exercised the order. In a debug build on
+error as for a hole), so its control is the block reported unmapped.
+At 1.0.94 each of these passed on the debug, KASAN and release builds,
+and the module from before the order, under the same harness, failed
+153 of 228 calls in the stream with EIO (`doc/history/verification-record.md`,
+"The order lock, and a flush that moved an inode's tid"). In a debug build on
 a kernel with lockdep, `order_check` counts a modify of a hashed inode's
 chain at a nonzero transaction id made without that inode's order held
 for write, which would show the order missing a change it was meant to

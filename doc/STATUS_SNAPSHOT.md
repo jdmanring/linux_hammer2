@@ -27,7 +27,11 @@ page is the defect.
   one host copies a master on another. Two MASTERs of one cluster id on
   two local volumes are read through DragonFly's quorum check: a block
   the masters disagree on fails its read, seek and map with EIO rather
-  than reading as a hole or as one master's copy.
+  than reading as a hole or as one master's copy. A read, seek or map
+  that meets a change on one master and not yet the next waits for it
+  under the inode's order and answers (1.0.94). A lookup does not wait
+  yet: one made between two masters' flushes or chain syncs of an inode
+  can fail EIO on a healthy cluster, read from the code and not run.
 
 ## How it is verified
 
