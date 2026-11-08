@@ -23810,14 +23810,73 @@ mode (`:47`, `:1301`), fixtures (`:230`), enospc as root and as a user
 with no `without its order` line in the guest's log after them
 (`:1177`).
 
-What the order does not cover yet: the lookups by name and by inode
-number compare the inode chain and do not run again under it, so a
-lookup between two masters' flushes or chain syncs of that inode can
-still fail EIO on a healthy cluster, from the code, not run; a
-synchronization thread's pass flushes its own element outside any order;
-a peer's write through the server path takes none (P8's lease step). The
-stale slave under a partial write still reads two contents under one tid
-(`:143`), as seq16 read it.
+What the order did not cover at 1.0.94: the lookups by name and by
+inode number compared the inode chain and did not run again under it, so
+a lookup between two masters' flushes or chain syncs of that inode could
+fail EIO on a healthy cluster, from the code, not run; a synchronization
+thread's pass flushes its own element outside any order; a peer's write
+through the server path takes none (P8's lease step). The stale slave
+under a partial write still reads two contents under one tid (`:143`),
+as seq16 read it.
 
 QEMU cores read 0 at the start and the end of both runs
 (`n10-6-seq17.log:1`, `:1619`; `n10-6-seq18.log:1`, `:1556`).
+
+## The lookups rerun by their target, and the unlink's orphan, 2026-11-08
+
+The ninth review (`p7-notes/audit-n10-6-round9.md`) signed off
+`58a3be3..7309eba`. `1a32c3a` closes the lookup the record above left
+from the code: on EDEADLK the lookup by name, by inode number and the
+ancestor walk a rename makes take the read side of the target's order
+(`hammer2_xop_rerun_begin()`, which finds the inode by number in the
+hash) and run once more; and the unlink holds its target's order with the
+directory's across its collect, since its first element removes the name
+and then feeds the target's inode chain, so a chain sync between the two
+elements left the inode linked with no name. The harness holds a chain
+sync between the masters (`xop_gap_desc=inode_chain_sync`, 2000 ms) and
+makes a cold lookup and an unlink 500 ms into it, each with the order out
+as its control; the unlink's control is the orphan, read from each
+volume's media by the inode's `nlinks` beside a kept file at one link.
+
+**The first run** (`n10-6-seq19.log`, head `7309eba` with the change
+uncommitted; predictions `p7-notes/n10-6-expected14.md`). Q4 passed on
+the debug and release builds: the cold lookup reran once and answered
+after 2072 and 2035 ms (`seq19-debug.out:56`, `seq19-release.out:56`),
+and with the order out failed EIO at 515 and 503 ms (`:57` in each). Q5
+with the order passed on both, the inode absent on both volumes beside
+the kept file at one link (`:58` in each). Q5's control did not fire:
+with the order out the unlink still exited 0 after 2050 and 2021 ms with
+the inode absent (`:59` in each), one failed check of 60 and of 57. The
+KASAN pass was COULD-NOT-RUN (`seq19-kasan.out:2`): a kernel-switch call
+typed with the wrong kind name rebooted the guest under it. The cause of
+the control: `rm` calls `newfstatat` on its argument before `unlinkat`
+(read with `strace` on the host), `getattr` takes the inode lock shared
+(`hammer2_vnops.c`, `hammer2_vop_getattr()`), and the syncer holds that
+lock exclusive across the chain sync (`hammer2_vfsops.c`,
+`hammer2_vfs_sync_pmp()`), so the unlink began after the window closed.
+The harness had serialized itself on its subject, the class Q3 fell into
+with `fiemap` at seq17; `cluster-quorum.sh` calls `unlink(1)` since.
+
+**The second run** (`n10-6-seq20.log`, head `7309eba` with the change
+uncommitted; the prediction appended to `n10-6-expected14.md`). The
+debug vote 60 checks and 0 failed (`seq20-debug.out:80`), the KASAN vote
+60 and 0 failed (`seq20-kasan.out:80`) with 0 reports (`:68`,
+`n10-6-seq20.log:12`).
+
+| seq20 | debug | KASAN |
+|---|---|---|
+| Q4, the lookup under the order: reruns, ms | 1, 2049 (`:56`) | 1, 2071 (`:56`) |
+| Q4, the order out: EIO at ms | 1, 516 (`:57`) | 1, 560 (`:57`) |
+| Q5, the unlink under the order: ms, f2 on a/b, keep on a/b | 2058, absent/absent, 1/1 (`:58`) | 2077, absent/absent, 1/1 (`:58`) |
+| Q5, the order out: EIO at ms, name, f2 nlinks on a/b | 1 at 514, gone, 1/1 (`:59`) | 1 at 540, gone, 1/1 (`:59`) |
+| `order_check`, `order_check_off` | 0, 14 (`:60`) | 0, 14 (`:60`) |
+
+The last Q5 row is the orphan the order prevents: with the order out the
+name is gone on both masters and the inode keeps its link on both
+volumes' media, found by `hammer2 -v show` beside the kept file. No hung
+task with the detector at 120 s and `debug_locks` 1 at the end on the
+debug build (`seq20-debug.out:61-62`). The release build ran Q4 and Q5
+under the order only at seq19 (above); the control was not rerun there.
+
+QEMU cores read 0 at the start and the end of both runs
+(`n10-6-seq19.log:1`, `:27`; `n10-6-seq20.log:1`, `:18`).

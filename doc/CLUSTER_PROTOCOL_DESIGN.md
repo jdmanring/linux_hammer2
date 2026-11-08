@@ -1736,9 +1736,9 @@ quorum the check returns that master's own error in place of `EDEADLK`.
 The first is now the order: an XOP that changes a tree holds a per-inode
 `xop_sem` for write across its elements, and the read, `bmap` and the
 seek's scan run once more under its read side, an `EDEADLK` there being
-final. The lookups do not rerun yet, so a lookup beside an inode's chain
-sync still reads as a disagreement (`doc/README.porting.md`, the same
-section). What a disagreement is across hosts stays decision A's.
+final. The lookups rerun by their target since 1.0.95, and the unlink
+holds its target's order across its collect (`doc/README.porting.md`,
+the same section). What a disagreement is across hosts stays decision A's.
 
 ### D. The acknowledgment modes and MESI over the wire
 
