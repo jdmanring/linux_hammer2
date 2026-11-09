@@ -211,15 +211,21 @@ if [ $CHURN = 1 ]; then
 	# is taken through it. What the snapshot holds is whatever it caught;
 	# the reading is that it mounts, counts, and every file in it holds
 	# its own path, on both sides.
-	tc=\$(date +%s)
+	# Milliseconds: in whole seconds a churn of about four read 4 against
+	# 5 and 6 between two modules and settled nothing (n10-6-seq22). The
+	# churn is timed inside its own shell, so the sleep and the snapshot's
+	# wait are not in its reading.
+	tc=\$(date +%s%N)
 	( d=0; while [ \$d -lt $((FAN / 10)) ]; do
 		rm -rf /mnt/tree/d\$d; mkdir /mnt/tree/d\$d; i=0
 		while [ \$i -lt $per ]; do echo "d\$d/f\$i" > /mnt/tree/d\$d/f\$i; i=\$((i + 1)); done
-		d=\$((d + 1)); done ) &
-	sleep 3; ts=\$(date +%s)
-	hammer2 snapshot /mnt/tree SNAP1 >/dev/null 2>&1; echo "snapshot under churn exit \$? in \$((\$(date +%s) - ts)) s"
+		d=\$((d + 1)); done
+	  echo "churn alone \$(( (\$(date +%s%N) - tc) / 1000000 )) ms" ) &
+	sleep 3; ts=\$(date +%s%N)
+	hammer2 snapshot /mnt/tree SNAP1 >/dev/null 2>&1; s=\$?
+	echo "snapshot under churn exit \$s in \$(( (\$(date +%s%N) - ts) / 1000000 )) ms"
 	wait
-	echo "churn of $((FAN / 10)) directories, $((per * FAN / 10)) files deleted and written again, in \$((\$(date +%s) - tc)) s"
+	echo "churn of $((FAN / 10)) directories, $((per * FAN / 10)) files deleted and written again, in \$(( (\$(date +%s%N) - tc) / 1000000 )) ms"
 	t1=\$(date +%s)
 fi
 sync; t2=\$(date +%s)
@@ -253,8 +259,8 @@ if [ $CHURN = 1 ]; then
 	umount /mnt/snap; echo "snapshot umount exit \$?"
 	# The whole tree deleted, timed, and what the volume gave back: the
 	# store garbage collection reading.
-	td=\$(date +%s); rm -rf /mnt/tree/d*; sync
-	echo "deleted the tree in \$((\$(date +%s) - td)) s, blocks used \$(stat -f -c '%b %a' /mnt/tree), memavailable \$(mem) kB"
+	td=\$(date +%s%N); rm -rf /mnt/tree/d*; sync
+	echo "deleted the tree in \$(( (\$(date +%s%N) - td) / 1000000 )) ms, blocks used \$(stat -f -c '%b %a' /mnt/tree), memavailable \$(mem) kB"
 	echo "left \$(find /mnt/tree -type f | wc -l) files"
 fi
 umount /mnt/tree; echo "second umount exit \$?"
