@@ -24080,6 +24080,19 @@ contents where no namespace walk reaches them, and the checkers of
 neither tree see either. A crash after that sync would mount
 the same state, read from the code, not run.
 
+seq27 ran the churn twice more on `h2release-7.3tls`, on the module of
+`48113c1`, whose `src/` differs from seq24's HEAD in four comment lines
+of `hammer2.h`, and both runs kept a name without its inode, `d60` and
+`d57`, on both sides (`seq27-tree-1.out:25-27`, `:46-48`; `-2.out`, the
+same lines): HEAD's module now 4 of 7, and over seq22, seq24 and seq27
+5 of 12. Of the two kept images (`p7-notes/seq27-tree-dangling.log`), the
+second holds the replaced directory named by nothing, `0xe2e1`, with its
+1000 entries (`:7-9`); the first holds the dangling name alone, 999999
+inodes for 1000000 entries (`:3-4`), so there the old directory's
+removal and its files' unlinks reached the media and only the new
+inode's insertion did not. The orphan half is 4 of the 5 snapshots read
+on media, not each one.
+
 The candidate mechanism is read from the code and the same in both trees:
 `hammer2_inode_setdepend_locked()` sets `HAMMER2_TRANS_RESCAN` when an
 inode joining the dependency is still on the SYNCQ, when it carries
