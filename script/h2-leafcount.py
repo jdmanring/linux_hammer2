@@ -12,9 +12,10 @@ what media actually carries.
 The rule, from the insert: each child INODE or DIRENT counts 1; a DATA
 child counts 1 plus its own leaf_count; an INDIRECT child counts its
 leaf_count; the sum saturates at 65535 (HAMMER2_BLOCKREF_LEAF_MAX).  Every
-INODE and INDIRECT line with children printed under it is checked against
-that sum.  The volume header's own blockref is not maintained and is
-skipped.
+INODE and INDIRECT line is checked against that sum, a childless one
+against 0 (an inode with its data embedded reads 0; a count a delete left
+saturated over nothing does not).  The volume header's own blockref is
+not maintained and is skipped.
 
 For each INDIRECT whose subtree holds file data it also reads the lever's
 predicate, leaf_count == 2^(keybits - 16) (one 64 KiB block per slot of
@@ -22,12 +23,24 @@ its key range), against the truth from the leaves: the bytes the data
 leaves under it cover (2^keybits each) equal 2^keybits of the indirect.
 "says full, has a hole" is the case a skip would answer wrongly.
 
-    hammer2 -q show <image> > dump; python3 script/h2-leafcount.py dump
+    python3 script/h2-leafcount.py <image>...   (H2_HAMMER2 names show's binary)
+
+Several images print a header per image and the totals over all of them,
+which is how the reading in the record is taken over the kept fixtures.
+
+The tool runs `hammer2 -q show` itself so that show's exit status is read:
+show prints everything before a media read error and then fails, and a
+dump that stopped short must not read as whole.  HAMMER2_SHOW_TAB and
+HAMMER2_SHOW_DEPTH are removed from show's environment, since one
+flattens the indentation the tree is read from and the other truncates it.
 
 Prints one summary line per category and the first mismatches.  Exit 2
-when the dump holds no blockref line at all or a line naming a blockref
+when show fails, when the dump holds no blockref line, when it holds more
+than one and no parent (a flat dump), or when a line naming a blockref
 type does not parse, since a reading of nothing must not read as exact.
 """
+import os
+import subprocess
 import re
 import sys
 
@@ -101,14 +114,15 @@ def walk(roots):
 
 
 def measure(roots):
-    r = {"nodes": 0, "parents": 0, "exact": 0, "mismatch": [], "saturated": 0,
+    r = {"nodes": 0, "parents": 0, "nested": 0, "exact": 0, "mismatch": [], "saturated": 0,
          "data_indirects": 0, "full_full": 0, "full_hole": [], "short_full": 0,
          "short_hole": 0, "too_wide": 0}
     for n in walk(roots):
         r["nodes"] += 1
-        if n.type not in ("inode", "indirect") or not n.children:
+        if n.type not in ("inode", "indirect"):
             continue
         r["parents"] += 1
+        r["nested"] += 1 if n.children else 0
         if n.leafcnt == LEAF_MAX:
             r["saturated"] += 1
         want = counted(n)
@@ -153,22 +167,63 @@ def report(r, out, limit=10):
               % (n.line, n.key, n.keybits, n.leafcnt, b, 1 << n.keybits), file=out)
 
 
+def show(image):
+    """The quiet dump of image, or raises ValueError naming show's failure."""
+    h2 = os.environ.get("H2_HAMMER2") or os.path.expanduser(
+        "~/Projects/hammer2-utils-upstream/target/release/hammer2")
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("HAMMER2_SHOW_TAB", "HAMMER2_SHOW_DEPTH")}
+    try:
+        p = subprocess.run([h2, "-q", "show", image], env=env,
+                           capture_output=True, text=True)
+    except OSError as e:
+        raise ValueError("cannot run %s: %s" % (h2, e))
+    if p.returncode != 0:
+        raise ValueError("show exited %d on %s: %s" % (p.returncode, image,
+                         p.stderr.strip().splitlines()[-1:] or ""))
+    return p.stdout.splitlines(True)
+
+
+def read(lines, what):
+    """measure() over lines, or raises ValueError when nothing was read."""
+    r = measure(parse(lines))
+    if r["nodes"] == 0:
+        raise ValueError("no blockref line in %s" % what)
+    if r["nodes"] > 1 and r["nested"] == 0:
+        raise ValueError("%d blockref(s) and none under another in %s: a flat dump"
+                         % (r["nodes"], what))
+    return r
+
+
 def main(argv):
-    if len(argv) != 2:
-        print("usage: h2-leafcount.py <quiet show dump> | --selftest", file=sys.stderr)
+    if len(argv) < 2:
+        print("usage: h2-leafcount.py <image>... | --selftest", file=sys.stderr)
         return 2
-    with open(argv[1]) as f:
+    keys = ("nodes", "parents", "exact", "saturated", "data_indirects",
+            "full_full", "short_full", "short_hole", "too_wide")
+    tot = dict.fromkeys(keys + ("mismatch", "full_hole", "unread"), 0)
+    for image in argv[1:]:
+        if len(argv) > 2:
+            print("== %s" % os.path.basename(image))
         try:
-            roots = parse(f)
+            r = read(show(image), image)
         except ValueError as e:
             print("leafcount: COULD-NOT-READ: %s" % e, file=sys.stderr)
-            return 2
-    r = measure(roots)
-    if r["nodes"] == 0:
-        print("leafcount: COULD-NOT-READ: no blockref line in %s" % argv[1], file=sys.stderr)
-        return 2
-    report(r, sys.stdout)
-    return 0
+            tot["unread"] += 1
+            continue
+        report(r, sys.stdout)
+        for k in keys:
+            tot[k] += r[k]
+        tot["mismatch"] += len(r["mismatch"])
+        tot["full_hole"] += len(r["full_hole"])
+    if len(argv) > 2:
+        print("leafcount total over %d image(s), %d unread: %d parent(s), %d mismatched; "
+              "%d data indirect(s): full and says so %d, says full with a hole %d, "
+              "short and full %d, short with a hole %d, too wide %d"
+              % (len(argv) - 1, tot["unread"], tot["parents"], tot["mismatch"],
+                 tot["data_indirects"], tot["full_full"], tot["full_hole"],
+                 tot["short_full"], tot["short_hole"], tot["too_wide"]))
+    return 2 if tot["unread"] else 0
 
 
 def selftest():
@@ -205,9 +260,36 @@ def selftest():
     # Saturation: a parent counted past 65535 must read 65535.
     sat = dump([(0, "inode", 0, 0, LEAF_MAX)] + [(1, "indirect", i << 40, 40, 30000) for i in range(3)])
     r = measure(parse(sat))
-    expect(r["saturated"] == 1 and not r["mismatch"], "a sum past 65535 reads saturated and exact")
-    # Nothing to read must not read as exact.
-    expect(main(["x", "/dev/null"]) == 2, "an empty dump exits 2")
+    expect(r["saturated"] == 1 and not [n for n, w in r["mismatch"] if n.type == "inode"],
+           "a sum past 65535 reads saturated and exact")
+    # A saturated count left over nothing, and an embedded inode at 0.
+    left = dump([(0, "inode", 0, 0, LEAF_MAX), (0, "inode", 1, 0, 0)])
+    r = measure(parse(left))
+    expect([(n.leafcnt, w) for n, w in r["mismatch"]] == [(LEAF_MAX, 0)],
+           "a childless count reads against 0: 65535 mismatched, 0 exact")
+    # Dirents count 1, a data leaf 1 plus its own count.
+    mix = dump([(0, "inode", 0, 0, 5), (1, "dirent", 0, 0, 0), (1, "data", 0, 16, 3)])
+    r = measure(parse(mix))
+    expect(not r["mismatch"], "a dirent counts 1 and a data leaf 1 plus its count")
+    # A real show line, as hammer2-utils prints it.
+    real = ["    inode.0   0000000000000001 b0d7dddc6d0b8000/0 vol=0 mir=00000000000a0001 mod=00000000000a0001 leafcnt=0 \n"]
+    expect(parse(real)[0].leafcnt == 0 and parse(real)[0].type == "inode", "a real show line parses")
+    # Nothing to read, and a flat dump, must not read as exact.
+    for what, lines in (("an empty dump", []),
+                        ("a flat dump", [l.lstrip() for l in full])):
+        try:
+            read(lines, what)
+            expect(False, "%s is refused" % what)
+        except ValueError:
+            expect(True, "%s is refused" % what)
+    env = dict(os.environ, H2_HAMMER2="/bin/false")
+    old = os.environ.copy()
+    os.environ.update(env)
+    try:
+        expect(main(["x", "/dev/null"]) == 2, "a show that fails exits 2")
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
     try:
         parse(["    data.0   zzzz\n"])
         expect(False, "a malformed blockref line is refused")
