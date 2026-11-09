@@ -198,7 +198,11 @@ summary="xfstests: $nexec of $nran executed, $nskip not run (${notrun:-none}), $
 [ -n "$ran" ] || [ -z "$expunged" ] || { echo "xfstests: COULD-NOT-RUN: every test named is expunged: $expunged" >&2; exit 2; }
 [ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
 fail=0
-[ -n "$failed" ] && fail=1
+# A failed test's .out.bad and .full are on the guest until the next run's
+# setup removes them, so they are copied off beside the images.
+[ -n "$failed" ] && {
+	fail=1; keep=$FIXDIR/xfstests-results-$(date +%Y%m%d-%H%M%S)
+	scp -qr "$GUEST_SSH:/root/h2xfstests/results" "$keep" && echo "  results kept in $keep" || echo "  results not copied off"; }
 printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0$' || {
 	echo "  FAIL  the kernel log is not clean"; fail=1; }
 echo "$summary"
