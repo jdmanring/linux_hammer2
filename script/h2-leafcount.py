@@ -319,7 +319,8 @@ def selftest():
         os.environ["H2_HAMMER2"] = os.path.join(tmp, "fails")
         expect(main(["x", "/dev/null"]) == 2, "a show that prints a whole dump and fails exits 2")
         os.environ["H2_HAMMER2"] = os.path.join(tmp, "env")
-        os.environ.update(HAMMER2_SHOW_TAB="0", HAMMER2_SHOW_MIN_MODIFY_TID="1")
+        os.environ.update(HAMMER2_SHOW_TAB="0", HAMMER2_SHOW_DEPTH="1", HAMMER2_SHOW_MIN_MIRROR_TID="1",
+                          HAMMER2_SHOW_MIN_MODIFY_TID="1", HAMMER2_SHOW_ALL_VOLUME_HEADERS="1")
         expect(main(["x", "/dev/null"]) == 0, "no HAMMER2_SHOW_ variable reaches show")
     finally:
         os.environ.clear()
