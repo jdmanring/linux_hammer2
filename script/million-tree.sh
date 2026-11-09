@@ -263,10 +263,18 @@ if [ $CHURN = 1 ]; then
 	echo "snapshot counted \$sc files, spot check \$sk files, \$sb wrong"
 	umount /mnt/snap; echo "snapshot umount exit \$?"
 	# The whole tree deleted, timed, and what the volume gave back: the
-	# store garbage collection reading.
-	td=\$(date +%s%N); rm -rf /mnt/tree/d*; sync
-	echo "deleted the tree in \$(( (\$(date +%s%N) - td) / 1000000 )) ms, blocks used \$(stat -f -c '%b %a' /mnt/tree), memavailable \$(mem) kB"
-	echo "left \$(find /mnt/tree -type f | wc -l) files"
+	# store garbage collection reading. A walk that met a name without its
+	# inode leaves the tree in place instead, so the image the host keeps
+	# holds the live tree beside the snapshot. rm -f is silent on such a
+	# name, so what the delete left is read by a walk whose errors count.
+	if [ -f /tmp/walk.err ] && [ -f /tmp/snapwalk.err ] && [ "\$(cat /tmp/walk.err /tmp/snapwalk.err | grep -c .)" = 0 ]; then
+		td=\$(date +%s%N); rm -rf /mnt/tree/d*; sync
+		echo "deleted the tree in \$(( (\$(date +%s%N) - td) / 1000000 )) ms, blocks used \$(stat -f -c '%b %a' /mnt/tree), memavailable \$(mem) kB"
+		echo "left \$(find /mnt/tree -type f 2>/tmp/leftwalk.err | wc -l) files"
+		echo "left walk errors \$(grep -c . /tmp/leftwalk.err)"; head -3 /tmp/leftwalk.err
+	else
+		echo "delete skipped: a walk met errors, and the image keeps the tree"
+	fi
 fi
 umount /mnt/tree; echo "second umount exit \$?"
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
@@ -306,7 +314,12 @@ down "$GUEST" "$GUEST_SSH"
 printf '%s\n' "$out" | grep -q "^created $N files" || { echo "  FAIL  the tree was not created whole"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^counted $N files after remount" || { echo "  FAIL  the remount did not count every file"; fail=$((fail + 1)); }
 if [ $CHURN = 1 ]; then
-	for want in "^snapshot under churn exit 0" "^snapshot walk errors 0$" "^snapshot counted [1-9]" "^snapshot umount exit 0" "^left 0 files$"; do
+	for want in "^snapshot under churn exit 0" "^snapshot walk errors 0$" "^snapshot counted [1-9]" "^snapshot umount exit 0"; do
+		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
+	done
+	# A skipped delete has failed on its walk already, and its two lines
+	# are not there to read.
+	printf '%s\n' "$out" | grep -q "^delete skipped" || for want in "^left 0 files$" "^left walk errors 0$"; do
 		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 	done
 	printf '%s\n' "$out" | grep -q "^snapshot counted [0-9]* files, spot check [1-9][0-9]* files, 0 wrong" || { echo "  FAIL  the snapshot read wrong content"; fail=$((fail + 1)); }
@@ -327,8 +340,9 @@ fi
 fsck_control "$IMG" || fail=$((fail + 1))
 # A walk that met a name without its inode keeps the image as this side
 # left it, before DragonFly mounts it, since the media is the reading.
-if printf '%s\n' "$out" | grep -q "^walk errors [1-9]\|^snapshot walk errors [1-9]"; then
-	cp --sparse=always "$IMG" "$IMG.failed" && echo "  kept  the image as linux left it, $IMG.failed"
+kept=0
+if printf '%s\n' "$out" | grep -q "^walk errors [1-9]\|^snapshot walk errors [1-9]\|^left walk errors [1-9]"; then
+	cp --sparse=always "$IMG" "$IMG.failed" && kept=1 && echo "  kept  the image as linux left it, $IMG.failed"
 fi
 
 # 2. DragonFly counts the same tree and spot-checks content.
@@ -336,7 +350,8 @@ cat > "$W/dfly.sh" <<GUEST
 mkdir -p /mnt/tree
 mount_hammer2 /dev/vbd1@ROOT /mnt/tree || { echo "mount failed"; exit 1; }
 if [ $CHURN = 1 ]; then
-	echo "dragonfly counted \$(find /mnt/tree -type f | wc -l | tr -d ' ') files in the deleted tree"
+	echo "dragonfly counted \$(find /mnt/tree -type f 2>/tmp/delwalk.err | wc -l | tr -d ' ') files in the deleted tree"
+	echo "dragonfly deleted-tree walk errors \$(grep -c . /tmp/delwalk.err | tr -d ' ')"; head -3 /tmp/delwalk.err
 	umount /mnt/tree
 	mount_hammer2 /dev/vbd1@SNAP1 /mnt/tree || { echo "snapshot mount failed"; exit 1; }
 fi
@@ -370,6 +385,7 @@ printf '%s\n' "$out" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
 if [ $CHURN = 1 ]; then
 	printf '%s\n' "$out" | grep -q "^dragonfly counted 0 files in the deleted tree" || { echo "  FAIL  DragonFly found files in the deleted tree"; fail=$((fail + 1)); }
+	printf '%s\n' "$out" | grep -q "^dragonfly deleted-tree walk errors 0$" || { echo "  FAIL  DragonFly's walk of the deleted tree met a name it could not open"; fail=$((fail + 1)); }
 	printf '%s\n' "$out" | grep -q "^dragonfly counted $snapn files" || { echo "  FAIL  DragonFly did not count the snapshot as this side did"; fail=$((fail + 1)); }
 else
 	printf '%s\n' "$out" | grep -q "^dragonfly counted $N files" || { echo "  FAIL  DragonFly did not count every file"; fail=$((fail + 1)); }
@@ -377,6 +393,11 @@ fi
 printf '%s\n' "$out" | grep -q "^dragonfly spot check [1-9][0-9]* files, 0 wrong" || { echo "  FAIL  DragonFly read wrong content"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^dragonfly walk errors 0$" || { echo "  FAIL  DragonFly's walk met a name it could not open"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^dragonfly fsck clean" || { echo "  FAIL  DragonFly's checker"; fail=$((fail + 1)); }
+# DragonFly's walk erring where this side's did not keeps the image too,
+# as DragonFly left it.
+if printf '%s\n' "$out" | grep -q "^dragonfly walk errors [1-9]\|^dragonfly deleted-tree walk errors [1-9]" && [ $kept = 0 ]; then
+	cp --sparse=always "$IMG" "$IMG.failed" && echo "  kept  the image as dragonfly left it, $IMG.failed"
+fi
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after dragonfly" || { echo "  FAIL  host fsck_hammer2 after dragonfly"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
