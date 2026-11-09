@@ -203,6 +203,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	sample 'f' '[   81.949975] syncsnap: root stamp without a rescan'
 	sample 'f' '[   68.138483] syncsnap: root stamp failed on demand'
 	sample 'f' '[   82.013652] syncsnap: verify clindex 0 round 1 acted 626 failed 0 kept 0 error 0'
+	sample 'f' '[ 1635.085431] syncsnap: verify clindex 1 round 1 acted 42174 failed 1 kept 0 error 0'
 	sample 'f|keys over' '[   82.013657] syncsnap: carried round clindex 0 round 2: keys over'
 	sample 'f' '[  109.043185] syncsnap: narrowed clindex 0 round 2 keys 7'
 	sample 'f' '[   82.223111] syncsnap: verified clindex 0 rounds 2'
@@ -286,7 +287,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	# A display filter for the crash run's last lines: begin, stale, three
 	# target lines, pass, verify, verified, unverified, newer clindex,
 	# newer inode, end.
-	pat E 'syncsnap: (begin|stale|target|pass|verify|verified|unverified|newer|end)' 12
+	pat E 'syncsnap: (begin|stale|target|pass|verify|verified|unverified|newer|end)' 13
 	pat g 'h2probe: bigdir write start' 1
 	pat g 'h2probe: bigdir write end' 1
 	pat a 'START_SCAN' 1
@@ -296,8 +297,9 @@ if [ "${1:-}" = "--selftest" ]; then
 	pat a 'syncsnap: begin clindex' 1
 	pat a 'syncsnap: pass clindex' 1
 	pat a 'syncsnap: target' 3
-	pat a 'syncsnap: verify clindex' 1
-	pat a 'syncsnap: verify clindex .* round 1 ' 1
+	pat a 'syncsnap: verify clindex' 2
+	pat a 'syncsnap: verify clindex .* round 1 ' 2
+	pat a 'syncsnap: verify clindex 1 round 1 ' 1
 	pat a 'syncsnap: carried round clindex' 1
 	pat a 'syncsnap: narrowed clindex' 1
 	pat a 'syncsnap: (verified|newer|unverified|interrupted|detached) clindex' 5
@@ -502,6 +504,11 @@ NBIG2=${H2_NBIG2:-20000}
 # line forwards it to the guest half, which runs under set -u.
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
 STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
+# H2_STOP_ROUND=2 issues the stop once the pass's first round has verified,
+# so the teardown lands in its second round, in place of the copy depth:
+# the default depth sits a few copies before the first round's end, and
+# which round a stop lands in followed the speed of the cluster unmount.
+STOP_ROUND=${H2_STOP_ROUND:-0}
 # Phase 2b, the refused copy: how many allocations the freemap refuses
 # inside the thread's first pass (0 leaves the phase out). Needs
 # H2_LOCKDEBUG=1, which builds the knob. H2_KO names a module built elsewhere to load instead of building one,
@@ -1481,7 +1488,7 @@ echo "h2probe: bigdir2 write end" > /dev/kmsg
 timeout 60 umount /mnt/h2c
 verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer clindex') + $(klog 'syncsnap: unverified') )); }
 copied() { grep -c 'syncthr: update inode' $K; }
-p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode')
+p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode'); r10=$(klog 'syncsnap: verify clindex 1 round 1 ')
 # Set before the slave's device returns, so the knob is read by the copy.
 if [ "$H2_COLLAPSE" != 0 ]; then
 	[ -e /sys/module/hammer2/parameters/sync_collapse_parent ] || {
@@ -1565,7 +1572,11 @@ STOP_DEPTH=${H2_STOP_DEPTH:-0}
 # 12000 s, which only a run whose pass never copies reaches.
 t0=$(date +%s)
 while [ $(( ($(date +%s) - t0) * 1000 )) -lt "${H2_STOP_DEPTH_MS:-240000}" ]; do
-	[ $(( $(copied) - u1 )) -ge "$STOP_DEPTH" ] && break
+	if [ "$H2_STOP_ROUND" = 2 ]; then
+		[ "$(klog 'syncsnap: verify clindex 1 round 1 ')" -gt "$r10" ] && break
+	else
+		[ $(( $(copied) - u1 )) -ge "$STOP_DEPTH" ] && break
+	fi
 	[ "$(verdicts)" != "$v0" ] && break
 	sleep 0.05
 done
@@ -1579,6 +1590,7 @@ echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(copied) - u1 ))"
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
 echo "interrupt-didbreak $(klog didbreak)"
+echo "interrupt-rounds $(awk '/syncsnap: interrupted clindex/ { v = $(NF - 2) } END { print v + 0 }' $K)"
 echo "interrupt-src-cleaned $(klog 'syncsnap: unmount deleted CL.h2sync-src error 0')"
 # The target the interrupted pass meant to keep is on the slave's media, read
 # on the device the teardown closed.
@@ -1699,7 +1711,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
+GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_STOP_ROUND=$STOP_ROUND H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
@@ -2040,7 +2052,7 @@ if [ "${H2_CRASH:-0}" = 0 ]; then
 # runs 8 to 11 measured. The raw fields are printed before their checks
 # because several decide one verdict and the guest's output file is removed
 # at exit.
-echo "  raw   phase4 begun=$(val interrupt-begun) bracket=$(val interrupt-bracket-open) src-listed=$(val pass-src-listed) tgt-listed=$(val pass-tgt-listed) mutate-rc=$(val mutate-mount-rc) mutate-in-pass=$(val mutate-in-pass) stop-copied=$(val interrupt-stop-copied) in-pass=$(val interrupt-in-pass) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads=$(val interrupt-threads-before)-$(val interrupt-threads) didbreak=$(val interrupt-didbreak) src-cleaned=$(val interrupt-src-cleaned) tgt-on-media=$(val interrupt-tgt-on-media) resume-dev=$(val resume-device-rc) resume-rc=$(val resume-remount-rc) tgt-kept=$(val resume-tgt-kept) tgt-left=$(val resume-tgt-listed) inserts=$(val backlog-inserts) kept=$(val mutate-kept) mark-old=$(val interrupt-mark-old) mark-new=$(val interrupt-mark-new) reinserts=$(val mutate-reinserts) newer-inodes=$(val mutate-newer-inodes) passes=$(val resume-passes) updates=$(val resume-updates) settled=$(val resume-settled) conv-s=$(val resume-converge-seconds)"
+echo "  raw   phase4 begun=$(val interrupt-begun) bracket=$(val interrupt-bracket-open) src-listed=$(val pass-src-listed) tgt-listed=$(val pass-tgt-listed) mutate-rc=$(val mutate-mount-rc) mutate-in-pass=$(val mutate-in-pass) stop-copied=$(val interrupt-stop-copied) in-pass=$(val interrupt-in-pass) copied=$(val interrupt-copied) umount-ms=$(val interrupt-umount-ms) threads=$(val interrupt-threads-before)-$(val interrupt-threads) didbreak=$(val interrupt-didbreak) rounds=$(val interrupt-rounds) src-cleaned=$(val interrupt-src-cleaned) tgt-on-media=$(val interrupt-tgt-on-media) resume-dev=$(val resume-device-rc) resume-rc=$(val resume-remount-rc) tgt-kept=$(val resume-tgt-kept) tgt-left=$(val resume-tgt-listed) inserts=$(val backlog-inserts) kept=$(val mutate-kept) mark-old=$(val interrupt-mark-old) mark-new=$(val interrupt-mark-new) reinserts=$(val mutate-reinserts) newer-inodes=$(val mutate-newer-inodes) passes=$(val resume-passes) updates=$(val resume-updates) settled=$(val resume-settled) conv-s=$(val resume-converge-seconds)"
 echo "  raw   phase4 actions=$(val interrupt-actions) sweep-max=$(val interrupt-sweep-max)"
 a=$(val backlog-threads-down); [ "${a:-1}" = 0 ]; check "both mounts down leave no thread, so the slave element has left" $? "${a:-none}"
 a=$(val backlog-threads-up); [ "${a:-0}" = 1 ]; check "the slave's device returning starts the thread on the unmounted cluster" $? "${a:-none}"
