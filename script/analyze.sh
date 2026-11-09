@@ -33,7 +33,7 @@ FLAGS=(--analyze -Xanalyzer -analyzer-output=text --target=x86_64-linux-gnu -std
 	-Xanalyzer -analyzer-checker=core,unix,deadcode -Wno-everything
 	-I src/sys/fs/hammer2 -I src/sys)
 run() { clang "${FLAGS[@]}" -DKBUILD_BASENAME="\"$(basename "$1" .c)\"" "$1" 2>&1 |
-	grep -E 'warning:|error:' | grep -v '/include/' | sort -u; }
+	grep -E 'warning:|error:' | grep -v '/include/.*warning:' | sort -u; }
 # The control: a planted null dereference must be reported, or a clean
 # list below says only that the analyzer ran.
 ctl=$(mktemp --suffix=.c); printf 'int f(void){int *p=0;return *p;}\n' > "$ctl"
@@ -44,9 +44,18 @@ rm -f "$ctl"
 	src/sys/fs/hammer2/hammer2_strategy.c src/sys/fs/hammer2/hammer2_vfsops.c \
 	src/sys/fs/hammer2/hammer2_ondisk.c src/sys/fs/hammer2/hammer2_ioctl.c \
 	src/sys/fs/hammer2/hammer2_export.c
-n=0
+# A file clang cannot open or compile is not analyzed, and its errors are
+# not candidates: given bare file names, each printed "no such file" as
+# two candidates and the run exited 0.
 for f in "$@"; do
-	out=$(run "$f"); c=$(printf '%s' "$out" | grep -c . || true); n=$((n + c))
+	[ -r "$f" ] || { echo "analyze: COULD-NOT-RUN: cannot read $f" >&2; exit 2; }
+done
+n=0; unread=0
+for f in "$@"; do
+	out=$(run "$f"); e=$(printf '%s\n' "$out" | grep -c 'error:' || true)
+	[ "$e" -eq 0 ] || { unread=$((unread + 1)); echo "  $f: COULD-NOT-RUN, $e compile error(s)"; printf '%s\n' "$out" | grep 'error:' | sed 's/^/        /'; continue; }
+	c=$(printf '%s' "$out" | grep -c . || true); n=$((n + c))
 	echo "  $f: $c candidate(s)"; [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/        /'
 done
-echo "analyze: $n candidate(s) over $# file(s); triage each against the origin tree"
+echo "analyze: $n candidate(s) over $(( $# - unread )) file(s); triage each against the origin tree"
+[ "$unread" -eq 0 ] || { echo "analyze: COULD-NOT-RUN: $unread file(s) did not compile" >&2; exit 2; }
