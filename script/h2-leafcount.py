@@ -30,9 +30,11 @@ which is how the reading in the record is taken over the kept fixtures.
 
 The tool runs `hammer2 -q show` itself so that show's exit status is read:
 show prints everything before a media read error and then fails, and a
-dump that stopped short must not read as whole.  HAMMER2_SHOW_TAB and
-HAMMER2_SHOW_DEPTH are removed from show's environment, since one
-flattens the indentation the tree is read from and the other truncates it.
+dump that stopped short must not read as whole.  Every HAMMER2_SHOW_
+variable is removed from show's environment: TAB flattens the
+indentation the tree is read from, DEPTH truncates it, MIN_MIRROR_TID and
+MIN_MODIFY_TID leave out a blockref and its subtree below the threshold,
+and ALL_VOLUME_HEADERS adds trees.
 
 Prints one summary line per category and the first mismatches.  Exit 2
 when show fails, when the dump holds no blockref line, when it holds more
@@ -167,20 +169,20 @@ def report(r, out, limit=10):
               % (n.line, n.key, n.keybits, n.leafcnt, b, 1 << n.keybits), file=out)
 
 
-def show(image):
-    """The quiet dump of image, or raises ValueError naming show's failure."""
+def show(image, mode="-q"):
+    """The dump of image (-q quiet, -v verbose), or raises ValueError naming
+    show's failure.  h2-dangling.py reads its dump through this."""
     h2 = os.environ.get("H2_HAMMER2") or os.path.expanduser(
         "~/Projects/hammer2-utils-upstream/target/release/hammer2")
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("HAMMER2_SHOW_TAB", "HAMMER2_SHOW_DEPTH")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HAMMER2_SHOW_")}
     try:
-        p = subprocess.run([h2, "-q", "show", image], env=env,
+        p = subprocess.run([h2, mode, "show", image], env=env,
                            capture_output=True, text=True)
     except OSError as e:
         raise ValueError("cannot run %s: %s" % (h2, e))
     if p.returncode != 0:
         raise ValueError("show exited %d on %s: %s" % (p.returncode, image,
-                         p.stderr.strip().splitlines()[-1:] or ""))
+                         (p.stderr.strip().splitlines() or [""])[-1]))
     return p.stdout.splitlines(True)
 
 
@@ -208,6 +210,7 @@ def main(argv):
         try:
             r = read(show(image), image)
         except ValueError as e:
+            sys.stdout.flush()
             print("leafcount: COULD-NOT-READ: %s" % e, file=sys.stderr)
             tot["unread"] += 1
             continue
@@ -282,14 +285,32 @@ def selftest():
             expect(False, "%s is refused" % what)
         except ValueError:
             expect(True, "%s is refused" % what)
-    env = dict(os.environ, H2_HAMMER2="/bin/false")
+    # Fake shows: one prints a whole dump and fails, so only its status can
+    # refuse it; one prints nothing when any HAMMER2_SHOW_ variable reaches
+    # it, so only the environment filter lets it read.
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    with open(os.path.join(tmp, "dump"), "w") as f:
+        f.writelines(full)
+    fakes = {"fails": "cat %s/dump; exit 1" % tmp,
+             "env": "env | grep -q '^HAMMER2_SHOW_' && exit 0; cat %s/dump" % tmp}
+    for k, body in fakes.items():
+        with open(os.path.join(tmp, k), "w") as f:
+            f.write("#!/bin/sh\n%s\n" % body)
+        os.chmod(os.path.join(tmp, k), 0o755)
     old = os.environ.copy()
-    os.environ.update(env)
     try:
-        expect(main(["x", "/dev/null"]) == 2, "a show that fails exits 2")
+        os.environ["H2_HAMMER2"] = os.path.join(tmp, "fails")
+        expect(main(["x", "/dev/null"]) == 2, "a show that prints a whole dump and fails exits 2")
+        os.environ["H2_HAMMER2"] = os.path.join(tmp, "env")
+        os.environ.update(HAMMER2_SHOW_TAB="0", HAMMER2_SHOW_MIN_MODIFY_TID="1")
+        expect(main(["x", "/dev/null"]) == 0, "no HAMMER2_SHOW_ variable reaches show")
     finally:
         os.environ.clear()
         os.environ.update(old)
+        for k in ("dump",) + tuple(fakes):
+            os.unlink(os.path.join(tmp, k))
+        os.rmdir(tmp)
     try:
         parse(["    data.0   zzzz\n"])
         expect(False, "a malformed blockref line is refused")
