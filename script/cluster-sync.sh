@@ -508,6 +508,10 @@ STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
 # so the teardown lands in its second round, in place of the copy depth:
 # the default depth sits a few copies before the first round's end, and
 # which round a stop lands in followed the speed of the cluster unmount.
+# A second round copies only what the first failed to verify, so after a
+# first round that verified clean it ends in milliseconds and the stop
+# misses the pass; the KASAN runs' first rounds failed one, the debug
+# control's in seq27 none.
 STOP_ROUND=${H2_STOP_ROUND:-0}
 # Phase 2b, the refused copy: how many allocations the freemap refuses
 # inside the thread's first pass (0 leaves the phase out). Needs
@@ -2066,7 +2070,11 @@ else
 	echo "  read  the scan's parent found deleted $(val collapse-guard) time(s) with no knob"
 fi
 m=$(val mutate-mount-rc); [ "${m:-1}" = 0 ] && [ "$(val mutate-in-pass)" = 0 ]; check "the master is mutated while the pass runs" $? "mount rc ${m:-none}, in-pass rc $(val mutate-in-pass)"
-c=$(val interrupt-stop-copied | awk '{print $1}'); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ]; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass)"
+# in-pass is the host's reading at the stop; the pass can still end before
+# the teardown reaches it, and only the kernel's interrupted line says the
+# teardown met it (seq27's control stopped after a round that verified
+# clean, and its empty second round ended inside the unmount).
+c=$(val interrupt-stop-copied | awk '{print $1}'); r=$(val interrupt-rounds); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass), interrupted in round ${r:-none}"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the device teardown waits for the pass to reach a stop point" $? "${ms:-0} ms"
 d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the thread reads the stop between deferrals" $? "${d:-none} didbreak"
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1 ] && [ "${a:-1}" = 0 ]; check "the device teardown stops the thread" $? "threads ${tb:-none} to ${a:-none}"
