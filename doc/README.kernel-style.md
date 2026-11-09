@@ -413,6 +413,11 @@ indent. No category is new.
 `hammer2_xop_rerun_end()`, carry four unnamed arguments between them, and
 `hammer2_xop_rerun_begin()` returns `(ip)`. No category is new.
 
+1,668 to 1,667 when the rerun took a NOFS scope on a hit: the `if` above
+`hammer2_xop_rerun_begin()`'s `return (ip);` gained braces, and checkpatch
+no longer reports that line, which did not change; the count was read by
+running the checker on the file before and after. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

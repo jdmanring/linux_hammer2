@@ -538,12 +538,18 @@ struct hammer2_inode {
  * disagreement.  An XOP whose descriptor is marked ordered
  * (hammer2_admin.c) holds xop_sem for write on every inode it names, in
  * address order, across its element loop.  A frontend collect that fails
- * EDEADLK runs once more holding the inode's read side, inode lock first
- * and xop_sem second, and an EDEADLK under it is a disagreement on media.
- * The read, bmap and the seek's scan hold their own file's; a lookup, by
- * name or by number, holds its target's, found by number in the hash
+ * EDEADLK runs once more holding an inode's read side, any inode lock it
+ * holds taken first, and an EDEADLK under it is a disagreement on media.
+ * The read, bmap and the seek's scan hold their own file's, under its
+ * inode lock.  A lookup holds its target's, found by number in the hash
  * (hammer2_xop_rerun_begin()), where an inode with a local XOP in flight
- * stays.  An unlink names its target in order_ip and holds the order
+ * stays: by name under the directory's lock, its target the inode number
+ * the failed collect stopped at; by number and the rename's ancestor walk
+ * under none, and only on a hash miss, so their rerun is guarded only
+ * when the inode entered the hash during the first XOP.  An inode
+ * embedded in its directory (old media) is fed keyed by its name's hash,
+ * the rerun misses, and the EDEADLK stands.  An unlink names its target
+ * in order_ip and holds the order
  * through its collect (HAMMER2_XOP_ORDERHOLD), since its first element
  * has already removed the name.  Upstream steps over the key.
  */

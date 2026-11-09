@@ -381,7 +381,8 @@ hammer2_xop_unset_ipdep(hammer2_inode_t *ip)
  * xop_gap_desc names ("strategy_write", "inode_chain_sync"), so the
  * window in which a change is on one master and not yet the next is held
  * where the XOP runs, with the order held across it.  xop_reruns counts
- * the frontends' guarded reruns (script/cluster-quorum.sh).
+ * the frontends' reruns, a lookup's that missed the hash and ran
+ * unguarded among them (script/cluster-quorum.sh).
  */
 #if defined(HAMMER2_LOCKDEBUG)
 static unsigned int hammer2_xop_order_off;
@@ -471,8 +472,10 @@ hammer2_xop_rerun_begin(hammer2_pfs_t *pmp, hammer2_tid_t inum)
 
 	HAMMER2_XOP_RERUN();
 	ip = hammer2_inode_lookup(pmp, inum);
-	if (ip)
+	if (ip) {
 		down_read(&ip->xop_sem);
+		hammer2_nofs_enter();	/* a held order, hammer2_xop_order_take() */
+	}
 	return (ip);
 }
 
@@ -482,6 +485,7 @@ hammer2_xop_rerun_end(hammer2_inode_t *ip)
 	if (ip == NULL)
 		return;
 	up_read(&ip->xop_sem);
+	hammer2_nofs_leave();
 	hammer2_inode_drop(ip);
 }
 

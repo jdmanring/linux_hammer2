@@ -285,6 +285,10 @@
 # and hammer2_xop_rerun_end(), carry four unnamed arguments, and
 # hammer2_xop_rerun_begin() returns `(ip)`. No category is new. See
 # README.kernel-style.md.
+# 1,668 to 1,667: the rerun takes a NOFS scope on a hit, which puts braces
+# on the `if` above hammer2_xop_rerun_begin()'s `return (ip);`, and the
+# checker stops reporting that unchanged line (read by running it on both
+# versions of the file). No category is new. See README.kernel-style.md.
 22 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -315,7 +319,7 @@
 4 please, no space before tabs
 248 please, no spaces at the start of a line
 86 quoted string split across lines
-400 return is not a function, parentheses are not required
+399 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)
