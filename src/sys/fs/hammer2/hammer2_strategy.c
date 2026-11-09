@@ -302,10 +302,10 @@ hammer2_decompress_zlib(hammer2_chain_t *focus, const char *data, char *buf,
  * file offset they begin at: the media itself for a block stored
  * uncompressed, the inode's own data for a file small enough to live
  * there, or *bufp, a block-sized scratch this allocates and the caller
- * frees, for a compressed block.  Both halves of the strategy XOP decode
- * through here: the read half copies the part its folio covers out, and
- * the write half, handed a folio smaller than the block, lays the folio
- * over the block before writing it.  Positive errno.
+ * frees, for a compressed block.  The read half of the strategy XOP
+ * decodes through here and copies the part its folio covers out, and so
+ * does the fill's quorum read (hammer2_strategy_fill_read()), for the
+ * part of a block the page cache does not hold.  Positive errno.
  */
 static int
 hammer2_strategy_decode(hammer2_chain_t *focus, const char *data,
@@ -1394,59 +1394,158 @@ hammer2_dedup_lookup(hammer2_dev_t *hmp, char **datap, int pblksize)
 }
 
 /*
- * Linux: the current bytes of the block at lbase, decoded into bio_data
- * for a write that has only part of the block in its folio.  A hole is
- * zeros, and so is whatever lies past the end of the file, which the
- * chain can still hold after a truncate.  The lookup runs under the
- * parent lock the write holds, so it sees every earlier write to the
- * block, including one this same writeback made through a sibling
- * folio.  Returns a HAMMER2_ERROR_ code, as the lookup does.
+ * Linux: the debug build's count of blocks filled for a sub-block write,
+ * and of those that had to read the block through the quorum because the
+ * page cache lacked a slot (script/cluster-sync.sh, cluster-quorum.sh).
+ */
+#if defined(HAMMER2_LOCKDEBUG)
+static unsigned int hammer2_xop_fills, hammer2_xop_fill_reads;
+module_param_named(xop_fills, hammer2_xop_fills, uint, 0444);
+module_param_named(xop_fill_reads, hammer2_xop_fill_reads, uint, 0444);
+#define HAMMER2_FILL_COUNT(v)	__atomic_fetch_add(&(v), 1, __ATOMIC_RELAXED)
+#else
+#define HAMMER2_FILL_COUNT(v)	((void)0)
+#endif
+
+/*
+ * Linux: read the block at lbase through the quorum into buf, a hole as
+ * zeros.  The fill's read, with the file's order held for write by the
+ * caller, so no ordered XOP on the file runs beside it and an EDEADLK is
+ * a disagreement on media.  No inode lock is taken: the caller holds the
+ * order, which comes after ip->lock, and the strategy XOPs run without
+ * one.  Returns a HAMMER2_ERROR_ code.
  */
 static int
-hammer2_strategy_assemble(struct inode *inode, hammer2_chain_t **parentp,
-    hammer2_key_t lbase, int lblksize, char *bio_data)
+hammer2_strategy_fill_read(hammer2_inode_t *ip, hammer2_key_t lbase,
+    char *buf)
 {
-	hammer2_chain_t *chain;
-	hammer2_key_t key_dummy, base;
-	loff_t isize;
+	hammer2_xop_strategy_t *xop;
+	hammer2_chain_t *focus;
+	hammer2_key_t base;
 	const char *src;
-	char *buf = NULL;
+	char *tmp = NULL;
 	size_t dsize, len;
-	int error = 0;
+	int error;
 
-	if (*parentp == NULL)
-		return (HAMMER2_ERROR_EIO);
-	chain = hammer2_chain_lookup(parentp, &key_dummy, lbase, lbase,
-	    &error, HAMMER2_LOOKUP_ALWAYS);
-	if (chain == NULL) {
-		if (error)
-			return (error);
-		memset(bio_data, 0, lblksize);
-		return (0);
+	xop = hammer2_xop_alloc(ip, HAMMER2_XOP_STRATEGY);
+	xop->lbase = lbase;
+	hammer2_xop_start(&xop->head, &hammer2_strategy_read_desc);
+	error = hammer2_xop_collect(&xop->head, 0);
+	if (error == HAMMER2_ERROR_ENOENT) {
+		memset(buf, 0, HAMMER2_PBUFSIZE);
+		error = 0;
+	} else if (error == 0) {
+		focus = xop->head.cluster.focus;
+		if (hammer2_strategy_decode(focus,
+		    hammer2_xop_gdata(&xop->head)->buf, &base, &src, &dsize,
+		    &tmp) != 0 || base != lbase) {
+			error = HAMMER2_ERROR_EIO;
+		} else {
+			len = min_t(size_t, dsize, HAMMER2_PBUFSIZE);
+			memcpy(buf, src, len);
+			memset(buf + len, 0, HAMMER2_PBUFSIZE - len);
+		}
+		hammer2_xop_pdata(&xop->head);
+		if (tmp)
+			hfree(tmp, M_HAMMER2, HAMMER2_PBUFSIZE);
 	}
-	if (chain->error) {
-		error = chain->error;
-		goto out;
+	hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
+	return (error);
+}
+
+/*
+ * Linux: the block a write whose folio is smaller than the block sends,
+ * built once in the frontend and handed to every element (xop->block),
+ * as upstream's buffer is.  Each element once assembled its own from its
+ * own chain, so a SLAVE behind its master kept its stale bytes under the
+ * master's new tid, and a block cached before its masters came to
+ * disagree went out as two contents under one tid.
+ *
+ * Every page slot of the block below i_size is taken from the page cache:
+ * the folio and the siblings hammer2_writepages() gathered, under
+ * writeback and stable, and any other uptodate folio, referenced without
+ * its lock.  A folio under writeback is sampled around the copy, as the
+ * assembly sampled the folio and its siblings: a change there is a writer
+ * the stable wait missed.  A clean folio copied unlocked may change under
+ * the copy, and that writer dirties it and writes it again, so it is not
+ * counted.  When a
+ * slot below i_size has no uptodate folio the block is read through the
+ * quorum first, so a block the masters disagree on fails the writeback
+ * with EIO rather than taking one master's bytes; a block the page cache
+ * holds whole is written as it is, which heals such a block with the
+ * writer's bytes, as a whole-block folio does.  The rest is zeros.  The
+ * caller holds the file's order for write across this and the write XOP.
+ * Returns a HAMMER2_ERROR_ code.
+ */
+int
+hammer2_strategy_fill(hammer2_inode_t *ip, struct folio *folio,
+    hammer2_key_t lbase, char *buf)
+{
+	struct address_space *mapping = folio->mapping;
+	struct folio *slot[HAMMER2_PBUFSIZE >> PAGE_SHIFT];
+	struct folio *f;
+	loff_t isize = i_size_read(mapping->host);
+	size_t end, off;
+	uint64_t before = 0;
+	int n = 0, i, error = 0;
+	bool missing = false, wb;
+
+	end = isize > (loff_t)lbase ?
+	    min_t(loff_t, isize - lbase, HAMMER2_PBUFSIZE) : 0;
+	for (off = 0; off < end; ) {
+		f = filemap_get_folio(mapping, (lbase + off) >> PAGE_SHIFT);
+		if (!IS_ERR(f) && folio_test_uptodate(f) &&
+		    f->mapping == mapping && folio_pos(f) >= (loff_t)lbase &&
+		    folio_pos(f) + folio_size(f) <= (loff_t)lbase +
+		    HAMMER2_PBUFSIZE) {
+			off = folio_pos(f) + folio_size(f) - lbase;
+			slot[n++] = f;
+			continue;
+		}
+		if (!IS_ERR(f))
+			folio_put(f);
+		missing = true;
+		off += PAGE_SIZE;
 	}
-	if (hammer2_strategy_decode(chain, (const char *)chain->data, &base,
-	    &src, &dsize, &buf) != 0 || base != lbase) {
-		error = HAMMER2_ERROR_EIO;
-		goto out;
+	HAMMER2_FILL_COUNT(hammer2_xop_fills);
+	pr_debug("hammer2: block %llx filled around %zu bytes at %llx from %d cached folios%s\n",
+	    (unsigned long long)lbase, folio_size(folio),
+	    (unsigned long long)folio_pos(folio), n,
+	    missing ? " and the quorum" : "");
+	if (missing) {
+		HAMMER2_FILL_COUNT(hammer2_xop_fill_reads);
+		error = hammer2_strategy_fill_read(ip, lbase, buf);
+	} else {
+		memset(buf, 0, HAMMER2_PBUFSIZE);
 	}
-	len = min_t(size_t, dsize, lblksize);
-	memcpy(bio_data, src, len);
-	if (len < (size_t)lblksize)
-		memset(bio_data + len, 0, lblksize - len);
-	isize = i_size_read(inode);
-	if (isize < (loff_t)lbase + lblksize) {
-		len = isize > (loff_t)lbase ? isize - lbase : 0;
-		memset(bio_data + len, 0, lblksize - len);
+	for (i = 0; i < n; i++) {
+		f = slot[i];
+		if (error == 0) {
+			wb = folio_test_writeback(f);
+			if (wb)
+				before = XXH64(folio_address(f),
+				    folio_size(f), XXH_HAMMER2_SEED);
+			memcpy_from_folio(buf + (folio_pos(f) - lbase), f, 0,
+			    folio_size(f));
+			if (wb && before != XXH64(folio_address(f),
+			    folio_size(f), XXH_HAMMER2_SEED))
+				__atomic_fetch_add(&hammer2_folio_changed, 1,
+				    __ATOMIC_RELAXED);
+		}
+		folio_put(f);
 	}
-out:
-	if (buf)
-		hfree(buf, M_HAMMER2, HAMMER2_PBUFSIZE);
-	hammer2_chain_unlock(chain);
-	hammer2_chain_drop(chain);
+	/*
+	 * Whatever lies past the end of the file, as read_folio zeroes it,
+	 * from the smaller of the two sizes: a file that grew since the walk
+	 * (an ftruncate up, an extending write) has slots between them that
+	 * were neither copied nor zeroed and hold the media's bytes past the
+	 * old end, which hammer2_zero_tail() says may be stale.
+	 */
+	isize = min_t(loff_t, isize, i_size_read(mapping->host));
+	if (error == 0 && isize < (loff_t)lbase + HAMMER2_PBUFSIZE) {
+		off = isize > (loff_t)lbase ? isize - lbase : 0;
+		memset(buf + off, 0, HAMMER2_PBUFSIZE - off);
+	}
 	return (error);
 }
 
@@ -1461,28 +1560,23 @@ out:
  * XXX Linux: the core writes a whole logical block, and the folio is
  * usually one, the write entry allocating it at HAMMER2_PBUFRADIX order
  * with the mapping's retrying mask before the page cache is asked.
- * When that fails, or a read left a smaller folio in the block, the
- * block is assembled around the folio: the block's current bytes
- * decoded out of the chain, under the parent lock this write holds,
- * and the folio laid over them, with the block's other dirty folios,
- * which hammer2_writepages() gathered under writeback beside it, laid
- * over them too, so the block goes out once.  A sibling left to its
- * own XOP, one that was locked or under writeback at the gather, reads
- * this one's bytes back out of the chain, since XOPs run in order on
- * the calling thread, and takes fresh media, since the block was
- * registered for dedup as its bytes went out.  hammer2_writepages()
- * starts it, one folio per XOP, and reads back what it fed the
- * mapping's error.
+ * When that fails, or a read left a smaller folio in the block,
+ * hammer2_writepages() fills the block once from the page cache, or
+ * through the quorum where a slot is not cached, and every element
+ * writes that (hammer2_strategy_fill()).  hammer2_writepages() starts
+ * this one folio per XOP and reads back what it fed the mapping's
+ * error.
  */
 void
-hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
+hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch __maybe_unused,
+    int clindex)
 {
 	hammer2_xop_strategy_t *xop = &arg->xop_strategy;
 	hammer2_chain_t *parent;
 	hammer2_inode_t *ip = xop->head.ip1; /* retained by ref */
 	hammer2_key_t lbase = xop->lbase;
 	struct folio *folio = xop->folio;	/* XXX Linux: was struct buf *bp */
-	char *bio_data = scratch;	/* the assembled block, when one is needed */
+	char *bio_data;
 	unsigned int i;	/* Linux */
 	int whole = 0;	/* Linux: the core is reading the folio itself */
 	uint64_t before = 0;	/* Linux: the folio's hash around the read */
@@ -1503,62 +1597,19 @@ hammer2_xop_strategy_write(hammer2_xop_t *arg, void *scratch, int clindex)
 		goto done;
 	}
 	if (folio_size(folio) < (size_t)lblksize) {	/* Linux */
-		pr_debug("hammer2: block %llx assembled around %zu bytes at %llx with %u siblings\n",
-		    (unsigned long long)lbase, folio_size(folio),
-		    (unsigned long long)xop->lbase,
-		    xop->siblings ? folio_batch_count(xop->siblings) : 0);
 		/*
-		 * The block is assembled in a buffer of the XOP's own,
-		 * allocated here rather than for every write XOP, since a
-		 * whole-block folio needs none.  hammer2_xop_retire() frees
-		 * it, and sizes the free the same way, so the two cannot
-		 * drift apart if the logical size ever becomes per-inode.
+		 * The block hammer2_writepages() filled once for every
+		 * element (hammer2_strategy_fill()).
 		 */
-		if (xop->head.scratch == NULL)	/* once per XOP, not element */
-			xop->head.scratch = hmalloc(hammer2_get_logical(),
-			    M_HAMMER2, M_WAITOK);
-		bio_data = xop->head.scratch;
-		error = hammer2_strategy_assemble(folio->mapping->host, &parent,
-		    lbase, lblksize, bio_data);
-		if (error) {
-			if (parent) {
-				hammer2_chain_unlock(parent);
-				hammer2_chain_drop(parent);
-			}
-			hammer2_xop_feed(&xop->head, NULL, clindex, error);
+		bio_data = xop->block;
+		if (WARN_ONCE(bio_data == NULL,
+		    "hammer2: sub-block write at %llx with no block\n",
+		    (unsigned long long)xop->lbase)) {
+			hammer2_chain_unlock(parent);
+			hammer2_chain_drop(parent);
+			hammer2_xop_feed(&xop->head, NULL, clindex,
+			    HAMMER2_ERROR_EIO);
 			goto done;
-		}
-		/*
-		 * Linux: this branch copies the folio into a buffer of the
-		 * XOP's own, so the core reads a private buffer, but the
-		 * copy itself reads the live folio while it is unlocked.
-		 * A writer changing the folio during the copy leaves a mix
-		 * in the buffer, and the check code then covers the mix:
-		 * the same defect as the whole-block path, reached through
-		 * the copy rather than through the pointer.  Each folio
-		 * the copy reads is sampled around it, since a buffer that
-		 * only ever received a consistent folio cannot show it.
-		 */
-		before = XXH64(folio_address(folio), folio_size(folio),
-		    XXH_HAMMER2_SEED);
-		memcpy_from_folio(bio_data + (xop->lbase - lbase), folio, 0,
-		    folio_size(folio));
-		if (before != XXH64(folio_address(folio), folio_size(folio),
-		    XXH_HAMMER2_SEED))
-			__atomic_fetch_add(&hammer2_folio_changed, 1,
-			    __ATOMIC_RELAXED);
-		for (i = 0; xop->siblings &&
-		    i < folio_batch_count(xop->siblings); i++) {
-			struct folio *sf = xop->siblings->folios[i];
-
-			before = XXH64(folio_address(sf), folio_size(sf),
-			    XXH_HAMMER2_SEED);
-			memcpy_from_folio(bio_data + (folio_pos(sf) - lbase),
-			    sf, 0, folio_size(sf));
-			if (before != XXH64(folio_address(sf), folio_size(sf),
-			    XXH_HAMMER2_SEED))
-				__atomic_fetch_add(&hammer2_folio_changed, 1,
-				    __ATOMIC_RELAXED);
 		}
 	} else {
 		/*

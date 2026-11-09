@@ -328,8 +328,8 @@ hammer2_io_gfp(hammer2_io_t *dio)
 /*
  * Linux: the block in a buffer of the dio's own, for a page cache that
  * could not make the 64 KiB folio the device mapping is pinned to.  The
- * file mapping steps down to a page in that case and the write XOP
- * assembles the block; the device mapping cannot, because
+ * file mapping steps down to a page in that case and writeback fills
+ * the block around it; the device mapping cannot, because
  * hammer2_io_data() hands the core one pointer to the whole block.  A
  * BSD buffer cache never has this problem, its buffer being memory of
  * its own, and this is that: vmalloc, which wants pages and not a

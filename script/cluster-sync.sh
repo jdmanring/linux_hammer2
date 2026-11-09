@@ -1271,15 +1271,18 @@ if [ "${H2SEEKVOTE:-0}" = 1 ]; then
 	svmods seekvote-mod-after
 	echo "seekvote-slave lines $(wc -l < /tmp/sv.walk) differ $(cmp -s /tmp/sv.walk /tmp/sv.scan && echo 0 || echo 1) walked $((w1 - w0)) fellback $((b1 - b0))"
 	diff /tmp/sv.walk /tmp/sv.scan | head -5 | sed 's/^/seekvote-diff /'
-	# A reading, not a check: a partial write into the stale block. Its
-	# pages are dropped and the block is read cold, which leaves page-sized
-	# folios, and 4 KiB of it is rewritten. The writeback assembles the
-	# rest of the block from each element's own chain
-	# (hammer2_strategy_assemble()), so from the code the slave keeps its
-	# stale 60 KiB under the master's new tid, which the sync pass, reading
-	# tids alone, leaves. Each volume's tid and data check for block 3 are
-	# read from its media before and after; a slave current before the
-	# write voids the reading.
+	# A partial write into the stale block. Its pages are dropped and the
+	# block is read cold, which leaves page-sized folios, and 4 KiB of it
+	# is rewritten. The writeback fills the block once from the page cache
+	# and every element writes it (hammer2_strategy_fill()), so both
+	# volumes hold the master's block with the 4 KiB spliced in, under one
+	# tid. Each element once assembled its own from its own chain, and the
+	# slave kept its stale 60 KiB under the master's new tid, which the
+	# sync pass, reading tids alone, left. Each volume's tid and data check
+	# for block 3 are read from its media before and after, the block is
+	# read back cold against the splice built here from the cold read, and
+	# the fill counter must move; a slave current before the write voids
+	# the reading.
 	svsums() {	# prefix: block 3's modify_tid and xxh on each volume's media
 		for v in m:vdb s:vdc; do
 			hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v p="$1" -v t=${v%%:*} -v n="$(printf '0x%016x' "$ino")" '
@@ -1293,11 +1296,24 @@ if [ "${H2SEEKVOTE:-0}" = 1 ]; then
 	sync
 	echo 3 > /proc/sys/vm/drop_caches
 	svsums seekvote-partial-before
-	dd if=/mnt/h2c/sv of=/dev/null bs=64k skip=3 count=1 2>/dev/null
-	dd if=/dev/urandom of=/mnt/h2c/sv bs=4k seek=$((3 * 16 + 1)) count=1 conv=notrunc 2>/dev/null; s=$?
+	dd if=/mnt/h2c/sv of=/tmp/sv.b3 bs=64k skip=3 count=1 2>/dev/null
+	dd if=/dev/urandom of=/tmp/sv.4k bs=4k count=1 2>/dev/null
+	cp /tmp/sv.b3 /tmp/sv.want
+	dd if=/tmp/sv.4k of=/tmp/sv.want bs=4k seek=1 conv=notrunc 2>/dev/null
+	f0=$(cat $P/xop_fills 2>/dev/null || echo absent)
+	dd if=/tmp/sv.4k of=/mnt/h2c/sv bs=4k seek=$((3 * 16 + 1)) count=1 conv=notrunc 2>/dev/null; s=$?
 	sync
+	f1=$(cat $P/xop_fills 2>/dev/null || echo absent)
 	svsums seekvote-partial-after
-	echo "seekvote-partial write $s"
+	echo 3 > /proc/sys/vm/drop_caches
+	dd if=/mnt/h2c/sv bs=64k skip=3 count=1 2>/dev/null | cmp -s - /tmp/sv.want; b=$?
+	echo "seekvote-partial write $s fills $f0 $f1 back $b"
+	# The sync thread must leave the healed slave alone: one pass, by its
+	# line count, then the media read again.
+	p0=$(passes CL); n=0
+	while [ "$(passes CL)" = "$p0" ] && [ $n -lt 120 ]; do sleep 1; n=$((n + 1)); done
+	echo "seekvote-partial-passes $(( $(passes CL) - p0 )) in $n s"
+	sync; svsums seekvote-partial-pass
 	rm -f /mnt/h2c/sv; sync
 fi
 if [ "${H2_FAULT:-0}" != 0 ]; then
@@ -1855,7 +1871,7 @@ detach_disks
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 nval() { grep -c -E "^$1( |$)" "$W/out"; }	# how many lines carry the name, with or without a value
-fail=0; checks=0
+fail=0; checks=0; cnr=
 check() {	# check <name> <condition-result 0/1> <reading>
 	checks=$((checks + 1))
 	if [ "$2" = 0 ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: $3"; fail=$((fail + 1)); fi
@@ -2002,18 +2018,31 @@ if [ "$SEEKVOTE" = 1 ]; then
 	[ "${2:-0}" -gt 0 ] 2>/dev/null && [ "$4" = 0 ] && [ "${6:-0}" -gt 0 ] 2>/dev/null && [ "$8" = 0 ]
 	check "a MASTER with a stale SLAVE seeks by its own walk and answers as the scan" $? "${a:-no line}"
 	sed -n 's/^seekvote-diff /        /p' "$W/out"
-	# The partial write's reading (the guest's svsums), a known defect
-	# recorded in doc/README.status.md and not a check.
+	# The partial write: one tid and one content on both volumes, read
+	# back as the splice, the fill counted (the guest's svsums).
 	bm=$(sed -n 's/^seekvote-partial-before m //p' "$W/out" | head -1); bs=$(sed -n 's/^seekvote-partial-before s //p' "$W/out" | head -1)
 	am=$(sed -n 's/^seekvote-partial-after m //p' "$W/out" | head -1); as=$(sed -n 's/^seekvote-partial-after s //p' "$W/out" | head -1)
 	set -- $bm; bmt=$1; set -- $bs; bst=$1
 	set -- $am; amt=$1; amx=$2; set -- $as; ast=$1; asx=$2
-	if [ -z "$bmt" ] || [ -z "$bst" ] || [ "$bmt" = "$bst" ]; then r="void: the slave was not stale before the write"
-	elif [ -z "$amt" ] || [ -z "$ast" ]; then r="void: a volume's block 3 was not read after the write"
+	set -- $(val seekvote-partial); pw=$2; pf0=$4; pf1=$5; pb=$7
+	pp=$(sed -n 's/^seekvote-partial-pass m //p' "$W/out" | head -1); ps=$(sed -n 's/^seekvote-partial-pass s //p' "$W/out" | head -1)
+	set -- $(val seekvote-partial-passes); np=$1
+	moved() { case $1$2 in *[!0-9]*|'') return 1 ;; esac; [ "$2" -gt "$1" ]; }	# old new, absent on a module without the fill
+	ok=1; void=
+	if [ -z "$bmt" ] || [ -z "$bst" ] || [ "$bmt" = "$bst" ]; then void="the slave was not stale before the write"
+	elif [ -z "$amt" ] || [ -z "$ast" ]; then void="a volume's block 3 was not read after the write"
 	elif [ "$amt" = "$ast" ] && [ "$amx" != "$asx" ]; then r="the defect: one tid, two contents"
-	elif [ "$amt" = "$ast" ]; then r="not shown: one tid, one content"
-	else r="not shown: the tids still differ"; fi
-	echo "  note  stale slave under a partial write ($(val seekvote-partial)): before ${bm:-absent} / ${bs:-absent}, after ${am:-absent} / ${as:-absent}: $r"
+	elif [ "$amt" != "$ast" ]; then r="the tids still differ"
+	elif [ "$pb" != 0 ]; then r="one tid, one content, but the block read back is not the splice"
+	elif ! moved "$pf0" "$pf1"; then r="one tid, one content, but the fill was not counted ($pf0 to $pf1)"
+	elif [ "${np:-0}" -lt 1 ] 2>/dev/null || [ -z "$np" ]; then r="one tid, one content, but no sync pass ran before the second read (${np:-no line})"
+	elif [ "$pp" != "$am" ] || [ "$ps" != "$as" ]; then r="one tid, one content, but a sync pass changed the block: ${pp:-absent} / ${ps:-absent} after it"
+	else r="one tid, one content, read back as the splice, and unchanged by $np sync pass(es)"; ok=0; fi
+	if [ -n "$void" ]; then
+		cnr="${cnr:+$cnr; }S1's partial write read nothing: $void (before ${bm:-absent} / ${bs:-absent})"
+	else
+		check "S1 a partial write into a block the SLAVE holds stale leaves both volumes the master's block with the write spliced in, under one tid, and a sync pass leaves it" $ok "write ${pw:-none}, before ${bm:-absent} / ${bs:-absent}, after ${am:-absent} / ${as:-absent}, after a pass ${pp:-absent} / ${ps:-absent}: $r"
+	fi
 fi
 p=$(val change-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "the thread keeps passing after the master changes" $? "${p:-0} passes in 30 s"
 p=$(val change-files); [ "${p:-0}" = 35 ]; check "the changes leave 35 files on the master" $? "${p:-none}"
@@ -2299,4 +2328,8 @@ if [ "${ndiff:-0}" != 0 ]; then
 fi
 
 echo "cluster: $checks check(s), $fail failed"
-[ "$fail" = 0 ]
+[ "$fail" = 0 ] || exit 1
+# A failure above is a finding whether or not a reading was exercised;
+# with none, a reading that exercised nothing is no pass.
+[ -z "$cnr" ] || { echo "cluster: COULD-NOT-RUN: $cnr" >&2; exit 2; }
+exit 0

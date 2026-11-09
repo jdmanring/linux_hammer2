@@ -1922,9 +1922,9 @@ fp_shutdown(struct file *fp, int how)
  * preference exactly one.  A HAMMER2 logical block is HAMMER2_PBUFSIZE,
  * and both halves of the strategy XOP work best on a folio that is one:
  * the read half decompresses a block into the folio it has, so a
- * page-sized folio decompresses the same block once per page, and the
- * write half assembles the block around a folio smaller than it, a
- * decode and a copy the block folio does not need.  The maximum order is
+ * page-sized folio decompresses the same block once per page, and a
+ * folio smaller than the block is filled around at writeback, a copy
+ * and possibly a read the block folio does not need.  The maximum order is
  * the block's: with it unset, readahead grows its folios past one block
  * as a sequential read proceeds, and the read half, handed a folio of
  * two blocks, filled it from the one chain at its start and zeroed the

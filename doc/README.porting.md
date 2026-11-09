@@ -1828,8 +1828,10 @@ A write meets the quorum only through a read. Upstream's strategy write
 sends every element one buffer the frontend read through the quorum. The
 port writes a whole-block folio the same way, but a folio smaller than its
 block, which a cold read leaves as often as a whole-block one since
-readahead grows from the mapping's minimum order of a page, is assembled
-at writeback from each element's own chain (`hammer2_strategy_assemble()`).
+readahead grows from the mapping's minimum order of a page, has the rest
+of its block filled at writeback, once, and every element writes that
+block (`hammer2_strategy_fill()`); before the fill each element assembled
+the block from its own chain.
 On a PFS with more than one voting element, `hammer2_write_begin()`
 therefore reads such a folio through `->read_folio` even when the write
 covers it, unless its whole block lies past the end of the file, so a
@@ -1840,20 +1842,27 @@ into a disputed block, made after the failed reads had left page-sized
 folios, succeeding and leaving both masters at one new tid with their
 other 60 KiB still different.
 
-Two cases the read does not reach. A folio already uptodate is not read,
-so one cached before its block came to be disputed, which a writeback
-that succeeded on one element and failed on the other leaves behind, is
-assembled per element at the next write, and the dispute disappears
-under one tid. And the same assembly gives a SLAVE behind its master its
-own stale bytes under the master's new tid, which the sync pass,
-replacing only a block whose tid differs, does not repair. The fifth
-review of N10.6 read both from the code. `cluster-sync.sh` takes a
-reading of the second (a stale block read cold, then 4 KiB of it
-rewritten, each volume's tid and check read from its media), and at
-1.0.93 it read the defect: both volumes at one tid with two contents
-(`doc/history/verification-record.md`, "A write in flight is not a
-disagreement, and a stale slave under a partial write"). The first is
-read from the code only. The fix both need, one assembly from the block
-read through the quorum handed to every element as upstream's buffer
-is, is not built, so a SLAVE written this way can hold bytes its master
-does not under the master's tid.
+The per-element assembly had two cases that read did not reach, both
+read from the code by the fifth review of N10.6. A folio already uptodate
+is not read, so one cached before its block came to be disputed, which a
+writeback that succeeded on one element and failed on the other leaves
+behind, was assembled per element at the next write, and the dispute
+disappeared under one tid. And the same assembly gave a SLAVE behind its
+master its own stale bytes under the master's new tid, which the sync
+pass, replacing only a block whose tid differs, did not repair after one
+pass; `cluster-sync.sh` read that at 1.0.93, both volumes at one tid
+with two contents (`doc/history/verification-record.md`, "A write in
+flight is not a disagreement, and a stale slave under a partial write").
+
+The fill closes both the way upstream's buffer does. `hammer2_writepages()`
+takes the file's order for write (`hammer2_xop_order_lock()`), fills a
+64 KiB buffer from the folio, the siblings it gathered and any other
+uptodate folio of the block, and starts the write XOP holding the order
+(`HAMMER2_XOP_ORDERED`), so no ordered XOP on the file runs between the
+fill and the write. A slot below the end of the file with no uptodate
+folio makes the fill read the whole block through the quorum first, so a
+disputed block fails the writeback with EIO; a block the page cache
+holds whole is written as it stands, which heals a dispute with the
+writer's bytes, as a whole-block folio does. `cluster-sync.sh`'s S1 and
+`cluster-quorum.sh`'s S2 are the checks; their fleet run is recorded in
+the verification record when it has been made.

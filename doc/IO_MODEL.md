@@ -225,7 +225,7 @@ changes the filesystem, not the port.
 | `hammer2_disk.h:1262` | `HAMMER2_VOLUME_ICRCVH_SIZE` 65536 - 4 |
 | `hammer2_disk.h:454` | maximum radix 16, which is 64 KiB |
 | `hammer2_disk.h:236,254` | freemap leaf and node geometry in the 64 KiB slot |
-| `hammer2.h:624` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
+| `hammer2.h:630` | `HAMMER2_DEDUP_HEUR_SIZE`, a multiple of it |
 
 Bootstrap, being this port's page-cache strategy, and a different
 strategy would meet the same format.
@@ -338,18 +338,20 @@ down from the block only when the block allocation fails, and
 because the page cache also sizes a new folio by the alignment of the
 index it is asked at and a write inside a block asked at its own page
 would get a page with memory to spare. Handed a folio smaller than
-the block, `hammer2_xop_strategy_write()` assembles the block: the
-chain at the block's base is looked up under the parent lock the write
-holds and decoded through the same decoder the read side uses, a hole
-is zeros and so is anything past the end of the file, and the folio is
-laid over the result before the core's `hammer2_write_file_core()`
-writes the block whole. A sibling folio of the same block, dirty in
-the cache, is written by its own XOP after this one and reads this
-one's bytes back out of the chain, since XOPs run in order on the
-calling thread; nothing is assembled from other folios, which is what
-keeps the change to the write XOP, the two decompressors, one order
-pin and one grab. `pr_debug` names each assembled block, so the count
-is read with the module's `dyndbg=+p` parameter.
+the block, `hammer2_writepages()` gathers the block's other dirty folios
+under writeback beside it, takes the file's order for write, and fills a
+block-sized buffer once (`hammer2_strategy_fill()`): every page slot
+below the end of the file comes from an uptodate folio in the cache, and
+where one has none the block is first read through the quorum, decoded
+by the decoder the read side uses, a hole as zeros; past the end of the
+file is zeros. Every element of the write XOP then writes that buffer
+(`xop->block`), as upstream's elements all write the frontend's one
+buffer, so two elements cannot write two contents under one tid. The
+order is held from before the fill to after the write XOP, so no ordered
+XOP on the file runs between them. `pr_debug` names each filled block
+and whether the quorum was read, so the count is read with the module's
+`dyndbg=+p` parameter, and the debug build counts fills and fill reads
+in `xop_fills` and `xop_fill_reads`.
 
 The assembly happens only where it is needed. A folio that is the
 whole block, which is every folio a write on a volume with room
@@ -364,10 +366,9 @@ second writer waits for the writeback to end before dirtying it again,
 which is what btrfs does for an inode carrying a data checksum. Both
 write paths reach that wait: `write_begin_get_folio()` passes
 `FGP_WRITEBEGIN`, which carries `FGP_STABLE`, and the write fault
-tails into `filemap_page_mkwrite()`. The scratch buffer, when the
-smaller folio does need one, is allocated by the XOP that needs it
-rather than for every write XOP, freed at retire, and sized by
-`hammer2_get_logical()` on both sides.
+tails into `filemap_page_mkwrite()`. The fill's buffer, when the
+smaller folio does need one, is allocated by the writeback that needs it
+rather than for every write XOP, and freed once its XOP is retired.
 
 What the smaller folio costs, read 2026-09-07 from the full-volume
 gate once the freemap counted what it handed out: the page cache asks

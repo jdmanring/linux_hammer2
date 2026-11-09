@@ -551,7 +551,13 @@ struct hammer2_inode {
  * the rerun misses and runs once more unguarded, failing if the window is
  * still open or the masters disagree.  An unlink names its target in order_ip
  * and holds the order through its collect (HAMMER2_XOP_ORDERHOLD), its first
- * element having removed the name.  Upstream steps over the key.
+ * element having removed the name.  The writeback of a folio smaller than
+ * its block holds the file's order for write from before it fills the block
+ * to after its write XOP (HAMMER2_XOP_ORDERED, hammer2_strategy_fill()), with
+ * no inode lock, and opens its BUFCACHE transaction inside the order where
+ * every other XOP opens its transaction first: a BUFCACHE begin takes only
+ * trans_lock and never sleeps on a flush, so the order is never held across
+ * a wait on one.  Upstream steps over the key.
  */
 
 /*
@@ -801,6 +807,7 @@ struct hammer2_xop_strategy {
 	 */
 	struct folio		*folio;		/* Linux: was struct buf *bp */
 	struct folio_batch	*siblings;	/* Linux: the block's other dirty folios */
+	char			*block;		/* Linux: a sub-block folio's block, filled once */
 };
 
 struct hammer2_xop_bmap {
@@ -917,6 +924,7 @@ union hammer2_xop {
 #define HAMMER2_XOP_VOLHDR		0x00000008
 #define HAMMER2_XOP_FSSYNC		0x00000010
 #define HAMMER2_XOP_ORDERHOLD		0x00000020	/* Linux: frontend releases */
+#define HAMMER2_XOP_ORDERED		0x00000040	/* Linux: frontend holds it */
 
 /*
  * Block device management structure.
@@ -1400,6 +1408,8 @@ void hammer2_xop_start_except(hammer2_xop_head_t *, hammer2_xop_desc_t *, int);
 void hammer2_xop_retire(hammer2_xop_head_t *, uint32_t);
 void hammer2_xop_order_init(hammer2_inode_t *);	/* Linux */
 void hammer2_xop_order_release(hammer2_xop_head_t *);	/* Linux */
+int hammer2_xop_order_lock(hammer2_inode_t *);	/* Linux */
+void hammer2_xop_order_unlock(hammer2_inode_t *);	/* Linux */
 hammer2_inode_t *hammer2_xop_rerun_begin(hammer2_pfs_t *, hammer2_tid_t);	/* Linux */
 void hammer2_xop_rerun_end(hammer2_inode_t *);	/* Linux */
 int hammer2_xop_feed(hammer2_xop_head_t *, hammer2_chain_t *, int, int);
@@ -1723,6 +1733,8 @@ void hammer2_pfs_memory_wakeup(hammer2_pfs_t *, int);
 void hammer2_xop_ipcluster(hammer2_xop_t *, void *, int);
 void hammer2_xop_readdir(hammer2_xop_t *, void *, int);
 int hammer2_read_folio(struct file *, struct folio *);	/* Linux */
+int hammer2_strategy_fill(hammer2_inode_t *, struct folio *, hammer2_key_t,
+    char *);	/* Linux */
 void hammer2_readahead(struct readahead_control *);	/* Linux */
 extern struct workqueue_struct *hammer2_ra_wq;	/* Linux */
 void hammer2_xop_nresolve(hammer2_xop_t *, void *, int);

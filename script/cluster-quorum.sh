@@ -380,6 +380,56 @@ echo $((0x8000)) > /sys/module/hammer2/parameters/debug
 sync
 vshow "vote after"
 rm /mnt/h2q/dis; echo "vote rm exit $?"
+# S2. A sub-block write into a block the masters disagree on, the block
+# filled once for every element (hammer2_strategy_fill()). Blocks 1 and 2
+# are read cold, which leaves page-sized folios, then rewritten on the
+# first master alone, so the page cache holds the writer's bytes and the
+# second master its old ones under an older tid. A 4 KiB write into block
+# 1 with every page cached writes the cached block to both: one tid, one
+# check code, the readback after the caches drop equal to the page cache's
+# view, and no read through the quorum. A 4 KiB write into block 2 with its
+# clean pages dropped reads the block through the quorum, which fails, so
+# fsync fails EIO and both masters keep their tids. The module before the
+# fill assembled the block per element: two contents under one tid, and an
+# fsync that succeeds. The counters are absent there and read so.
+hshow() {	# tag: blocks 1 and 2 of heal, modify_tid and check code, from each volume's media
+	for v in a:vdb b:vdc; do
+		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v p="$1" -v t=${v%%:*} -v n="$(printf '0x%016x' "$hino")" '
+		/^ *inode\.[0-9]/ { mode = "inode"; next }
+		mode == "inode" && $1 == "inum" { inum = $2 }
+		/^ *data\.[0-9]/ { mode = "data"; key = $3; m = ""; next }
+		mode == "data" && /mod=/ { m = $0; sub(/.*mod=/, "", m); sub(/ .*/, "", m) }
+		mode == "data" && /xxh=/ { x = $0; sub(/.*xxh=/, "", x); sub(/ .*/, "", x); if (inum == n && key ~ /^00000000000[12]0000\//) print p, t, substr(key, 12, 1), m, x; mode = "" }'
+	done
+}
+fc() { cat $P/$1 2>/dev/null || echo absent; }
+dd if=/dev/urandom of=/mnt/h2q/heal bs=64k count=4 2>/dev/null; sync
+hino=$(stat -c %i /mnt/h2q/heal)
+echo 3 > /proc/sys/vm/drop_caches
+dd if=/mnt/h2q/heal of=/dev/null bs=64k skip=1 count=2 2>/dev/null
+echo 1 > $P/write_except
+dd if=/dev/urandom of=/mnt/h2q/heal bs=64k seek=1 count=2 conv=notrunc 2>/dev/null
+sync
+echo -1 > $P/write_except
+hshow "vote s2split"
+f0=$(fc xop_fills); r0=$(fc xop_fill_reads)
+dd if=/dev/urandom of=/mnt/h2q/heal bs=4k seek=17 count=1 conv=notrunc 2>/dev/null
+dd if=/mnt/h2q/heal of=/tmp/s2.want bs=64k skip=1 count=1 2>/dev/null
+sync
+f1=$(fc xop_fills); r1=$(fc xop_fill_reads)
+dd if=/dev/urandom of=/mnt/h2q/heal bs=4k seek=33 count=1 conv=notrunc 2>/dev/null
+echo 1 > /proc/sys/vm/drop_caches
+xfs_io -c fsync /mnt/h2q/heal > /tmp/s2.err 2>&1; s=$?
+r2=$(fc xop_fill_reads)
+umount /mnt/h2q
+hshow "vote s2after"
+mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
+echo 3 > /proc/sys/vm/drop_caches
+dd if=/mnt/h2q/heal of=/tmp/s2.got bs=64k skip=1 count=1 2>/dev/null
+same=0; [ "$(wc -c < /tmp/s2.want)" = 65536 ] && cmp -s /tmp/s2.want /tmp/s2.got && same=1
+echo "vote s2heal fills $f0 $f1 reads $r0 $r1 same $same"
+echo "vote s2eio exit $s eio $(grep -c 'Input/output error' /tmp/s2.err) reads $r1 $r2"
+rm -f /mnt/h2q/heal; sync
 # Q1. A writeback beside the seek and the map. xop_gap_ms holds the
 # strategy write between the first master and the second with the order
 # held across the gap, so a call made 500 ms after the writeback began
@@ -854,6 +904,26 @@ if [ "$QVOTE" = 1 ]; then
 	done
 	a=$(vote rm); [ "$a" = "exit 0" ]
 	check "the file the masters disagree on is removed through the quorum" $? "${a:-no line}"
+	# S2, the block filled once for every element. The split must have
+	# left blocks 1 and 2 at two tids, or neither check below is about a
+	# disagreement. Each reading is a volume's tid and check code.
+	s2v() { sed -n "s/^vote $1 $2 $3 //p" "$W/out" | head -1; }	# tag volume block
+	moved() { case $1$2 in *[!0-9]*|'') return 1 ;; esac; [ "$2" -gt "$1" ]; }	# old new: counters, absent on the module before the fill
+	sa1=$(s2v s2split a 1); sb1=$(s2v s2split b 1); sa2=$(s2v s2split a 2); sb2=$(s2v s2split b 2)
+	if [ -z "$sa1" ] || [ -z "$sb1" ] || [ "${sa1%% *}" = "${sb1%% *}" ] ||
+	    [ -z "$sa2" ] || [ -z "$sb2" ] || [ "${sa2%% *}" = "${sb2%% *}" ]; then
+		cnr="${cnr:+$cnr; }S2's split left no two tids (block 1 ${sa1:-absent}/${sb1:-absent}, block 2 ${sa2:-absent}/${sb2:-absent})"
+	else
+		aa1=$(s2v s2after a 1); ab1=$(s2v s2after b 1); aa2=$(s2v s2after a 2); ab2=$(s2v s2after b 2)
+		x=$(vote s2heal); set -- $x	# fills f0 f1 reads r0 r1 same n
+		[ -n "$aa1" ] && [ "$aa1" = "$ab1" ] && [ "$8" = 1 ] &&
+		    moved "$2" "$3" && [ "$6" = "$5" ]
+		check "S2 a 4 KiB write into a block the masters disagree on, every page cached, writes the cached block to both: one tid and check, read back as cached, no quorum read" $? "block 1 after ${aa1:-absent} / ${ab1:-absent}, ${x:-no line}"
+		y=$(vote s2eio); set -- $y	# exit s eio n reads r1 r2
+		[ "${4:-0}" -ge 1 ] 2>/dev/null && moved "$6" "$7" &&
+		    [ "$aa2" = "$sa2" ] && [ "$ab2" = "$sb2" ]
+		check "S2 the same write with the block's clean pages dropped reads it through the quorum and fails fsync EIO, both masters keeping their block" $? "block 2 ${sa2}/${sb2} before, ${aa2:-absent}/${ab2:-absent} after, ${y:-no line}"
+	fi
 	# Q1. A block on one master because its write has not reached the next
 	# is not a disagreement: the call runs once more under the order and
 	# answers. Each call's own xop_reruns delta and milliseconds are

@@ -418,6 +418,15 @@ indent. No category is new.
 no longer reports that line, which did not change; the count was read by
 running the checker on the file before and after. No category is new.
 
+1,667 to 1,677 when a block smaller than its folio came to be filled once
+for every element (`doc/README.porting.md`, "A key the masters disagree
+on"): the prototypes of the fill and of the write XOP's block, less those
+of the per-element assembly they replace, add six unnamed arguments net
+and three continuation indents net on second parameter lines, and the
+release form of the debug build's fill counter, `HAMMER2_FILL_COUNT(v)`,
+expands to `((void)0)` and leaves its argument unused, since the counter
+exists only in the debug build. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

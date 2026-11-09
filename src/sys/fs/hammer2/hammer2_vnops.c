@@ -2501,8 +2501,8 @@ const struct file_operations hammer2_file_fops = {
  * overwrite reads the folio first, which upstream does with bread() and
  * this does with ->read_folio on the folio it will then hand back
  * locked.  A folio smaller than the block is the same choice made over
- * the part of the block it covers, and the rest of the block is the
- * write XOP's to assemble.
+ * the part of the block it covers, and the rest of the block is filled
+ * at writeback, once for every element (hammer2_strategy_fill()).
  */
 static int
 hammer2_write_begin(const struct kiocb *iocb,
@@ -2523,8 +2523,8 @@ hammer2_write_begin(const struct kiocb *iocb,
 	 * held.  Asked at the block's index it gets the block when the
 	 * allocation succeeds; when it does not, or when a smaller folio
 	 * already sits at that index and stops short of pos, the write
-	 * takes the folio at its own page and the write XOP assembles the
-	 * block around it.  What the helper adds to the flags is the
+	 * takes the folio at its own page and writeback fills the block
+	 * around it.  What the helper adds to the flags is the
 	 * uncached one when the iocb carries it.
 	 */
 	/*
@@ -2569,16 +2569,15 @@ hammer2_write_begin(const struct kiocb *iocb,
 
 	/*
 	 * Linux: a folio smaller than its block, in a block the file reaches,
-	 * is read even when the write covers it.  Its writeback assembles the
-	 * rest of the block from each element's own chain
-	 * (hammer2_strategy_assemble()), and only the read goes through the
-	 * quorum, which fails a block the masters disagree on; covered and
-	 * unread, a 4 KiB write into such a block gave each master its own
-	 * copy at one tid.  A cold read leaves page-sized folios as often as
-	 * whole blocks, since readahead grows from the mapping's minimum
-	 * order.  With one voting element the assembly is already the quorum's
-	 * and nothing is read.  A folio already uptodate is not read either,
-	 * and its block keeps the per-element assembly (doc/README.status.md).
+	 * is read even when the write covers it, so a block the masters
+	 * disagree on fails the write(2) itself, as upstream's bread() does.
+	 * Its writeback fills the block once from the page cache, reading it
+	 * through the quorum where a slot is not cached
+	 * (hammer2_strategy_fill()).  A cold read leaves page-sized folios as
+	 * often as whole blocks, since readahead grows from the mapping's
+	 * minimum order.  With one voting element nothing is read here.  A
+	 * folio already uptodate is not read either, and its block is written
+	 * from the page cache.
 	 */
 	small = folio_size(folio) < HAMMER2_PBUFSIZE &&
 	    hammer2_voters(VTOI(inode)->pmp,
@@ -2736,30 +2735,68 @@ hammer2_writepages(struct address_space *mapping,
 	hammer2_xop_strategy_t *xop;
 	struct folio *folio = NULL;
 	struct folio_batch siblings;
+	hammer2_key_t lbase;
+	char *block;
 	bool wrote = false;
-	int error = 0;
+	unsigned int i;
+	int error = 0, held, lblksize;
 
 	while ((folio = writeback_iter(mapping, wbc, folio, &error)) != NULL) {
 		wrote = true;
 		folio_start_writeback(folio);
 		folio_unlock(folio);
 		folio_batch_init(&siblings);
-		if (folio_size(folio) < HAMMER2_PBUFSIZE)
+		block = NULL;
+		held = 0;
+		lblksize = hammer2_calc_logical(ip, folio_pos(folio), &lbase,
+		    NULL);
+		if (folio_size(folio) < (size_t)lblksize) {
+			/*
+			 * A folio smaller than its block: the block is filled
+			 * once, under the file's order so no ordered XOP on
+			 * the file changes it between the fill and the write,
+			 * and every element writes the same bytes
+			 * (hammer2_strategy_fill()).  On a failed fill the
+			 * folio and its siblings end their writeback with the
+			 * mapping's error and nothing is written.
+			 */
 			hammer2_gather_block(mapping, folio, &siblings);
+			held = hammer2_xop_order_lock(ip);
+			block = hmalloc(HAMMER2_PBUFSIZE, M_HAMMER2, M_WAITOK);
+			error = hammer2_strategy_fill(ip, folio, lbase, block);
+			if (error) {
+				mapping_set_error(mapping, hammer2_vfs_errno(
+				    hammer2_error_to_errno(error)));
+				folio_end_writeback(folio);
+				for (i = 0; i < folio_batch_count(&siblings); i++)
+					folio_end_writeback(siblings.folios[i]);
+				folio_batch_release(&siblings);
+				hfree(block, M_HAMMER2, HAMMER2_PBUFSIZE);
+				if (held)
+					hammer2_xop_order_unlock(ip);
+				error = 0;
+				continue;
+			}
+		}
 
 		atomic_set_int(&ip->flags, HAMMER2_INODE_DIRTYDATA);
 		hammer2_trans_assert_strategy(ip->pmp);
 		hammer2_trans_init(ip->pmp, HAMMER2_TRANS_BUFCACHE);
-		xop = hammer2_xop_alloc(ip,
-		    HAMMER2_XOP_MODIFYING | HAMMER2_XOP_STRATEGY);
+		xop = hammer2_xop_alloc(ip, HAMMER2_XOP_MODIFYING |
+		    HAMMER2_XOP_STRATEGY | (held ? HAMMER2_XOP_ORDERED : 0));
 		xop->folio = folio;
 		xop->siblings = &siblings;
+		xop->block = block;
 		xop->lbase = folio_pos(folio);
-		/* the descriptor takes the order across the elements */
+		/* the descriptor takes the order, or the fill above holds it */
 		hammer2_xop_start_except(&xop->head,
 		    &hammer2_strategy_write_desc, HAMMER2_WRITE_EXCEPT);
 		hammer2_xop_retire(&xop->head, HAMMER2_XOPMASK_VOP);
 		folio_batch_release(&siblings);
+		if (block)
+			hfree(block, M_HAMMER2, HAMMER2_PBUFSIZE);
+		if (held)
+			hammer2_xop_order_unlock(ip);
 		error = 0;
 	}
 	/*

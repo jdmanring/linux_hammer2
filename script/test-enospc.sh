@@ -696,7 +696,7 @@ out=$(ssh "$GUEST_SSH" '
 	echo "allocated before sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
 	sync
 	echo "allocated after sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
-	echo "data blocks rewritten $(cat /sys/module/hammer2/parameters/data_rewrites), assembled $(command grep -c "assembled around" /tmp/kmsg.log)"
+	echo "data blocks rewritten $(cat /sys/module/hammer2/parameters/data_rewrites), filled $(command grep -c "filled around" /tmp/kmsg.log)"
 	echo "block folios refused $(command grep -c "no block folio" /tmp/kmsg.log), free pages by order $(command grep Normal /proc/buddyinfo | sed "s/.*zone *Normal *//")"
 	command grep "enospace refuses" /tmp/kmsg.log | tail -3 | sed "s/^.*hammer2: enospace /refusal /"
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"

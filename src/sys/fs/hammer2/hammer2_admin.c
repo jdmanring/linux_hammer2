@@ -457,6 +457,31 @@ hammer2_xop_order_release(hammer2_xop_head_t *xop)
 }
 
 /*
+ * Linux: the order held by a frontend across work of its own and the XOP
+ * it then starts with HAMMER2_XOP_ORDERED: the writeback of a folio
+ * smaller than its block, which fills the block once before its write
+ * (hammer2_strategy_fill()).  With xop_order_off set nothing is taken, the
+ * caller starts its XOP without the flag, and the start counts it
+ * withdrawn as it counts any other.
+ */
+int
+hammer2_xop_order_lock(hammer2_inode_t *ip)
+{
+	if (HAMMER2_XOP_ORDER_OFF)
+		return (0);
+	down_write(&ip->xop_sem);
+	hammer2_nofs_enter();
+	return (1);
+}
+
+void
+hammer2_xop_order_unlock(hammer2_inode_t *ip)
+{
+	up_write(&ip->xop_sem);
+	hammer2_nofs_leave();
+}
+
+/*
  * Linux: the rerun of a lookup whose collect failed EDEADLK on an inode's
  * chain (hammer2.h).  The inode is found by number in the hash, which an
  * inode with a local XOP in flight does not leave (a frontend holding it
@@ -549,14 +574,7 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 	hammer2_assert_cluster(&ip1->cluster);
 	xop->desc = desc;
 
-	/*
-	 * Linux: the write XOP's scratch is the block assembled around a
-	 * folio smaller than it.  A whole-block folio is handed to the core
-	 * directly, which is every folio a write on a volume with room
-	 * produces, so the block is allocated only when the XOP finds it
-	 * needs one; see hammer2_xop_strategy_write().
-	 */
-	xop->scratch = NULL;
+	xop->scratch = NULL;	/* Linux: no storage function here uses one */
 
 	/*
 	 * XXX Linux: DragonFly serializes only non-strategy XOPs on an inode
@@ -586,7 +604,7 @@ hammer2_xop_start_except(hammer2_xop_head_t *xop, hammer2_xop_desc_t *desc,
 	 * takes no order, so a local reader can meet it between elements.
 	 */
 	withdrawn = 0;
-	if (desc->ordered) {
+	if (desc->ordered && !(xop->flags & HAMMER2_XOP_ORDERED)) {
 		if (!HAMMER2_XOP_ORDER_OFF)
 			hammer2_xop_order_take(xop);
 		else
