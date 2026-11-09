@@ -114,7 +114,12 @@ KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -o "$W/h2seekprobe" test/hammer2-seekprobe.c >/dev/null 2>&1 || {
 	echo "quorum: COULD-NOT-RUN: the seek probe did not compile" >&2; exit 2; }
 # What the module was built from, so a kept log names its own build.
-echo "  read  module from $(git rev-parse --short HEAD) with src/ $(git diff --quiet HEAD -- src/ && echo clean || echo "modified, diff sha256 $(git diff HEAD -- src/ | sha256sum | cut -c1-16)"), against $KDIR"
+# src/ as built is named by its git tree id, untracked files included and
+# independent of the host's diff configuration: written from a scratch
+# index, so the repository's own index is untouched.
+srct=$(t=$(mktemp) && GIT_INDEX_FILE=$t git read-tree HEAD && GIT_INDEX_FILE=$t git add -A -- src && GIT_INDEX_FILE=$t git write-tree; rm -f "$t")
+srct=$(git rev-parse --short=16 "$srct:src" 2>/dev/null)
+echo "  read  module from $(git rev-parse --short HEAD) with src/ $([ "$srct" = "$(git rev-parse --short=16 HEAD:src)" ] && echo clean || echo "modified, tree ${srct:-unreadable}"), against $KDIR"
 
 # What the kernel tree configures against what the module actually carries,
 # so a sanitizer reading on the wrong module cannot pass in silence.

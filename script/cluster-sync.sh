@@ -657,15 +657,18 @@ echo "  kept  this report beside the images as cluster-run-$STAMP.log"
 # beside the report, since the frozen script/.run-*.sh copies are reused.
 # A module given by H2_KO is named by its own hash, since HEAD is not its
 # source; a dirty tree by the hash of its diff against HEAD, and a built
-# module by its own hash once built.
-git diff --quiet HEAD -- src/ 2>/dev/null; dirty=$?
-srcdiff=$(git diff HEAD -- src/ 2>/dev/null | sha256sum | cut -c1-16)
+# module by its own hash once built. The tree id of src/ as it stands is
+# written from a scratch index, so it covers untracked files and does not
+# depend on the host's diff configuration.
+srcdiff=$(t=$(mktemp) && GIT_INDEX_FILE=$t git read-tree HEAD 2>/dev/null && GIT_INDEX_FILE=$t git add -A -- src 2>/dev/null && GIT_INDEX_FILE=$t git write-tree 2>/dev/null; rm -f "$t")
+srcdiff=$(git rev-parse --short=16 "$srcdiff:src" 2>/dev/null)
+[ -n "$srcdiff" ] && [ "$srcdiff" = "$(git rev-parse --short=16 HEAD:src 2>/dev/null)" ]; dirty=$?
 if [ -n "${H2_KO:-}" ]; then
 	ko="$H2_KO sha256=$(sha256sum < "$H2_KO" 2>/dev/null | cut -c1-16)"
 else
 	ko=built
 fi
-echo "  raw   build head=$(git rev-parse --short=7 HEAD 2>/dev/null) src-dirty=$dirty srcdiff=$srcdiff ko=$ko harness=$(sha256sum < "$0" | cut -c1-16)"
+echo "  raw   build head=$(git rev-parse --short=7 HEAD 2>/dev/null) src-dirty=$dirty srctree=$srcdiff ko=$ko harness=$(sha256sum < "$0" | cut -c1-16)"
 echo "  raw   ${selftest#cluster: }, the prints read from this tree's src/"
 cp "$0" "$FIXDIR/cluster-run-$STAMP.sh"
 
