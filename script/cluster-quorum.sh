@@ -413,7 +413,8 @@ echo 0 > $P/xop_gap_ms
 # uncached page at 72 KiB (read_folio), filefrag -B (FIBMAP), and a 4 KiB
 # pwrite at 76 KiB, uncached (the read under i_rwsem, the folio lock and
 # a transaction). Milliseconds run from before the sync, as the probe's
-# do. The page read must be the one written before, and the block read
+# do, and sync-ms to the sync's exit: a window whose writeback was held
+# reads at least the gap there. The page read must be the one written before, and the block read
 # back cold the splice of the writes that answered. With xop_order_off
 # set the read and the write must fail EIO. FIBMAP has no error to give:
 # ->bmap returns a block number, and hammer2_bmap() answers 0 for an
@@ -442,7 +443,7 @@ q2() {	# off tag
 	esac
 	s=$?
 	t1=$(date +%s%N); r1=$(cat $P/xop_reruns)
-	wait $sp
+	wait $sp; t2=$(date +%s%N)
 	echo 0 > $P/xop_gap_ms
 	echo 0 > $P/xop_order_off
 	grep -q 'wrote 4096/4096' /tmp/q2.out && dd if=/tmp/q2.a5 of=/tmp/q2.want bs=4k seek=3 count=1 conv=notrunc 2>/dev/null
@@ -451,7 +452,7 @@ q2() {	# off tag
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	dd if=/mnt/h2q/q2 bs=64k skip=1 count=1 2>/dev/null | cmp -s - /tmp/q2.want && final=1 || final=0
 	ext=$(sed -n 's/.*: \([0-9][0-9]*\) extents\{0,1\} found.*/\1/p' /tmp/q2.out)
-	echo "vote q2$1-$2 exit $s eio $(grep -c 'Input/output error' /tmp/q2.out) wrote $(grep -c 'wrote 4096/4096' /tmp/q2.out) reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 )) same $same final $final ext ${ext:--}"
+	echo "vote q2$1-$2 exit $s eio $(grep -c 'Input/output error' /tmp/q2.out) wrote $(grep -c 'wrote 4096/4096' /tmp/q2.out) reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 )) same $same final $final ext ${ext:--} sync-ms $(( (t2 - t0) / 1000000 ))"
 	rm -f /mnt/h2q/q2
 }
 echo strategy_write > $P/xop_gap_desc
