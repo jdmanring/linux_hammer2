@@ -206,7 +206,8 @@ def selftest():
         return rc, buf.getvalue()
 
     rc, o = run(clean)
-    expect(rc == 0 and "A: 2 inode(s), 2 dirent(s), 0 without an inode, 0" in o, "a clean PFS reads 0 and 0")
+    expect(rc == 0 and "A: 2 inode(s), 2 dirent(s), 0 without an inode, 0 inode(s) no entry names, 0 more" in o,
+           "a clean PFS reads 0 and 0, and the walk from its root reaches both inodes")
     rc, o = run(clean.replace("inum 0x0000000000000401", "inum 0x0000000000000405"))
     expect(rc == 1 and "dangling  f inum 0x405" in o and "orphan    inum 0x401" in o,
            "an entry moved to a missing inode reads one dangling and one orphan")
