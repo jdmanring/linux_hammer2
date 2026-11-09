@@ -548,10 +548,10 @@ struct hammer2_inode {
  * under none, and only on a hash miss, so their rerun is guarded only
  * when the inode entered the hash during the first XOP.  An inode
  * embedded in its directory (old media) is fed keyed by its name's hash,
- * the rerun misses and runs once more unguarded, failing only if the
- * window is still open.  An unlink names its target in order_ip and
- * holds the order through its collect (HAMMER2_XOP_ORDERHOLD), since its first element
- * has already removed the name.  Upstream steps over the key.
+ * the rerun misses and runs once more unguarded, failing if the window is
+ * still open or the masters disagree.  An unlink names its target in order_ip
+ * and holds the order through its collect (HAMMER2_XOP_ORDERHOLD), its first
+ * element having removed the name.  Upstream steps over the key.
  */
 
 /*
