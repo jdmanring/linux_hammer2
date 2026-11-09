@@ -504,14 +504,16 @@ NBIG2=${H2_NBIG2:-20000}
 # line forwards it to the guest half, which runs under set -u.
 STOP_DEPTH=${H2_STOP_DEPTH:-0}
 STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
-# H2_STOP_ROUND=2 issues the stop once the pass's first round has verified,
-# so the teardown lands in its second round, in place of the copy depth:
-# the default depth sits a few copies before the first round's end, and
-# which round a stop lands in followed the speed of the cluster unmount.
-# A second round copies only what the first failed to verify, so after a
-# first round that verified clean it ends in milliseconds and the stop
-# misses the pass; the KASAN runs' first rounds failed one, the debug
-# control's in seq27 none.
+# H2_STOP_ROUND=2 issues the stop once the pass's first round has ended,
+# on its verify line, which prints whatever the round acted on, so the
+# teardown lands in its second round, in place of the copy depth: the
+# default depth sits inside the first round (11000 updates past the
+# mutation where seq27's debug control ended its first round at 20024),
+# and which round a stop lands in followed the speed of the cluster
+# unmount. A second round copies only what the first failed to verify, so
+# after a first round that verified clean it ends in milliseconds and the
+# stop misses the pass: seq27's debug control, round 1 "failed 0", printed
+# no interrupted line. The KASAN runs' first rounds failed one.
 STOP_ROUND=${H2_STOP_ROUND:-0}
 # Phase 2b, the refused copy: how many allocations the freemap refuses
 # inside the thread's first pass (0 leaves the phase out). Needs
@@ -1492,7 +1494,7 @@ echo "h2probe: bigdir2 write end" > /dev/kmsg
 timeout 60 umount /mnt/h2c
 verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer clindex') + $(klog 'syncsnap: unverified') )); }
 copied() { grep -c 'syncthr: update inode' $K; }
-p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode'); r10=$(klog 'syncsnap: verify clindex 1 round 1 ')
+p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode'); r10=$(klog 'syncsnap: verify clindex 1 round 1 '); ir0=$(klog 'syncsnap: interrupted clindex')
 # Set before the slave's device returns, so the knob is read by the copy.
 if [ "$H2_COLLAPSE" != 0 ]; then
 	[ -e /sys/module/hammer2/parameters/sync_collapse_parent ] || {
@@ -1594,7 +1596,7 @@ echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(copied) - u1 ))"
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
 echo "interrupt-didbreak $(klog didbreak)"
-echo "interrupt-rounds $(awk '/syncsnap: interrupted clindex/ { v = $(NF - 2) } END { print v + 0 }' $K)"
+echo "interrupt-rounds $(awk -v n="$ir0" '/syncsnap: interrupted clindex/ { if (++c > n) v = $(NF - 2) } END { print v + 0 }' $K)"
 echo "interrupt-src-cleaned $(klog 'syncsnap: unmount deleted CL.h2sync-src error 0')"
 # The target the interrupted pass meant to keep is on the slave's media, read
 # on the device the teardown closed.
