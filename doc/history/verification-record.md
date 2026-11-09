@@ -23983,3 +23983,38 @@ ordered XOP on its target, the snapshot's flush, which the order now makes
 it wait for. The first attempt (`n10-6-seq22-norun.log`) was COULD-NOT-RUN
 on every run, the wrapper having left the guest running, which
 `million-tree.sh` refuses.
+
+## Whether a blockref's leaf_count is exact on media, 2026-11-09
+
+N10.7 would let SEEK_HOLE step over an indirect block whose `leaf_count`
+says every slot of its key range holds a 64 KiB block. That answer comes
+from a field nothing in the kernel reads: `hammer2_base_insert()` and
+`hammer2_base_delete()` (`hammer2_chain.c`) maintain it when a flush
+writes a parent's blockmap, and the flag the delete sets when the count
+has saturated at 65535, `HAMMER2_CHAIN_HINT_LEAF_COUNT` ("redo leaf
+count", `hammer2.h`), is read nowhere, so a saturated count never comes
+back down. `script/h2-leafcount.py` reads a `hammer2 -q show` dump and
+checks every INODE and INDIRECT blockref with children against the sum
+the insert makes, and for each indirect block over file data compares
+the count's claim of full with the bytes its data leaves cover. Its
+selftest plants a count one above its children and a claim of full over
+a hole, and requires both reported, an empty dump refused and a line that
+names a blockref and does not parse refused.
+
+The first reading (`p7-notes/n10-7-leafcount-20261109.log`, the kept
+fixture images with each image's date, read by hammer2-utils' `show`):
+1,109 indirect blocks over file data on 24 images, 375 saying full and
+full, 734 short with a hole, none saying full over a hole and none
+saying short over a full range. Those images were written by DragonFly
+(`cut-flush-dfly.img`, `dfly-enospc.img`), by the FreeBSD port
+(`crash-fbsd.img`), and by this port, cluster pairs among them. Every
+inexact count is on an inode blockref the super-root holds or is: the
+super-root itself on every image, its count left at newfs's while PFS
+roots were added; a PFS root at 0 over 9 children on `readme.img`, written
+by the module of 2026-09-05; and the snapshot `SNAP1`'s root at 0 over a
+saturated count on `million-tree.img`, which seq22's last run left
+holding the snapshot of a deleted tree. `f10.img`, whose volume header
+fails its check by design, is refused by `show` and by the tool. These
+are flushed images only: what a seek sees in memory before a flush, a
+punched hole and a truncate are not read, and the cause of the PFS
+roots' zero is not attributed.
