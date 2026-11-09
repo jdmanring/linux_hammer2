@@ -15,6 +15,10 @@ entries under it name their own inodes, so those read as named, and the
 count of inodes no walk from the PFS root reaches through entries is
 printed beside it as the size of what the orphans hold.  A directory's
 entries are the dirent blockrefs nested under its inode in show's dump.
+An inode is known by its blockref key, which is its number on media this
+port and DragonFly 6.4 write; older media embed an inode in its
+directory keyed by its name's hash, and each such inode would read as an
+orphan, the alarm direction (no such image has been read).
 H2_DANGLING_NAMES (comma separated) prints each entry of those names with
 its inode number and whether that inode is present.
 
