@@ -29,8 +29,8 @@ page is the defect.
   the masters disagree on fails its read, seek and map with EIO rather
   than reading as a hole or as one master's copy. A read, seek or map
   that meets a change on one master and not yet the next waits for it
-  under the inode's order and answers (1.0.94), and a lookup by name or
-  inode number that meets one reruns under the target's order (1.0.95);
+  under the inode's order and answers (1.0.94), and a lookup by name that
+  meets one reruns under the target's order (1.0.95);
   an unlink holds its target's order across its collect, so a chain sync
   between its elements cannot leave the inode linked with no name.
 

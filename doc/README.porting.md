@@ -1774,7 +1774,15 @@ EDEADLK the lookup by name (`hammer2_vop_lookup()`), by inode number
 `hammer2_xop_rerun_begin()` in `hammer2_admin.c`, which finds the inode by
 number in the hash, and run the XOP once more; the target of a lookup by
 name is the inode number the failed collect stopped at. A target not yet
-in the hash has no order to wait on and the EDEADLK stands. The unlink
+in the hash has no order to wait on and the EDEADLK stands. The lookup by
+number and the ancestor walk start their XOP only when the hash misses,
+and an inode with a local ordered XOP in flight is in the hash, so their
+rerun is guarded only when the inode entered the hash during the first
+XOP; no run has driven either. An inode embedded in its directory, which
+older media carry, is fed keyed by its name's hash rather than its
+number, so the lookup's rerun misses it and the EDEADLK stands as it did
+at 1.0.94; the readdir has the same exposure. The rerun holds the order
+in a NOFS scope, as `hammer2_xop_order_take()` does. The unlink
 holds its target's order with the directory's across its collect
 (`HAMMER2_XOP_ORDERHOLD`, `order_ip`): its first element removes the name
 and then feeds the target's inode chain, so a chain sync between the two
@@ -1785,9 +1793,15 @@ that are not both XOP operands, and the release moves ahead of
 chain sync between the masters and requires a cold lookup and an unlink
 in that window to wait it out and answer, the lookup with a rerun
 counted, the unlink leaving the inode absent or at zero links on both
-volumes' media beside a kept file at one link; with the order out the
-lookup fails EIO. The unlink's control is the orphan: the name gone and
-the inode still linked on a volume. In the first run (seq19) that control
+volumes' media beside two files at one link, one made before it and one
+after, from dumps that exited 0; with the order out the lookup fails EIO.
+The unlink's control is the orphan: the name gone and the inode still
+linked on a volume. The unlink's check under the order counts only beside
+a control that fired, since it cannot by itself tell the order's wait
+from another as long. No check separates holding the order through the
+collect from releasing it at the end of the element loop: the unlink
+waits at `hammer2_xop_order_take()` either way, and the collect's window
+is microseconds. In the first run (seq19) that control
 did not fire because `rm` stats its argument before `unlinkat`, and
 `getattr` takes the inode lock shared, which the chain sync held
 exclusive through the window, so the unlink started after it; the harness

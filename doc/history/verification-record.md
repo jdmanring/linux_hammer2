@@ -23843,7 +23843,7 @@ uncommitted; predictions `p7-notes/n10-6-expected14.md`). Q4 passed on
 the debug and release builds: the cold lookup reran once and answered
 after 2072 and 2035 ms (`seq19-debug.out:56`, `seq19-release.out:56`),
 and with the order out failed EIO at 515 and 503 ms (`:57` in each). Q5
-with the order passed on both, the inode absent on both volumes beside
+with the order printed ok on both, the inode absent on both volumes beside
 the kept file at one link (`:58` in each). Q5's control did not fire:
 with the order out the unlink still exited 0 after 2050 and 2021 ms with
 the inode absent (`:59` in each), one failed check of 60 and of 57. The
@@ -23875,8 +23875,111 @@ The last Q5 row is the orphan the order prevents: with the order out the
 name is gone on both masters and the inode keeps its link on both
 volumes' media, found by `hammer2 -v show` beside the kept file. No hung
 task with the detector at 120 s and `debug_locks` 1 at the end on the
-debug build (`seq20-debug.out:61-62`). The release build ran Q4 and Q5
-under the order only at seq19 (above); the control was not rerun there.
+debug build (`seq20-debug.out:61-62`). The release build's Q4 at seq19
+stands, its control having fired; its Q5 at seq19 is not a reading. The
+unlink ran under `rm` there, which the cause above serializes on the inode
+lock with the order on as well as off (2016 and 2021 ms,
+`seq19-release.out:58-59`), so the `ok` beside the failed control read a
+wait that the order did not make. The tenth review found this and the next
+section has the release build's first Q5 with its control.
 
 QEMU cores read 0 at the start and the end of both runs
 (`n10-6-seq19.log:1`, `:27`; `n10-6-seq20.log:1`, `:18`).
+
+## The tenth review of N10.6, and the release build's unlink with its control, 2026-11-08
+
+`1a32c3a` reached `origin` at 1.0.95 with no review of its own: the ninth
+review (`p7-notes/audit-n10-6-round9.md`) covered `58a3be3..7309eba`, the
+range before it. The tenth (`p7-notes/audit-n10-6-round10.md`, range
+`7309eba..d790423`) found no defect in the code and returned FIX-FIRST on
+what the documents and the harness said was shown: the release build's
+Q5 at seq19 cited as a reading (the section above, corrected); the lookup
+by number and the ancestor walk claimed beside the lookup by name though
+they reach their rerun only when the inode enters the hash during the
+first XOP, and no run drove either; Q5's media reader discarding `hammer2
+show`'s status, so a dump that stopped short read the file as gone, Q5's
+pass state; and seven smaller items, among them the rerun holding an order
+outside a NOFS scope, which `hammer2_xop_order_take()` enters for every
+held order. `0bbeeb2` enters the scope on a rerun's hit and says in
+`hammer2.h` which lock each rerun holds and that an inode embedded in its
+directory is fed keyed by its name's hash, so the lookup's rerun misses it.
+`420891e` makes the dump's exit status part of Q5's reading, adds a second
+control file made after the one under test, counts Q5's check under the
+order only beside a control that fired, and puts a hash of a dirty `src/`
+diff on the module line. The Q5 reader's verdicts were driven on six
+synthetic vote lines before the run: a whole dump passes, a failed dump and
+a dump missing the later control fail, and a control that did not fire
+turns the check under the order into a line read.
+
+**The run** (`n10-6-seq21.log`, head `420891e`, `src/` clean on every
+build: `seq21-debug.out:1`, `seq21-kasan.out:1`, `seq21-release.out:1`;
+predictions `p7-notes/n10-6-expected15.md`). The quorum vote read 60
+checks and 0 failed on the debug build, 61 and 0 on KASAN, 57 and 0 on
+release (`:80` in each), with 0 KASAN reports (`seq21-kasan.out:68`,
+`n10-6-seq21.log:12`).
+
+| seq21 | debug | KASAN | release |
+|---|---|---|---|
+| Q4 under the order: reruns, ms | 1, 2014 (`:56`) | 1, 2034 (`:56`) | 1, 2065 (`:56`) |
+| Q4 with the order out: EIO at ms | 515 (`:57`) | 552 (`:57`) | 503 (`:57`) |
+| Q5 under the order: ms, f2 on a/b, keep and late on a/b | 2049, absent/absent, 1 1/1 1 (`:58`) | 2064, absent/absent, 1 1/1 1 (`:58`) | 2019, absent/absent, 1 1/1 1 (`:58`) |
+| Q5 with the order out: EIO at ms, name, f2 nlinks on a/b | 513, gone, 1/1 (`:59`) | 543, gone, 1/1 (`:59`) | 503, gone, 1/1 (`:59`) |
+
+`hammer2 show` exited 0 on both volumes in every Q5 line. The release
+row is that build's first Q5 reading with its control fired. On the debug
+build `order_check` read 0 with 14 in its control, no task hung and
+`debug_locks` stayed 1 (`seq21-debug.out:60-62`). The same run took the
+two guest gates the push hook skips, both on `h2debug-7.3tls` with the
+module built from `420891e`: `test-enospc.sh` filled 2G with 0 failures,
+its file-handle exerciser, which reaches `hammer2_vget()` but not its
+rerun, 9 checks and 0 failed (`seq21-enospc.out:410-411`); and
+`test-fixtures.sh` read 11 images with 0 failures
+(`seq21-fixtures.out:23`). QEMU cores read 0 at the start and the end.
+
+**The instruments the gates do not run**, at `d790423`
+(`p7-notes/c2-instruments-20261108.log`): `make W=1` 0 warnings; clang's
+analyzer over the four files C2 touched, 8 candidates, none on a line C2
+changed. Seven are dead stores at four sites (`hammer2_inode.c` 399, 1292
+and 1586, and `hammer2_os.h:1664`, reported once in each of the four
+files). The eighth, a garbage value
+compared at `hammer2_vnops.c:2187`, `poff` in `hammer2_bmap()`, is new
+since the reading at `ca3ff80` and is not a defect:
+`hammer2_bmap_lbn()` sets `*poff` whenever its collect returns 0, and
+`hammer2_error_to_errno()` maps every nonzero error to a nonzero errno
+(EDOM where no bit matches), so the function never returns 0 with `*poff`
+unset; the comparison predates `ca3ff80` (`6ef44b0`), and the path to it
+gained C1's rerun loop (`58a3be3`), which the analyzer follows without
+reading the mapping. `smatch` 59 candidates over 22 files, which against
+`n10-5-audit1-smatch.log` is the same set less one in `hammer2_ioctl.c`,
+none in C2's files. No reading covers the rerun's EDEADLK branch on a
+lookup by number or the ancestor walk, nor holding the unlink's order
+through the collect apart from releasing it at the end of the element
+loop; `doc/README.porting.md` says so.
+
+**What the unlink's second order costs** (`n10-6-seq22.log`, predictions
+`p7-notes/n10-6-expected16.md`). C2's design asked for `million-tree.sh`'s
+remove rate beside C1's, and no run had read one: its whole-tree delete runs
+only under `H2_TREE_CHURN=1`, and no record cited a reading. Four runs on
+`h2release-7.3tls`, a million files under 1000 directories each, C1's
+module (`7309eba`, built from a worktree) and HEAD's (`420891e`) taken in
+turn, each counted on both sides with 0 failures
+(`seq22-c1-1.out:47`, `seq22-head-1.out:47`, `seq22-c1-2.out:43`,
+`seq22-head-2.out:43`):
+
+| seq22 | C1, 1 | HEAD, 1 | C1, 2 | HEAD, 2 |
+|---|---|---|---|---|
+| created, s | 402 | 393 | 397 | 397 |
+| a tenth deleted and written again beside a snapshot, s | 4 | 5 | 4 | 6 |
+| the whole tree deleted, s | 14 | 14 | 14 | 13 |
+
+(`:9`, `:15` and `:27` in the first two, `:9`, `:15` and `:25` in the
+last two.) The whole-tree delete reads the same, which is what the
+prediction asked. The churn reads a second longer on HEAD in both repeats,
+and the harness times it in whole seconds, from before the churn starts
+in the background to after the shell, which sleeps three seconds and then
+takes the snapshot, has waited for it, so the difference is not resolved
+in either direction. The churn is the one reading where an unlink can meet an
+ordered XOP on its target, the snapshot's flush, which the order now makes
+it wait for. The first attempt (`n10-6-seq22-norun.log`) was COULD-NOT-RUN
+on every run, the wrapper having left the guest running, which
+`million-tree.sh` refuses.
