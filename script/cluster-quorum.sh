@@ -114,7 +114,7 @@ KO=src/sys/fs/hammer2/hammer2.ko
 cc -static -O2 -o "$W/h2seekprobe" test/hammer2-seekprobe.c >/dev/null 2>&1 || {
 	echo "quorum: COULD-NOT-RUN: the seek probe did not compile" >&2; exit 2; }
 # What the module was built from, so a kept log names its own build.
-echo "  read  module from $(git rev-parse --short HEAD) with src/ $(git diff --quiet HEAD -- src/ && echo clean || echo modified), against $KDIR"
+echo "  read  module from $(git rev-parse --short HEAD) with src/ $(git diff --quiet HEAD -- src/ && echo clean || echo "modified, diff sha256 $(git diff HEAD -- src/ | sha256sum | cut -c1-16)"), against $KDIR"
 
 # What the kernel tree configures against what the module actually carries,
 # so a sanitizer reading on the wrong module cannot pass in silence.
@@ -508,8 +508,10 @@ q3 c 5 1 1
 # before its first element removes the name. With xop_order_off the
 # lookup fails EIO, and the unlink fails EIO with the name already gone
 # on both masters while the inode keeps its link: the orphan, read from
-# each volume's media by the inode's nlinks, beside a file the same dump
-# must show (the reader's control).
+# each volume's media by the inode's nlinks, beside two files the same
+# dump must show at one link, one made before the file and one after it,
+# from a dump that exited 0 (the reader's controls: a dump that stopped
+# short of the file would otherwise read it as gone).
 echo inode_chain_sync > $P/xop_gap_desc
 mkdir -p /mnt/h2q/q45
 q4() {	# off
@@ -528,20 +530,23 @@ q4() {	# off
 	echo 0 > $P/xop_order_off
 	echo "vote q4$1 exit $s eio $(grep -c 'Input/output error' /tmp/q4.out) reruns $((r1 - r0)) ms $(( (t1 - t0) / 1000000 ))"
 }
-q5media() {	# inum keep-inum: each volume's nlinks for both, - where absent
+q5media() {	# inum keep-inum late-inum: each volume's show status, nlinks for each, - where absent
 	umount /mnt/h2q
 	for v in a:vdb b:vdc; do
-		hammer2 -v show /dev/${v#*:} 2>/dev/null | awk -v t=${v%%:*} \
-		    -v f="$(printf '0x%016x' "$1")" -v k="$(printf '0x%016x' "$2")" '
+		hammer2 -v show /dev/${v#*:} > /tmp/q5show 2>/dev/null; r=$?
+		awk -v t=${v%%:*} -v r=$r -v f="$(printf '0x%016x' "$1")" \
+		    -v k="$(printf '0x%016x' "$2")" -v l="$(printf '0x%016x' "$3")" '
 		$1 == "inum" { cur = $2 }
-		$1 == "nlinks" { if (cur == f) fn = $2; if (cur == k) kn = $2 }
-		END { printf " %s-f2 %s %s-keep %s", t, fn == "" ? "-" : fn, t, kn == "" ? "-" : kn }'
+		$1 == "nlinks" { if (cur == f) fn = $2; if (cur == k) kn = $2; if (cur == l) ln = $2 }
+		END { printf " %s-show %s %s-f2 %s %s-keep %s %s-late %s", t, r, t, fn == "" ? "-" : fn,
+		    t, kn == "" ? "-" : kn, t, ln == "" ? "-" : ln }' /tmp/q5show
 	done
 	mount -t hammer2 /dev/vdb@CL /mnt/h2q || exit 1
 }
 q5() {	# off
-	touch /mnt/h2q/q45/keep /mnt/h2q/q45/f2; sync
+	touch /mnt/h2q/q45/keep /mnt/h2q/q45/f2 /mnt/h2q/q45/late; sync
 	fi=$(stat -c %i /mnt/h2q/q45/f2); ki=$(stat -c %i /mnt/h2q/q45/keep)
+	li=$(stat -c %i /mnt/h2q/q45/late)
 	echo $1 > $P/xop_order_off
 	echo $GAP > $P/xop_gap_ms
 	touch -m /mnt/h2q/q45/f2
@@ -560,7 +565,7 @@ q5() {	# off
 	sync; sync
 	echo 2 > /proc/sys/vm/drop_caches
 	named=$(ls /mnt/h2q/q45 | grep -c '^f2$')
-	echo "vote q5$1 exit $s eio $(grep -c 'Input/output error' /tmp/q5.out) ms $(( (t1 - t0) / 1000000 )) named $named$(q5media $fi $ki)"
+	echo "vote q5$1 exit $s eio $(grep -c 'Input/output error' /tmp/q5.out) ms $(( (t1 - t0) / 1000000 )) named $named$(q5media $fi $ki $li)"
 	rm -rf /mnt/h2q/q45; mkdir -p /mnt/h2q/q45
 }
 for off in 0 1; do
@@ -925,20 +930,34 @@ if [ "$QVOTE" = 1 ]; then
 	# Q5. An unlink in the same window holds the file's order with the
 	# directory's and waits the chain sync out before its first element
 	# removes the name: exit 0, name gone, the inode absent or at nlinks 0
-	# on both volumes' media, beside a kept file the same dump shows at
-	# nlinks 1 (the reader's control). With the order out the unlink fails
-	# EIO after the name is gone on both masters, leaving the inode linked
-	# on media with no name: the orphan the order exists to prevent.
-	gone() {	# tag: 0 when the volume's media has no link to the inode
+	# on both volumes' media, beside two files the same dump shows at
+	# nlinks 1 from a dump that exited 0 (the reader's controls). With the
+	# order out the unlink fails EIO after the name is gone on both
+	# masters, leaving the inode linked on media with no name: the orphan
+	# the order exists to prevent. Q50 alone cannot tell the order's wait
+	# from any other wait as long (an rm's getattr at seq19 read the same
+	# ms), so it is a reading only beside a Q51 that fired.
+	read5() {	# vote volume: 0 when that volume's dump exited 0 and shows both controls at one link
+		[ "$(vf q5$1 $2-show)" = 0 ] && [ "$(vf q5$1 $2-keep)" = 1 ] && [ "$(vf q5$1 $2-late)" = 1 ]
+	}
+	gone() {	# vote volume: 0 when a whole dump has no link to the inode
+		read5 $1 $2 || return 1
 		case $(vf q5$1 $2-f2) in -|0) return 0 ;; esac; return 1
 	}
+	linked() {	# vote volume: 0 when a whole dump has the inode at one link or more
+		read5 $1 $2 && [ "$(vf q5$1 $2-f2)" -ge 1 ] 2>/dev/null
+	}
+	x1=$(vote q51); e=$(vf q51 eio); n=$(vf q51 named)
+	[ "${e:-0}" -ge 1 ] 2>/dev/null && [ "$n" = 0 ] && { linked 1 a || linked 1 b; }; c51=$?
 	x=$(vote q50); s=$(vf q50 exit); e=$(vf q50 eio); m=$(vf q50 ms); n=$(vf q50 named)
-	[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$n" = 0 ] && gone 0 a && gone 0 b &&
-	    [ "$(vf q50 a-keep)" = 1 ] && [ "$(vf q50 b-keep)" = 1 ]
-	check "Q5 an unlink beside the file's chain sync held between the masters waits it out and leaves no orphan on either volume" $? "${x:-no line} (want exit 0, eio 0, ms at least $((QGAP - QDELAY)), named 0, f2 - or 0 and keep 1 on both)"
-	x=$(vote q51); e=$(vf q51 eio); n=$(vf q51 named)
-	[ "${e:-0}" -ge 1 ] 2>/dev/null && [ "$n" = 0 ] && { ! gone 1 a || ! gone 1 b; }
-	check "Q5 with xop_order_off the unlink fails EIO with the name gone and the inode still linked on media: the orphan" $? "${x:-no line} (want eio 1, named 0, f2 nlinks 1 on a volume)"
+	[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$n" = 0 ] && gone 0 a && gone 0 b
+	c50=$?
+	if [ $c51 = 0 ]; then
+		check "Q5 an unlink beside the file's chain sync held between the masters waits it out and leaves no orphan on either volume" $c50 "${x:-no line} (want exit 0, eio 0, ms at least $((QGAP - QDELAY)), named 0, show 0, f2 - or 0, keep and late 1 on both)"
+	else
+		echo "  read  Q5 the unlink under the order, not a reading while its control below did not fire: ${x:-no line}"
+	fi
+	check "Q5 with xop_order_off the unlink fails EIO with the name gone and the inode still linked on media: the orphan" $c51 "${x1:-no line} (want eio 1, named 0, show 0, keep and late 1, f2 nlinks 1 on a volume)"
 	o=$(vote order-check | cut -d' ' -f1); oo=$(vf order-check off)
 	case $o in
 	absent|'') echo "  note  order_check not read: ${o:-no line}, a module or kernel without lockdep" ;;
