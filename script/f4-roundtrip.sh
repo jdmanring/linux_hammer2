@@ -129,7 +129,10 @@ down "$GUEST" "$GUEST_SSH"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
-# 2. DragonFly checks and writes.
+# 2. DragonFly checks and writes. Its manifest is written off the volume
+# and copied in, as Linux's is: the shell creates a redirect's file while
+# find is still listing the directory, so a manifest written in place can
+# list itself, with the sum of its own empty start, and fail its check.
 cat > "$W/dfly.sh" <<GUEST
 mkdir -p /mnt/f4; mount_hammer2 /dev/vbd1@$LABEL /mnt/f4 || { echo "mount failed"; exit 1; }
 cd /mnt/f4
@@ -139,7 +142,7 @@ echo "dragonfly checked \$n files, \$bad mismatches"
 mkdir -p back/deep; echo "made on dragonfly" > back/hello; dd if=/dev/random of=back/rand300k bs=1000 count=300 2>/dev/null
 i=0; while [ \$i -lt 200 ]; do echo \$i > back/deep/g\$i; i=\$((i+1)); done
 mv tree/sub/f0 back/moved; rm tree/sub/f1
-find back -type f | sort | xargs md5 -r | sed 's/ /  /' > back/dfly.md5; echo "dragonfly wrote \$(find back -type f | wc -l | tr -d ' ') files"
+find back -type f | sort | xargs md5 -r | sed 's/ /  /' > /tmp/dfly.md5; cp /tmp/dfly.md5 back/dfly.md5; echo "dragonfly wrote \$(find back -type f | wc -l | tr -d ' ') files"
 cd /; umount /mnt/f4; fsck_hammer2 /dev/vbd1 >/dev/null 2>&1 && echo "dragonfly fsck clean"
 GUEST
 boot "$DFLY" "$DFLY_SSH" || { down "$DFLY" "$DFLY_SSH"; exit 2; }
