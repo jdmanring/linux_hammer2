@@ -324,6 +324,7 @@ if [ $CHURN = 1 ]; then
 	done
 	printf '%s\n' "$out" | grep -q "^snapshot counted [0-9]* files, spot check [1-9][0-9]* files, 0 wrong" || { echo "  FAIL  the snapshot read wrong content"; fail=$((fail + 1)); }
 	snapn=$(printf '%s\n' "$out" | sed -n 's/^snapshot counted \([0-9]*\) files.*/\1/p')
+	skipped=0; printf '%s\n' "$out" | grep -q "^delete skipped" && skipped=1
 fi
 for want in "^walk errors 0$" "^spot check 200 files, 0 wrong" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kmsg lines [1-9]" "^kernel warnings 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
@@ -384,7 +385,13 @@ out=$($RUN "$DFLY_SSH" 'sh /tmp/dfly.sh' 2>&1)
 printf '%s\n' "$out" | sed 's/^/  dfly    /'
 down "$DFLY" "$DFLY_SSH"
 if [ $CHURN = 1 ]; then
-	printf '%s\n' "$out" | grep -q "^dragonfly counted 0 files in the deleted tree" || { echo "  FAIL  DragonFly found files in the deleted tree"; fail=$((fail + 1)); }
+	# A skipped delete leaves the tree whole, so DragonFly's count of it is
+	# the live tree, and the run has failed on the walk that skipped it.
+	if [ $skipped = 1 ]; then
+		echo "  skip  DragonFly's count of the deleted tree: this side skipped the delete"
+	else
+		printf '%s\n' "$out" | grep -q "^dragonfly counted 0 files in the deleted tree" || { echo "  FAIL  DragonFly found files in the deleted tree"; fail=$((fail + 1)); }
+	fi
 	printf '%s\n' "$out" | grep -q "^dragonfly deleted-tree walk errors 0$" || { echo "  FAIL  DragonFly's walk of the deleted tree met a name it could not open"; fail=$((fail + 1)); }
 	printf '%s\n' "$out" | grep -q "^dragonfly counted $snapn files" || { echo "  FAIL  DragonFly did not count the snapshot as this side did"; fail=$((fail + 1)); }
 else
