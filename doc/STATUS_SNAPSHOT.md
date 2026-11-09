@@ -89,12 +89,15 @@ has been read back by DragonFly and the other way round
   synchronization pass, which compares tids, never replaces them. Two MASTERs reach
   the same assembly, from the code, through a page cached before their
   block came to be disputed.
-- **A directory created under a PFS root during a sync**: its entry can
-  reach the media in that sync and its inode only in the next, so a
-  snapshot taken at that sync, or a crash after it, keeps a name that
-  does not open. Carried from DragonFly, whose own kernel does the same
-  on its own media (2 snapshots of 20 under churn, 2026-11-09); neither
-  tree's `fsck_hammer2` reports it; not fixed (the verification record,
+- **A directory replaced under a PFS root during a sync**: the root's new
+  entry can reach the media in that sync while the new inode, and the
+  removal of the old directory's inode, wait for the next. A snapshot
+  taken at that sync keeps a name that does not open and an inode that
+  no name reaches, holding space no walk of the namespace finds; from
+  the code, a crash after that sync mounts the same. Carried from
+  DragonFly, whose own kernel does the same on its own media (2
+  snapshots of 20 under churn, 2026-11-09); neither tree's
+  `fsck_hammer2` reports it; not fixed (the verification record,
   "A snapshot through a churn keeps a new directory's name without its
   inode").
 - **Writes through a cluster with a remote master**: refused; such a

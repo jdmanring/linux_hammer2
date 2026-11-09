@@ -23944,27 +23944,33 @@ rerun, 9 checks and 0 failed (`seq21-enospc.out:410-411`); and
 analyzer over the four files C2 touched, 8 candidates, none on a line C2
 changed. Seven are dead stores at four sites (`hammer2_inode.c` 399, 1292
 and 1586, and `hammer2_os.h:1664`, reported once in each of the four
-files). The eighth, a garbage value
-compared at `hammer2_vnops.c:2187`, `poff` in `hammer2_bmap()`, is new
-since the reading at `ca3ff80` and is not a defect:
-`hammer2_bmap_lbn()` sets `*poff` whenever its collect returns 0, and
-`hammer2_error_to_errno()` maps every nonzero error to a nonzero errno
-(EDOM where no bit matches), so the function never returns 0 with `*poff`
-unset; the comparison predates `ca3ff80` (`6ef44b0`), and the path to it
-gained C1's rerun loop (`58a3be3`), which the analyzer follows without
-reading the mapping. `smatch` 59 lines, 44 of them one static assertion in
-a kernel header (`neighbour.h:317`) from the instrument's own parse and 15
-in the module, against 44 and 16 in `n10-5-audit1-smatch.log`: the same
-set less one in `hammer2_ioctl.c`, none in C2's files. These three
-instruments read `d790423`, before `0bbeeb2` added the NOFS scope to the
-rerun, and read the same on `0bbeeb2`'s source, read in the tree of
-`757eeeb` (`p7-notes/instruments-20261109.log`, whose header names that
-commit's hash before a rewrite of an earlier message; the tree is the
-same): W=1 0 warnings, the
-analyzer's 8 and smatch's 59 the same sets with line numbers set aside. No reading covers the rerun's EDEADLK branch on a
-lookup by number or the ancestor walk, nor holding the unlink's order
-through the collect apart from releasing it at the end of the element
-loop; `doc/README.porting.md` says so.
+files). The eighth, a garbage value compared at `hammer2_vnops.c:2187`,
+`poff` in `hammer2_bmap()`, is new since the reading at `ca3ff80` and is
+not a defect: `hammer2_bmap_lbn()` sets `*poff` whenever its collect
+returns 0, and `hammer2_error_to_errno()` maps every nonzero error to a
+nonzero errno (EDOM where no bit matches), so the function never returns 0
+with `*poff` unset; the comparison predates `ca3ff80` (`6ef44b0`), and the
+path to it gained C1's rerun loop (`58a3be3`), which the analyzer follows
+without reading the mapping. `smatch` 59 lines, 44 of them one static
+assertion in a kernel header (`neighbour.h:317`) from the instrument's own
+parse and 15 in the module, against 44 and 16 in
+`n10-5-audit1-smatch.log`: the same set less one in `hammer2_ioctl.c`,
+none in C2's files. These three instruments read `d790423`, before
+`0bbeeb2` added the NOFS scope to the rerun. On `0bbeeb2`'s source, read
+in the tree of `d1ad8e1` (`p7-notes/instruments-20261109.log`, whose
+header names that commit's hash before two rewrites of messages; the tree
+is the same), W=1 read 0 warnings and smatch the same 59 over the same 22
+files, line numbers set aside. The analyzer in that log ran its default
+seven files, which share only `hammer2_vnops.c:2187` with C2's four and
+leave out `hammer2_admin.c`, the file `0bbeeb2` changed, so its equal
+count of 8 says nothing. Run again over C2's four files at `6c5d42f` (its
+hash before a rewrite of messages in the log's header), whose source
+differs from `0bbeeb2`'s in three comment lines of `hammer2.h`, it reads
+the 8 above line for line (`p7-notes/analyze-c2-files-20261109.log`). No
+reading covers the rerun's EDEADLK branch on a lookup by number or the
+ancestor walk, nor holding the unlink's order through the collect apart
+from releasing it at the end of the element loop; `doc/README.porting.md`
+says so.
 
 **What the unlink's second order costs** (`n10-6-seq22.log`, predictions
 `p7-notes/n10-6-expected16.md`). C2's design asked for `million-tree.sh`'s
@@ -24001,56 +24007,85 @@ snapshot (`seq22-c1-1.out:23-24`, `:40`, `:42`); on HEAD's, `d60`
 (`seq22-head-1.out:23-24`, `:40`, `:42`). Both snapshots counted 999000
 files, a directory of a thousand short, on both sides (`:25`, `:41`). The
 harness compared the two counts, which agreed, and read nothing of the
-walk's errors; it fails on any walk error since `757eeeb` and keeps the
-image. The second runs of both were clean.
+walk's errors; its counting walks fail on any error since `d1ad8e1` and
+keep the image, and the walks of the deleted tree on both sides since
+`6635f8c`. The second runs of both were clean.
 
 **A snapshot through a churn keeps a new directory's name without its
 inode, and DragonFly's kernel does the same** (predictions
 `p7-notes/n10-6-expected18.md` and `p7-notes/dfly-churn-expected.md`).
 seq24 ran the module before C1 (`a066966`) against HEAD's, three runs each
-in turn on `h2release-7.3tls`, the harness of `757eeeb` in both
+in turn on `h2release-7.3tls`, the harness of `d1ad8e1` in both (the logs
+name its hash before two rewrites of messages; the tree is the same)
 (`n10-6-seq24.log:6-11`): the module before C1 read 0 walk errors in
 three, HEAD's 1 in three, `d70` on both sides (`seq24-head-3.out:25-27`,
 `:46-48`), the snapshot again a directory short (`:28`, `:45`). Over seq22
-and seq24 that is 1 of 3 runs before C1's change and 2 of 5 after it,
-which separates nothing; the rate is about one run in three. The kept
-image's media, read on the host by `p7-notes/dangling.py`, which lists
-each PFS's directory entries whose inode number has no inode (a planted
-dangling entry read 1, the clean dump 0), holds `d70` in `SNAP1` at an
-inode number with no inode (`seq24-head-3-media.out:2-3`).
+and seq24 that is 0 of 3 runs on the module before C1, 1 of 2 on C1's and
+2 of 5 on HEAD's, which separates nothing; the rate is about one run in
+three, 3 of 10. The kept image's media, read on the host by
+`script/h2-dangling.py`, which lists each PFS's directory entries whose
+inode number has no inode and its inodes no entry names (its selftest
+plants each; `readme.img`'s three PFSes read clean,
+`p7-notes/dangling-20261109.log:41-45`), holds `d70` in `SNAP1` at an
+inode number with no inode and one inode, `0x115b6`, that no entry names
+(`p7-notes/dangling-20261109.log:2-6`, read at `b2e7e9b`; the first
+reading, by a form that read one direction, `seq24-head-3-media.out:2-3`).
+Which directory that inode was is not read: the image was kept after the
+run's whole-tree delete, so its `ROOT` is empty
+(`seq24-head-3-media.out:1`), and the half of `n10-6-expected18.md`'s
+first prediction that reads `ROOT` was not read either.
 
 DragonFly 6.4-RELEASE reproduces it on its own media
 (`p7-notes/dfly-churn-1.out`, `dfly-churn-guest.sh`), on a reflink copy of
 the fleet's DragonFly guest taken shut off and run with 4 vCPUs on host
-CPUs the fleet's guests are not pinned to, so seq24 ran beside it
-untouched. DragonFly's `newfs_hammer2` made the volume, a tree of 200
-directories of 200 files went under the PFS root (`:3`), and 20 rounds
-each recreated 20 of the root's directories in the background with a
-snapshot taken one second in. Two snapshots of the twenty hold names that
-do not open, five in all (`:49`, `:55`, `:65`), and DragonFly's
-`fsck_hammer2` passes the volume (`:66`). The media
-(`dfly-churn-1-media.out:9-13`, `:26-27`, `dfly-churn-1-look.out`): `S5`
-holds `d119` at the inode number round 5 gave it, `0xeec3`, with no inode
-(`look:27`), where `S4` held the old number (`:22`) and `S6` holds
-`0xeec3` with its inode (`:32`); `S11` holds `d36` to `d39` at round 11's
-numbers with no inode (`:58`) and `S12` holds them (`:63`). The names are
-the last directories each round recreated. A new directory's entry
-reaches the media in one sync and its inode in the next, so a snapshot
-taken at that sync, or a crash after it, keeps the name without the
-inode, and the checkers of neither tree see it.
+CPUs the fleet's guests are not pinned to
+(`p7-notes/dfly-churn-expected.md`), beside seq24's second HEAD run, whose
+churn read 4384 ms against 4473 and 4453 in the other two
+(`seq24-head-1.out:15`, `-2.out:15`, `-3.out:15`). DragonFly's
+`newfs_hammer2` made the volume, a tree of 200 directories of 200 files
+went under the PFS root (`dfly-churn-1.out:3`), and 20 rounds each
+recreated 20 of the root's directories in the background with a snapshot
+taken one second in.
+Two snapshots of the twenty hold names that do not open, five in all
+(`:49`, `:55`, `:65`), and DragonFly's `fsck_hammer2` passes the volume
+(`:66`). The media (`dfly-churn-1-media.out:5-9`, `:22-23`,
+`dfly-churn-1-look.out`): `S5` holds `d119` at the inode number round 5
+gave it, `0xeec3`, with no inode (`look:27`), where `S4` held the old
+number (`:22`) and `S6` holds `0xeec3` with its inode (`:32`); `S11` holds
+`d36` to `d39` at round 11's numbers with no inode (`:58-61`) and `S12`
+holds them (`:63-66`). The names are the last directories each round
+recreated.
+
+Each of those snapshots also holds the inode of the directory the name
+replaced, indexed and named by nothing: `S5` holds `0x616f`, which is
+`S4`'s `d119`, and `S11` holds `0xad98`, `0xae61`, `0xaf2a` and `0xaff3`,
+which are `S10`'s `d36` to `d39`; every other PFS on the image holds
+neither (`p7-notes/dangling-20261109.log:7-40`, the earlier snapshots'
+numbers at `:64`, `:91-95`). One orphan sits beside each dangling name, as in
+seq24's `SNAP1`. So the sync wrote the root's entries, the old name gone
+and the new one in, and neither the old inode's removal from the index
+nor the new inode's insertion: a snapshot taken at that sync keeps a name
+that does not open and an inode no namespace walk reaches, and the
+checkers of neither tree see either. A crash after that sync would mount
+the same state, read from the code, not run.
 
 The candidate mechanism is read from the code and the same in both trees:
-`hammer2_inode_depend()` sets `HAMMER2_TRANS_RESCAN` only when one of the
-two inodes is on the SYNCQ, so a mkdir under the PFS root after the sync's
-first stage has captured its queue leaves the new inode CREATING on the
-SIDEQ, while the second stage of `hammer2_vfs_sync_pmp()` flushes the PFS
-root's chain, which holds the root directory's entries as well as the
-inode index. DragonFly's sync and dependency code is unchanged at its head
-since this port's clone (the forge's newest commits to
-`hammer2_vfsops.c` and `hammer2_inode.c` are of 2026-09-02 and earlier);
-its tracker was not searched. The defect is carried, not N10.6's. The first attempt (`n10-6-seq22-norun.log`) was COULD-NOT-RUN
-on every run, the wrapper having left the guest running, which
-`million-tree.sh` refuses.
+`hammer2_inode_setdepend_locked()` sets `HAMMER2_TRANS_RESCAN` when an
+inode joining the dependency is still on the SYNCQ, when it carries
+`HAMMER2_INODE_SYNCQ_PASS2`, which the syncer sets as it takes an inode
+off the SYNCQ and clears once that inode is flushed, or when the merged
+dependency already has pass2 (`hammer2_inode.c:169-172`). A mkdir or rmdir
+under the PFS root after the root has been flushed in the sync's first
+stage and before its second therefore sets none of them, and the inode it
+creates or destroys waits on the SIDEQ, while the second stage of
+`hammer2_vfs_sync_pmp()` flushes the PFS root's chain, which holds the
+root directory's entries as well as the inode index. DragonFly's sync and
+dependency code is unchanged at its head since this port's clone (the
+forge's newest commits to `hammer2_vfsops.c` and `hammer2_inode.c` are of
+2026-09-02 and earlier); its tracker was not searched. The defect is
+carried, not N10.6's. The first attempt (`n10-6-seq22-norun.log`) was
+COULD-NOT-RUN on every run, the wrapper having left the guest running,
+which `million-tree.sh` refuses.
 
 ## Whether a blockref's leaf_count is exact on media, 2026-11-09
 
@@ -24067,30 +24102,46 @@ sum the insert makes (a childless one against 0), and for each indirect
 block over file data compares the count's claim of full with the bytes its
 data leaves cover. Its selftest plants a count one above its children, a
 claim of full over a hole and a saturated count over nothing, and requires
-each reported, and an empty dump, a flat one, a failing `show` and a line
-that names a blockref and does not parse each refused.
+each reported, and an empty dump, a flat one, a `show` that prints a whole
+dump and exits 1, and a line that names a blockref and does not parse
+each refused; a fake `show` that prints nothing when a `HAMMER2_SHOW_`
+variable reaches it requires the tool to strip all of them, since they
+flatten, truncate or prune the dump. Removing the status check or the
+filter fails the selftest (`p7-notes/mut-leafcount/mutants.log:2-3`); the
+form of `56d2bac` passed with the status check removed, its failing
+`show` printing nothing (`p7-notes/audit-n10-6-round12.md`, S2).
+`script/h2-dangling.py`'s selftest fails likewise with its orphan count,
+its unread-entry refusal or its empty-dump refusal removed
+(`p7-notes/mut-dangling/mutants.log:2-4`).
 
 The reading (`p7-notes/n10-7-leafcount-20261109b.log`, the tool as
-committed, over the kept fixture images named on its first line; the first
-pass, `n10-7-leafcount-20261109.log`, was by an earlier form of the tool
-that read a dump and skipped childless blockrefs): 1,109 indirect blocks
-over file data on 10 of 23 images read, 375 saying full and full, 734
-short with a hole, none saying full over a hole and none saying short over
-a full range (the log's total line). 517 of them are on DragonFly-written
-images (`f8.img` 280, `dfly-enospc.img` 237), the other 592 on this
-port's; the FreeBSD port's `crash-fbsd.img` holds none over file data, so
+committed at `56d2bac` (the log's header names the head before two
+rewrites of messages and the tool uncommitted, the same tool by its hash),
+over the kept fixture images its `==` headers name; the first pass,
+`n10-7-leafcount-20261109.log`, was by an earlier form of the tool that
+read a dump and skipped childless blockrefs): 1,109 indirect blocks over
+file data on 10 of 23 images read, 375 saying full and full, 734 short
+with a hole, none saying full over a hole and none saying short over a
+full range (the log's total line). 517 of them are on DragonFly-written
+images (`f8.img` 280, `dfly-enospc.img` 237), the other 592 on this port's
+(of those, `clm.img` and `cls.img`, 4 each, were written on 2026-10-03 at
+13:24, between `49a05fb` and `6506ba3`, by no script any commit carries;
+that this module wrote them is read from the time, the sync thread's first
+runs); the FreeBSD port's `crash-fbsd.img` holds none over file data, so
 nothing here says how that port leaves the count. 23 counts are inexact,
 every one on an inode blockref the super-root holds or is: the super-root
-on 22 of the 23 images, reading 1 over two or three PFS roots, where
-newfs writes 0 (DragonFly's `mkfs_hammer2.c` zeroes the blockref and sets
-no count; hammer2-utils defaults it to 0), so a later insert or delete set
-it and which is not read; and on `readme.img`, whose super-root is exact,
-a PFS root reading 0 where its children sum to 9, written by the module
-of 2026-09-05. `million-tree.img` is not in this reading, seq24
-writing it at the time; the first pass read its `ROOT` at 65535 with no
-child, the tree deleted under a saturated count, which the earlier form
-did not compare. `f10.img`, whose volume header fails its check by design,
-is refused by `show` (ENODEV) and so by the tool. These are flushed images
-only: what a seek sees in memory before a flush, a punched hole and a
-truncate are not read, and the cause of the zero and the ones is not
-attributed.
+on 22 of the 23 images, reading 1 over two or three PFS roots, where newfs
+writes 0 (DragonFly's `mkfs_hammer2.c` zeroes the blockref and sets no
+count; hammer2-utils defaults it to 0), so a later insert or delete set it
+and which is not read; and on `readme.img`, whose super-root is exact, a
+PFS root reading 0 where its children sum to 9, written by the module of
+2026-09-05. `million-tree.img` is not in this reading, seq24 writing it at
+the time. Read afterwards (`n10-7-leafcount-20261109c.log:2-6`, the tool
+of `0e2c64f`), seq24's last image reads its `ROOT` at 65535 with no child,
+the tree deleted under a saturated count, `SNAP1` at 0 over a saturated
+sum and the super-root at 2 over three PFS roots; the first pass's form
+skipped a childless blockref and could not have read the first. `f10.img`,
+whose volume header fails its check by design, is refused by `show`
+(ENODEV) and so by the tool. These are flushed images only: what a seek
+sees in memory before a flush, a punched hole and a truncate are not read,
+and the cause of the zero and the ones is not attributed.
