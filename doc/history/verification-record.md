@@ -24030,8 +24030,12 @@ plants each; `readme.img`'s three PFSes read clean,
 inode number with no inode and one inode, `0x115b6`, that no entry names
 (`p7-notes/dangling-20261109.log:2-6`, read at `b2e7e9b`; the first
 reading, by a form that read one direction, `seq24-head-3-media.out:2-3`).
-Which directory that inode was is not read: the image was kept after the
-run's whole-tree delete, so its `ROOT` is empty
+It is a directory holding 1000 entries, whose inodes are all on the
+media and reached from it alone, a full directory of the tree's shape
+(`p7-notes/dangling-20261109b.log:22-24`, read at `e6c48d6`, which also
+counts what no walk from the root reaches). Which directory it was is not
+read: the image was kept after the run's whole-tree delete, so its `ROOT`
+is empty
 (`seq24-head-3-media.out:1`), and the half of `n10-6-expected18.md`'s
 first prediction that reads `ROOT` was not read either.
 
@@ -24056,17 +24060,24 @@ number (`:22`) and `S6` holds `0xeec3` with its inode (`:32`); `S11` holds
 holds them (`:63-66`). The names are the last directories each round
 recreated.
 
-Each of those snapshots also holds the inode of the directory the name
-replaced, indexed and named by nothing: `S5` holds `0x616f`, which is
-`S4`'s `d119`, and `S11` holds `0xad98`, `0xae61`, `0xaf2a` and `0xaff3`,
-which are `S10`'s `d36` to `d39`; every other PFS on the image holds
-neither (`p7-notes/dangling-20261109.log:7-40`, the earlier snapshots'
-numbers at `:64`, `:91-95`). One orphan sits beside each dangling name, as in
-seq24's `SNAP1`. So the sync wrote the root's entries, the old name gone
-and the new one in, and neither the old inode's removal from the index
-nor the new inode's insertion: a snapshot taken at that sync keeps a name
-that does not open and an inode no namespace walk reaches, and the
-checkers of neither tree see either. A crash after that sync would mount
+Each of those snapshots also holds the directory the name replaced, its
+inode indexed and named by nothing: `S5` holds `0x616f`, which is `S4`'s
+`d119`, and `S11` holds `0xad98`, `0xae61`, `0xaf2a` and `0xaff3`, which
+are `S10`'s `d36` to `d39`; every other PFS on the image holds neither
+(`p7-notes/dangling-20261109.log:7-40`, the earlier snapshots' numbers at
+`:64`, `:91-95`). One orphan sits beside each dangling name, as in seq24's
+`SNAP1`. Each orphan is a whole directory, with entries under it whose
+inodes are on the media and reached through it alone: `0x616f` holds all
+200 of its files, and `S11`'s four hold 89, 200, 200 and 200, 689 inodes
+no walk from the root reaches
+(`p7-notes/dangling-20261109b.log:7-20`). So the sync wrote the root's
+entries, the old name gone and the new one in, and neither the old
+inode's removal from the index, nor, in four of the five, any unlink of
+the old directory's own files (in `0xad98`, 111 of its 200 had reached
+the media), nor the new inode's insertion: a snapshot taken at
+that sync keeps a name that does not open and a deleted directory's
+contents where no namespace walk reaches them, and the checkers of
+neither tree see either. A crash after that sync would mount
 the same state, read from the code, not run.
 
 The candidate mechanism is read from the code and the same in both trees:

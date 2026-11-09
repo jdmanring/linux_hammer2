@@ -92,8 +92,9 @@ has been read back by DragonFly and the other way round
 - **A directory replaced under a PFS root during a sync**: the root's new
   entry can reach the media in that sync while the new inode, and the
   removal of the old directory's inode, wait for the next. A snapshot
-  taken at that sync keeps a name that does not open and an inode that
-  no name reaches, holding space no walk of the namespace finds; from
+  taken at that sync keeps a name that does not open and the replaced
+  directory, named by nothing, with the files it held (up to 1000 in the
+  runs read), holding space no walk of the namespace finds; from
   the code, a crash after that sync mounts the same. Carried from
   DragonFly, whose own kernel does the same on its own media (2
   snapshots of 20 under churn, 2026-11-09); neither tree's

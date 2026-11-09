@@ -1503,7 +1503,15 @@ written and the reading is that every file in it holds its own path;
 and the whole tree deleted, timed, with the blocks the volume gave
 back, which is the store garbage collection reading. DragonFly then
 expects the live tree empty and the snapshot at the count this side
-found. The delete pass found the directory link-count defect on its
+found. Every walk on either side writes its errors to a file and fails
+the run on any, since `rm -f` is silent on a name whose inode is not on
+media and `find` only lowers its count for one. A run whose walk met
+such a name keeps the image as `million-tree.img.failed`, as this side
+left it, before DragonFly mounts it, or as DragonFly left it when only
+DragonFly's walks met one; a run whose remount or snapshot walk
+met it skips the delete, so the kept image holds the tree beside the
+snapshot, and DragonFly's count of the deleted tree is not read. The
+delete pass found the directory link-count defect on its
 first run. `H2_REPEAT=n` runs the whole script n times and tallies
 the outcomes as `test-enospc.sh` does, keeping each run's log under
 `H2_LOGDIR`; a lock cycle is a race, so one clean run after a change
