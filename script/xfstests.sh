@@ -160,14 +160,16 @@ eopt=
 # test's output, which generic/127 gathers from six concurrent runs
 # through one shared file, so each log's last line is printed, the test
 # volume mounted again where check has unmounted it: the line says whether
-# that run finished.
+# that run finished. The remount's status is printed, and "fsxlog none"
+# when no log is there, so a failed remount does not read as no fsx run.
 out=$(ssh "$GUEST_SSH" "$run
 tests=\"$TESTS\"
 case \"\$tests\" in -g*) tests=\$(./check -n \$tests 2>/dev/null | grep -oE '^[a-z]+/[0-9]+' | tr '\\n' ' ') ;; esac
 [ -n \"\$tests\" ] || echo \"SETUP the test selection $TESTS expanded to no test\"
 for t in \$tests; do timeout -k 30 $PER ./check $eopt \$t 2>&1 || [ \$? -ne 124 ] || { echo; echo \"TIMEOUT \$t after ${PER}s\"; }; done
-mountpoint -q /mnt/h2xtest || mount -t hammer2 -o ro \$T /mnt/h2xtest 2>/dev/null
-for f in /mnt/h2xtest/*.fsxlog; do [ -f \"\$f\" ] && echo \"fsxlog \${f##*/}: \$(tail -n 1 \"\$f\")\"; done
+mountpoint -q /mnt/h2xtest || { mount -t hammer2 -o ro \$T /mnt/h2xtest 2>/dev/null; echo \"fsxlog remount exit \$?\"; }
+nf=0; for f in /mnt/h2xtest/*.fsxlog; do [ -f \"\$f\" ] && nf=\$((nf + 1)) && echo \"fsxlog \${f##*/}: \$(tail -n 1 \"\$f\")\"; done
+[ \$nf -gt 0 ] || echo \"fsxlog none\"
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
 echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\")\"" 2>&1)
@@ -197,21 +199,25 @@ nskip=$(printf '%s\n' "$notrun" | wc -w)
 nexec=$((nran - nskip))
 nexp=$(printf '%s\n' "$expunged" | wc -w)
 summary="xfstests: $nexec of $nran executed, $nskip not run (${notrun:-none}), $nexp expunged (${expunged:-none}); failed ${failed:-none}"
+# A failed test's .out.bad and .full are on the guest until the next run's
+# setup removes them, so they are copied off beside the images, a timed-out
+# test's and an unclean log's run as well.
+keep() {
+	k=$FIXDIR/xfstests-results-$(date +%Y%m%d-%H%M%S)
+	scp -qr "$GUEST_SSH:/root/h2xfstests/results" "$k" && echo "  results kept in $k" || echo "  results not copied off"
+}
 # A test killed at its bound wrote no Ran line, and a hang is a failure,
 # so it is counted before the check that nothing ran. The summary is
 # printed on this path too: the quick group's second run ended on one
 # timeout and left no line counting the 646 it had run.
-[ -n "$timedout" ] && { echo "  FAIL  timed out after ${PER}s: $timedout"; echo "$summary"; exit 1; }
+[ -n "$timedout" ] && { echo "  FAIL  timed out after ${PER}s: $timedout"; keep; echo "$summary"; exit 1; }
 [ -n "$ran" ] || [ -z "$expunged" ] || { echo "xfstests: COULD-NOT-RUN: every test named is expunged: $expunged" >&2; exit 2; }
 [ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
 fail=0
-# A failed test's .out.bad and .full are on the guest until the next run's
-# setup removes them, so they are copied off beside the images.
-[ -n "$failed" ] && {
-	fail=1; keep=$FIXDIR/xfstests-results-$(date +%Y%m%d-%H%M%S)
-	scp -qr "$GUEST_SSH:/root/h2xfstests/results" "$keep" && echo "  results kept in $keep" || echo "  results not copied off"; }
+[ -n "$failed" ] && fail=1
 printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0$' || {
 	echo "  FAIL  the kernel log is not clean"; fail=1; }
+[ "$fail" -eq 0 ] || keep
 echo "$summary"
 [ "$fail" -eq 0 ] || exit 1
 [ "$nexec" -gt 0 ] || { echo "xfstests: COULD-NOT-RUN: every test named was skipped" >&2; exit 2; }
