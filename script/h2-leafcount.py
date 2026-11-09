@@ -36,10 +36,16 @@ indentation the tree is read from, DEPTH truncates it, MIN_MIRROR_TID and
 MIN_MODIFY_TID leave out a blockref and its subtree below the threshold,
 and ALL_VOLUME_HEADERS adds trees.
 
+show also exits 0 past a blockref whose check fails, printing
+"(xxh ... failed)" (or icrc, sha192, fcrc) and listing only that
+blockref's direct children, so a dump holding one such marker is a tree
+read short and is refused too.
+
 Prints one summary line per category and the first mismatches.  Exit 2
 when show fails, when the dump holds no blockref line, when it holds more
-than one and no parent (a flat dump), or when a line naming a blockref
-type does not parse, since a reading of nothing must not read as exact.
+than one and no parent (a flat dump), when a blockref fails its check, or
+when a line naming a blockref type does not parse, since a reading of
+nothing must not read as exact.
 """
 import os
 import subprocess
@@ -50,6 +56,7 @@ LEAF_MAX = 65535
 TYPES = ("volume", "inode", "indirect", "data", "dirent", "empty",
          "freemap", "freemap_node", "freemap_leaf")
 LINE = re.compile(r"^( *)([a-z_]+)\.(\d+)\s+([0-9a-f]{16})\s+([0-9a-f]{16})/(\d+)\s.*?\bleafcnt=(\d+)")
+CHECKFAIL = re.compile(r"\((?:icrc|xxh|sha192|fcrc) [^()]*failed\)")
 HEAD = re.compile(r"^ *(%s)\.\d+\s" % "|".join(TYPES))
 
 
@@ -187,7 +194,12 @@ def show(image, mode="-q"):
 
 
 def read(lines, what):
-    """measure() over lines, or raises ValueError when nothing was read."""
+    """measure() over lines, or raises ValueError when nothing was read or
+    a blockref failed its check."""
+    nfail = sum(1 for l in lines if CHECKFAIL.search(l))
+    if nfail:
+        raise ValueError("%d blockref(s) fail their check in %s, and show lists only "
+                         "their direct children" % (nfail, what))
     r = measure(parse(lines))
     if r["nodes"] == 0:
         raise ValueError("no blockref line in %s" % what)
@@ -278,8 +290,12 @@ def selftest():
     real = ["    inode.0   0000000000000001 b0d7dddc6d0b8000/0 vol=0 mir=00000000000a0001 mod=00000000000a0001 leafcnt=0 \n"]
     expect(parse(real)[0].leafcnt == 0 and parse(real)[0].type == "inode", "a real show line parses")
     # Nothing to read, and a flat dump, must not read as exact.
+    # A blockref whose check fails, as show prints it under the blockref
+    # line: show lists only its direct children and exits 0.
+    failed = full[:2] + ["    (xxh xxhash64|none:default dfe7b7d89b7e2912/aa370e5c9d6509f3 failed) {\n"] + full[2:]
     for what, lines in (("an empty dump", []),
-                        ("a flat dump", [l.lstrip() for l in full])):
+                        ("a flat dump", [l.lstrip() for l in full]),
+                        ("a dump with a failed check", failed)):
         try:
             read(lines, what)
             expect(False, "%s is refused" % what)
