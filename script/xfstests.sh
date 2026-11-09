@@ -155,12 +155,17 @@ eopt=
 # devices local.config names, into the list the loop below runs one test
 # at a time: the loop is what bounds each test, and handed the group's
 # two words it ran "check -g" and "check quick", which the gate read
-# as no test executed. A group that expands to nothing is SETUP.
+# as no test executed. A group that expands to nothing is SETUP. fsx
+# writes its verdict to <file>.fsxlog on the test volume as well as to the
+# test's output, which generic/127 gathers from six concurrent runs
+# through one shared file, so each log's last line is printed before the
+# unmount: it says whether that run finished.
 out=$(ssh "$GUEST_SSH" "$run
 tests=\"$TESTS\"
 case \"\$tests\" in -g*) tests=\$(./check -n \$tests 2>/dev/null | grep -oE '^[a-z]+/[0-9]+' | tr '\\n' ' ') ;; esac
 [ -n \"\$tests\" ] || echo \"SETUP the test selection $TESTS expanded to no test\"
 for t in \$tests; do timeout -k 30 $PER ./check $eopt \$t 2>&1 || [ \$? -ne 124 ] || { echo; echo \"TIMEOUT \$t after ${PER}s\"; }; done
+for f in /mnt/h2xtest/*.fsxlog; do [ -f \"\$f\" ] && echo \"fsxlog \${f##*/}: \$(tail -n 1 \"\$f\")\"; done
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
 echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\")\"" 2>&1)
