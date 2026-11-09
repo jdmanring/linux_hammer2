@@ -1775,16 +1775,16 @@ EDEADLK the lookup by name (`hammer2_vop_lookup()`), by inode number
 number in the hash, and run the XOP once more; the target of a lookup by
 name is the inode number the failed collect stopped at. A target not yet
 in the hash has no order to wait on, and the XOP runs once more unguarded:
-the EDEADLK stands if the window is still open or the masters disagree on
-media. The lookup by
-number and the ancestor walk start their XOP only when the hash misses,
-and an inode with a local ordered XOP in flight is in the hash, so their
-rerun is guarded only when the inode entered the hash during the first
-XOP; no run has driven either. An inode embedded in its directory, which
-older media carry, is fed keyed by its name's hash rather than its
-number, so the lookup's rerun misses it and runs once more unguarded, which
-answers only if the window has closed and the masters agree; at 1.0.94 the lookup had no rerun
-at all. The readdir has the same exposure. The rerun holds the order
+the EDEADLK stands if the window is still open or the masters disagree
+on media. The lookup by number and the ancestor walk start their XOP
+only when the hash misses, and an inode with a local ordered XOP in
+flight is in the hash, so their rerun is guarded only when the inode
+entered the hash during the first XOP; no run has driven either. An
+inode embedded in its directory, which older media carry, is fed keyed
+by its name's hash rather than its number, so the lookup's rerun misses
+it and runs once more unguarded, which answers only if the window has
+closed and the masters agree; at 1.0.94 the lookup had no rerun at all.
+The readdir has the same exposure. The rerun holds the order
 in a NOFS scope, as `hammer2_xop_order_take()` does. The unlink
 holds its target's order with the directory's across its collect
 (`HAMMER2_XOP_ORDERHOLD`, `order_ip`): its first element removes the name

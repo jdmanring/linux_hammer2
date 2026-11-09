@@ -24085,7 +24085,7 @@ The candidate mechanism is read from the code and the same in both trees:
 inode joining the dependency is still on the SYNCQ, when it carries
 `HAMMER2_INODE_SYNCQ_PASS2`, which the syncer sets as it takes an inode
 off the SYNCQ and clears once that inode is flushed, or when the merged
-dependency already has pass2 (`hammer2_inode.c:169-172`). A mkdir or rmdir
+dependency already has pass2 (`hammer2_inode.c:102-107`, `:169-173`). A mkdir or rmdir
 under the PFS root after the root has been flushed in the sync's first
 stage and before its second therefore sets none of them, and the inode it
 creates or destroys waits on the SIDEQ, while the second stage of

@@ -411,14 +411,14 @@ echo 0 > $P/xop_gap_ms
 # between the masters (sync &), and 500 ms in one call is made, each in a
 # window of its own so its xop_reruns delta is its own: dd of the
 # uncached page at 72 KiB (read_folio), filefrag -B (FIBMAP), and a 4 KiB
-# pwrite at 76 KiB, uncached (the read under i_rwsem, the folio lock and
-# a transaction). Milliseconds run from before the sync, as the probe's
-# do, and sync-ms to the sync's exit: a window whose writeback was held
-# reads at least the gap there. The page read must be the one written before, and the block read
-# back cold the splice of the writes that answered. With xop_order_off
-# set the read and the write must fail EIO. FIBMAP has no error to give:
-# ->bmap returns a block number, and hammer2_bmap() answers 0 for an
-# error as for a hole, so filefrag reports the block unmapped. Its
+# pwrite at 76 KiB, uncached (the read under i_rwsem, the folio lock and a
+# transaction). Milliseconds run from before the sync, as the probe's do,
+# and sync-ms to the sync's exit: a window whose writeback was held reads
+# at least the gap there. The page read must be the one written before,
+# and the block read back cold the splice of the writes that answered.
+# With xop_order_off set the read and the write must fail EIO. FIBMAP has
+# no error to give: ->bmap returns a block number, and hammer2_bmap()
+# answers 0 for an error as for a hole, so filefrag reports the block unmapped. Its
 # control is that: 0 extents with the order out, 1 with it.
 dd if=/dev/zero bs=4k count=1 2>/dev/null | tr '\000' '\132' > /tmp/q2.5a
 dd if=/dev/zero bs=4k count=1 2>/dev/null | tr '\000' '\245' > /tmp/q2.a5
