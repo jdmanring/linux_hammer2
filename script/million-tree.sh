@@ -237,8 +237,12 @@ echo "umount exit \$s in \$((t3 - t2)) s"
 mount -t hammer2 \$dev@ROOT /mnt/tree || { echo "remount failed"; exit 1; }
 echo 3 > /proc/sys/vm/drop_caches
 t4=\$(date +%s)
-c=\$(find /mnt/tree -type f | wc -l); t5=\$(date +%s)
+# A walk's errors are read, not dropped: a name whose inode is not on the
+# media prints "No such file or directory" and only lowers the count, and a
+# count both sides agree on passed it (n10-6-seq22, a snapshot's d68).
+c=\$(find /mnt/tree -type f 2>/tmp/walk.err | wc -l); t5=\$(date +%s)
 echo "counted \$c files after remount, cold walk \$((t5 - t4)) s"
+echo "walk errors \$(grep -c . /tmp/walk.err)"; head -3 /tmp/walk.err
 echo "memavailable after walk \$(mem) kB"
 bad=0; k=0
 while [ \$k -lt 200 ]; do
@@ -250,7 +254,8 @@ echo "spot check 200 files, \$bad wrong"
 if [ $CHURN = 1 ]; then
 	mkdir -p /mnt/snap
 	mount -t hammer2 -o ro \$dev@SNAP1 /mnt/snap || echo "snapshot mount failed"
-	sc=\$(find /mnt/snap -type f | wc -l)
+	sc=\$(find /mnt/snap -type f 2>/tmp/snapwalk.err | wc -l)
+	echo "snapshot walk errors \$(grep -c . /tmp/snapwalk.err)"; head -3 /tmp/snapwalk.err
 	sb=0; sk=0
 	for f in \$(find /mnt/snap -type f | awk 'NR % 5003 == 1' | head -200); do
 		[ "\$(cat \$f)" = "\${f#/mnt/snap/}" ] || sb=\$((sb + 1)); sk=\$((sk + 1))
@@ -301,13 +306,13 @@ down "$GUEST" "$GUEST_SSH"
 printf '%s\n' "$out" | grep -q "^created $N files" || { echo "  FAIL  the tree was not created whole"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^counted $N files after remount" || { echo "  FAIL  the remount did not count every file"; fail=$((fail + 1)); }
 if [ $CHURN = 1 ]; then
-	for want in "^snapshot under churn exit 0" "^snapshot counted [1-9]" "^snapshot umount exit 0" "^left 0 files$"; do
+	for want in "^snapshot under churn exit 0" "^snapshot walk errors 0$" "^snapshot counted [1-9]" "^snapshot umount exit 0" "^left 0 files$"; do
 		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 	done
 	printf '%s\n' "$out" | grep -q "^snapshot counted [0-9]* files, spot check [1-9][0-9]* files, 0 wrong" || { echo "  FAIL  the snapshot read wrong content"; fail=$((fail + 1)); }
 	snapn=$(printf '%s\n' "$out" | sed -n 's/^snapshot counted \([0-9]*\) files.*/\1/p')
 fi
-for want in "^spot check 200 files, 0 wrong" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kmsg lines [1-9]" "^kernel warnings 0$"; do
+for want in "^walk errors 0$" "^spot check 200 files, 0 wrong" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kmsg lines [1-9]" "^kernel warnings 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
 if printf '%s\n' "$out" | grep -q "^debug_locks 0$"; then
@@ -320,6 +325,11 @@ if printf '%s\n' "$out" | grep -q "^debug_locks 0$"; then
 fi
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
+# A walk that met a name without its inode keeps the image as this side
+# left it, before DragonFly mounts it, since the media is the reading.
+if printf '%s\n' "$out" | grep -q "^walk errors [1-9]\|^snapshot walk errors [1-9]"; then
+	cp --sparse=always "$IMG" "$IMG.failed" && echo "  kept  the image as linux left it, $IMG.failed"
+fi
 
 # 2. DragonFly counts the same tree and spot-checks content.
 cat > "$W/dfly.sh" <<GUEST
@@ -331,8 +341,9 @@ if [ $CHURN = 1 ]; then
 	mount_hammer2 /dev/vbd1@SNAP1 /mnt/tree || { echo "snapshot mount failed"; exit 1; }
 fi
 t0=\$(date +%s)
-c=\$(find /mnt/tree -type f | wc -l | tr -d ' '); t1=\$(date +%s)
+c=\$(find /mnt/tree -type f 2>/tmp/walk.err | wc -l | tr -d ' '); t1=\$(date +%s)
 echo "dragonfly counted \$c files, walk \$((t1 - t0)) s"
+echo "dragonfly walk errors \$(grep -c . /tmp/walk.err | tr -d ' ')"; head -3 /tmp/walk.err
 bad=0; k=0
 if [ $CHURN = 1 ]; then
 	# The snapshot holds whatever the churn had written when it was
@@ -364,6 +375,7 @@ else
 	printf '%s\n' "$out" | grep -q "^dragonfly counted $N files" || { echo "  FAIL  DragonFly did not count every file"; fail=$((fail + 1)); }
 fi
 printf '%s\n' "$out" | grep -q "^dragonfly spot check [1-9][0-9]* files, 0 wrong" || { echo "  FAIL  DragonFly read wrong content"; fail=$((fail + 1)); }
+printf '%s\n' "$out" | grep -q "^dragonfly walk errors 0$" || { echo "  FAIL  DragonFly's walk met a name it could not open"; fail=$((fail + 1)); }
 printf '%s\n' "$out" | grep -q "^dragonfly fsck clean" || { echo "  FAIL  DragonFly's checker"; fail=$((fail + 1)); }
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after dragonfly" || { echo "  FAIL  host fsck_hammer2 after dragonfly"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
