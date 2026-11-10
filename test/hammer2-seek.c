@@ -31,6 +31,7 @@
  * different file from the one it built.
  */
 #define _GNU_SOURCE
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
@@ -43,6 +44,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <linux/fiemap.h>
+#include <linux/fs.h>
 
 static int fails;
 static int checks;
@@ -245,8 +249,11 @@ unsynced(const char *path, const char *buf, long bsize, long nbytes)
  * inode's blockrefs on media; fsync() would flush them, which is why the
  * phase below cannot see this either.  The walk merges a parent's live
  * children (hammer2_chain_scan()), and a walk of the media alone answers
- * the written blocks as a hole, which a build skipping live data chains
- * in hammer2_xop_seek_walk() reads, the control.
+ * the written blocks as a hole: window_shapes() below reads that in the
+ * same run through seek_media_only.  A flush between the write-back and
+ * these questions would make them the after-fsync shape, which passes;
+ * the syncer runs every 30 s or past half the dirty-chain or dirty-inode
+ * limit, and window_shapes() is the reading that the window held.
  */
 static void
 written_back(const char *path, const char *buf, long bsize, long nbytes)
@@ -275,6 +282,247 @@ written_back(const char *path, const char *buf, long bsize, long nbytes)
 	    2 * bsize + 10, 3 * bsize, nbytes);
 	close(fd);
 	unlink(path);
+}
+
+/*
+ * The written-back window over more shapes than written_back() takes.
+ * Each shape gives, per block, how many bytes from the block's start are
+ * written (0 a hole, bsize the whole block), and the answers lseek(2) may
+ * give follow from that: SEEK_DATA exactly, since every write starts at
+ * a block's start, and SEEK_HOLE from the end of the bytes written to the
+ * end of the run of data blocks, since a filesystem may end data at its
+ * own granularity and HAMMER2 ends it at its block's.
+ *
+ * In the window, after sync_file_range() as in written_back(): every
+ * answer must fall in its range, FIEMAP must cover exactly the data
+ * blocks where the filesystem has it, and, on a HAMMER2_LOCKDEBUG module,
+ * seek_media_only set must change at least one answer, the walk then
+ * reading the media's blockrefs alone.  That last is the run's own
+ * reading that it asked inside the window: a flush between the write-back
+ * and the questions would leave the media agreeing with the window and
+ * fail it.  The shapes are the ones the five probes above do not take: a
+ * block that does not compress, a file of more blocks than an inode holds
+ * blockrefs for, so they move to an indirect block made in memory, a
+ * flushed file whose hole is filled and whose block is punched, and a
+ * page written into a hole, which the writeback fills to its block
+ * through hammer2_strategy_fill().
+ */
+#define WIN_MAX		8
+#define MEDIA_ONLY	"/sys/module/hammer2/parameters/seek_media_only"
+
+struct win_shape {
+	const char *name;
+	int nblk;
+	long before[WIN_MAX];	/* written and flushed first, or all 0 */
+	long after[WIN_MAX];	/* the layout asked in the window */
+	int punch;		/* the block punched after the flush, or -1 */
+};
+
+static int
+media_only(const char *v)
+{
+	int fd = open(MEDIA_ONLY, O_WRONLY), ok;
+
+	if (fd < 0)
+		return (-1);
+	ok = write(fd, v, 1) == 1;
+	close(fd);
+	return (ok ? 0 : -1);
+}
+
+static void
+win_fill(int fd, int blk, long n, long bsize, unsigned int seed)
+{
+	unsigned char *b = malloc(bsize);
+	unsigned int x = seed * 2654435761u + 1;
+	long i;
+
+	if (b == NULL)
+		return;
+	for (i = 0; i < n; i++) {	/* xorshift: no compression, no dedup */
+		x ^= x << 13;
+		x ^= x >> 17;
+		x ^= x << 5;
+		b[i] = (unsigned char)x;
+	}
+	if (pwrite(fd, b, n, (off_t)blk * bsize) != n)
+		printf("seek-note %d: a pwrite of %ld was short\n", blk, n);
+	free(b);
+}
+
+/* the answers at 10 bytes into each block, SEEK_DATA then SEEK_HOLE */
+static void
+win_ask(int fd, int nblk, long bsize, long *got)
+{
+	int i;
+
+	for (i = 0; i < nblk; i++) {
+		got[2 * i] = lseek(fd, i * bsize + 10, SEEK_DATA);
+		got[2 * i + 1] = lseek(fd, i * bsize + 10, SEEK_HOLE);
+	}
+}
+
+static int
+win_bad(const struct win_shape *s, long bsize, const long *got)
+{
+	long size = s->nblk * bsize, lo, hi;
+	int i, j, bad = 0;
+
+	for (i = 0; i < s->nblk; i++) {
+		/* SEEK_DATA: here if written past the probe, else the next */
+		for (j = i; j < s->nblk && s->after[j] <= (j == i ? 10 : 0); j++)
+			;
+		lo = j == i ? i * bsize + 10 : j < s->nblk ? j * bsize : -1;
+		if (got[2 * i] != lo) {
+			printf("seek-fail %s: SEEK_DATA at block %d: got %ld, "
+			    "want %ld\n", s->name, i, got[2 * i], lo);
+			bad++;
+		}
+		/* SEEK_HOLE: from the written bytes' end to the run's end */
+		if (s->after[i] <= 10) {
+			lo = hi = i * bsize + 10;
+		} else {
+			for (j = i; j < s->nblk && s->after[j] == bsize; j++)
+				;
+			lo = j < s->nblk ? j * bsize + s->after[j] : size;
+			if (j < s->nblk && s->after[j] == 0)
+				lo = j * bsize;
+			for (j = i; j < s->nblk && s->after[j] > 0; j++)
+				;
+			hi = j * bsize;
+			if (lo > size)
+				lo = size;
+		}
+		if (got[2 * i + 1] < lo || got[2 * i + 1] > hi) {
+			printf("seek-fail %s: SEEK_HOLE at block %d: got %ld, "
+			    "want %ld..%ld\n", s->name, i, got[2 * i + 1], lo,
+			    hi);
+			bad++;
+		}
+	}
+	return (bad);
+}
+
+/* blocks FIEMAP covers, as a mask; -1 where the filesystem has none */
+static long
+win_map(int fd, long bsize, int nblk)
+{
+	struct {
+		struct fiemap fm;
+		struct fiemap_extent fe[WIN_MAX * 2];
+	} m;
+	long mask = 0, b;
+	unsigned int i;
+
+	memset(&m, 0, sizeof(m));
+	m.fm.fm_length = (unsigned long long)nblk * bsize;
+	m.fm.fm_extent_count = WIN_MAX * 2;
+	if (ioctl(fd, FS_IOC_FIEMAP, &m.fm) != 0)
+		return (-1);
+	for (i = 0; i < m.fm.fm_mapped_extents; i++)
+		for (b = m.fe[i].fe_logical / bsize;
+		    b * bsize < (long)(m.fe[i].fe_logical +
+		    m.fe[i].fe_length) && b < nblk; b++)
+			mask |= 1L << b;
+	return (mask);
+}
+
+static void
+window_shapes(const char *path, long bsize)
+{
+	long P = 4096;
+	struct win_shape shapes[] = {
+		{ "window, uncompressible", 5,
+		    { 0 }, { bsize, 0, bsize, 0, bsize }, -1 },
+		{ "window, indirect", 8, { 0 },
+		    { bsize, bsize, 0, bsize, bsize, bsize, 0, bsize }, -1 },
+		{ "window, filled and punched", 5,
+		    { bsize, 0, bsize, 0, bsize },
+		    { bsize, bsize, 0, 0, bsize }, 2 },
+		{ "window, a page into a hole", 3,
+		    { bsize, 0, bsize }, { bsize, P, bsize }, -1 },
+	};
+	long got[2 * WIN_MAX], ctl[2 * WIN_MAX], want, map;
+	unsigned int n;
+	int fd, i, d, ctlrc = 1;
+
+	for (n = 0; n < sizeof(shapes) / sizeof(shapes[0]); n++) {
+		struct win_shape *s = &shapes[n];
+
+		checks++;
+		if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) < 0 ||
+		    ftruncate(fd, s->nblk * bsize) != 0) {
+			fails++;
+			printf("seek-fail %s: the file could not be built\n",
+			    s->name);
+			if (fd >= 0)
+				close(fd);
+			continue;
+		}
+		for (i = 0; i < s->nblk; i++)
+			if (s->before[i])
+				win_fill(fd, i, s->before[i], bsize, n * 16 + i);
+		if (s->before[0] && fsync(fd) != 0)
+			printf("seek-note %s: fsync failed\n", s->name);
+		for (i = 0; i < s->nblk; i++)
+			if (s->after[i] && s->after[i] != s->before[i])
+				win_fill(fd, i, s->after[i], bsize,
+				    n * 16 + i + 8);
+		if (s->punch >= 0 && fallocate(fd, FALLOC_FL_PUNCH_HOLE |
+		    FALLOC_FL_KEEP_SIZE, s->punch * bsize, bsize) != 0)
+			printf("seek-note %s: the punch failed: %s\n", s->name,
+			    strerror(errno));
+		if (sync_file_range(fd, 0, 0, SYNC_FILE_RANGE_WAIT_BEFORE |
+		    SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
+			fails++;
+			printf("seek-fail %s: the file could not be written "
+			    "back\n", s->name);
+			close(fd);
+			continue;
+		}
+		win_ask(fd, s->nblk, bsize, got);
+		if (win_bad(s, bsize, got))
+			fails++;
+		else
+			printf("seek-ok   %s: %d answers in the window\n",
+			    s->name, 2 * s->nblk);
+
+		for (want = 0, i = 0; i < s->nblk; i++)
+			if (s->after[i])
+				want |= 1L << i;
+		if ((map = win_map(fd, bsize, s->nblk)) >= 0) {
+			checks++;
+			if (map != want) {
+				fails++;
+				printf("seek-fail %s: FIEMAP covers %#lx, want "
+				    "%#lx\n", s->name, map, want);
+			} else
+				printf("seek-ok   %s: FIEMAP covers %#lx\n",
+				    s->name, map);
+		}
+
+		if ((ctlrc = media_only("1")) == 0) {
+			win_ask(fd, s->nblk, bsize, ctl);
+			media_only("0");
+			for (d = 0, i = 0; i < 2 * s->nblk; i++)
+				d += ctl[i] != got[i];
+			checks++;
+			if (d == 0) {
+				fails++;
+				printf("seek-fail %s: seek_media_only changed "
+				    "no answer, so nothing was asked inside "
+				    "the window\n", s->name);
+			} else
+				printf("seek-ok   %s: seek_media_only changed "
+				    "%d of %d answers\n", s->name, d,
+				    2 * s->nblk);
+		}
+		close(fd);
+		unlink(path);
+	}
+	if (ctlrc != 0)
+		printf("seek-note window: no %s, so no shape read its own "
+		    "window\n", MEDIA_ONLY);
 }
 
 /*
@@ -818,6 +1066,7 @@ main(int argc, char **argv)
 	snprintf(dpath, sizeof(dpath), "%s.unsynced", path);
 	unsynced(dpath, buf, bsize, nbytes);
 	written_back(dpath, buf, bsize, nbytes);
+	window_shapes(dpath, bsize);
 	{
 		long offs[] = { bsize - 1, bsize, bsize + 1 };
 		int i, s;

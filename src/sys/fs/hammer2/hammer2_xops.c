@@ -1577,8 +1577,18 @@ module_param_named(seek_depth_max, hammer2_seek_depth_max, uint, 0644);
  */
 static int hammer2_seek_fail_elm = -1;
 module_param_named(seek_fail_elm, hammer2_seek_fail_elm, int, 0644);
+/*
+ * Linux: skips a data chain carrying a flag a flush clears, so the walk
+ * answers from the blockrefs the media holds alone.  The control for
+ * test/hammer2-seek.c's written-back probes, which must then answer
+ * differently in the same run they pass in.
+ */
+static int hammer2_seek_media_only;
+module_param_named(seek_media_only, hammer2_seek_media_only, int, 0644);
+#define HAMMER2_SEEK_MEDIA_ONLY	READ_ONCE(hammer2_seek_media_only)
 #else
 #define HAMMER2_SEEK_DEPTH	HAMMER2_SEEK_DEPTH_MAX
+#define HAMMER2_SEEK_MEDIA_ONLY	0
 #endif
 
 static int
@@ -1629,6 +1639,9 @@ hammer2_xop_seek_walk(struct hammer2_seek_req *r, hammer2_chain_t *parent,
 		}
 		if (bref.type != HAMMER2_BREF_TYPE_DATA)
 			continue;
+		if (HAMMER2_SEEK_MEDIA_ONLY && chain &&
+		    (chain->flags & HAMMER2_CHAIN_FLUSH_MASK))
+			continue;	/* Linux: the control above */
 		/* v, for MAP and for several voters: the deciding blocks */
 		if (r->v && r->n == r->max) {
 			if (r->mode == HAMMER2_SEEK_MODE_HOLE)
