@@ -24174,3 +24174,71 @@ whose volume header fails its check by design, is refused by `show`
 (ENODEV) and so by the tool. These are flushed images only: what a seek
 sees in memory before a flush, a punched hole and a truncate are not read,
 and the cause of the zero and the ones is not attributed.
+
+## A stop in the sync pass's second round, 2026-11-09
+
+On the KASAN build C3's module twice failed two of `cluster-sync.sh`'s
+interrupt checks (seq23, seq25: the marked set absent from the slave's
+media, and 10 chains scrapped), and in both runs the stop had landed in
+the pass's second round where every passing run's landed in its first.
+`H2_STOP_ROUND=2` (`1ab169f`) issues the stop once the first round's
+verify line prints, to land it in the second on purpose; its runs, with
+the readings `48113c1` and `516062a` added (the landing read from the
+kernel's own interrupted line, counted from the phase's start):
+
+| run | build, module | round 1 | round 2 | umount-ms | landed |
+|---|---|---|---|---|---|
+| seq27 control | debug `c03bccb6` | `143955.klog:82946` failed 0 | `:82957` acted 0 | 4388 | no |
+| seq27 C3 | debug `b993ee36` | `144729.klog:82363` failed 0 | `:82374` acted 0 | 4616 | no |
+| seq28 control | KASAN `43e303f1` | `152809.klog:83680` failed 0 | `:83691` acted 0 | 15711 | no |
+| seq28 C3 | KASAN `6b25b646` | `154630.klog:83822` failed 0 | `:83833` acted 0 | 13158 | no |
+| seq29 control | debug `c03bccb6` | `160834.klog:23103` failed 1 | `:26128` acted 2001 | 1283 | round 2 |
+| seq29 C3 | debug `bf02eb15` | `161556.klog:23062` failed 1 | `:26087` acted 2001 | 1596 | round 2 |
+| seq29 control | KASAN `43e303f1` | `162431.klog:23334` failed 1 | `:26359` acted 2001 | 5596 | round 2 |
+| seq29 C3 | KASAN `6b25b646` | `164038.klog:23376` failed 1 | `:26411` acted 2001 | 5556 | round 2 |
+
+(klogs are `fixtures/cluster-run-20261109-*.klog`; module hashes from
+each report's `ko sha256=` line; umount-ms and the landing from each
+report's phase-4 raw line, `seq27-round2-*.out:28`,
+`seq28-kasan-round2-*.out:28`, `seq29-*-collapse-*.out:28`.)
+
+A second round copies only what the first failed to verify. After a
+first round that verified clean it still compares the whole set, 4.6 to
+16.7 s (the two timestamps of each row), and defers nothing; the stop is
+read only between deferrals and at the thread's loop top
+(`hammer2_synchro.c:785`, `:1577`), so the teardown waits for the round
+and the pass ends verified: `didbreak=0 rounds=0` in all four seq27 and
+seq28 runs. Whether the first round fails is inferred to be timing: the
+KASAN module `43e303f1` read "failed 1" in seq25's control
+(`cluster-run-20261109-131453.klog:57208`) and "failed 0" in seq28's.
+seq29 adds `H2_COLLAPSE=1`, which collapses an insert's indirect parent
+during the copy so the round its scan ends in fails; every seq29 run's
+first round failed one and every stop landed in the second round.
+
+What the second-round stop reads, on both modules: the marked set check
+fails in all four seq29 runs, `mark-old=0`
+(`seq29-*-collapse-*.out:48`): no file of the marked set is on the
+slave's media at all, where the three runs whose stop landed in the
+first round, seq23's debug C3 and control and seq25's KASAN control,
+read 10 (`seq23-debug-sync.out:28`, `seq23-control-sync.out:28`,
+`seq25-kasan-sync-control.out:28`), and C3's two KASAN runs stopped in
+their second round 0. Why the marked set is absent is not read; it is
+the sync thread's, since the module before C3 reads it on both builds,
+and is open beside N10.6 rather than inside it. None of the four scraps
+a chain (`seq29-*-collapse-*.out:64`).
+
+The scrap C3's KASAN runs read is not reproduced by it. In seq23 and
+seq25 the first round failed one by itself, the second re-copied 1002
+items, its flush ran, and the slave's teardown then scrapped five inodes
+of the backlog, `0x6280` to `0x6284`, with a data block each
+(`cluster-run-20261109-132932.klog:57494-57521`), modified after that
+flush; the resumed pass copied them again, and the slave matched the
+master entry for entry and block for block at the end
+(`seq25-kasan-sync-fill.out:69-71`), so what was scrapped was the
+interrupted pass's own work, not data. The module before C3 never had
+its stop land in a naturally failed first round's second round, so the
+reading does not say whose it is; C3's change touches the write path's
+fill, the order lock and the write XOP's block, and nothing the sync
+thread copies or the teardown scraps through (read from its diff). It is
+open beside the marked set as the second-round stop's, attribution not
+read.
