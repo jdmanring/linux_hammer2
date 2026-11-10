@@ -1058,7 +1058,7 @@ strategy write ends its folios only inside its storage function
 would leave every buffered write under writeback until unmount, and the
 buffered writes and attribute changes dispatch no XOP at all
 (`hammer2_vnops.c` starts one at `:135`, `:259`, `:556`, `:713`, `:754`,
-`:1604`, `:1691`, `:1994` and `:2792`), so they would have returned 0 and lost
+`:1604`, `:1691`, `:1994` and `:2796`), so they would have returned 0 and lost
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1927-1937`).
 The slave's pass writes its element through chain calls and its own
@@ -1317,7 +1317,7 @@ rather than from the design document alone.
   `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
   (`hammer2_vnops.c:404`, `:530`, `:661`, `:872`, `:1127`, `:1324`,
-  `:1517`, `:2288`, `:3163`), which a mount sets and only a remount
+  `:1517`, `:2288`, `:3167`), which a mount sets and only a remount
   rewrites (`hammer2_vfsops.c:1884`, `:2769`, `:2799`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1440-1441`), and with it clear
@@ -1336,7 +1336,7 @@ rather than from the design document alone.
   property of the write path's design, not of a flag.
 - **C14. A read served from the caches never reaches the quorum
   check.** Cached folios, the dentry cache and the in-memory inode
-  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:3103`) with no
+  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:3107`) with no
   XOP; only an uncached lookup and `readdir`, which is an XOP per call
   (`:214`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The

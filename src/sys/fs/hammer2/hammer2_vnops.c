@@ -2758,13 +2758,17 @@ hammer2_writepages(struct address_space *mapping,
 			 * and every element writes the same bytes
 			 * (hammer2_strategy_fill()).  On a failed fill the
 			 * folio and its siblings end their writeback with the
-			 * mapping's error and nothing is written.
+			 * mapping's error, nothing is written, and a line
+			 * names the inode, as an element's failed write does.
 			 */
 			hammer2_gather_block(mapping, folio, &siblings);
 			held = hammer2_xop_order_lock(ip);
 			block = hmalloc(HAMMER2_PBUFSIZE, M_HAMMER2, M_WAITOK);
 			error = hammer2_strategy_fill(ip, folio, lbase, block);
 			if (error) {
+				hprintf("inode %016llx error %08x at lbase %016llx\n",
+				    (unsigned long long)ip->meta.inum, error,
+				    (long long)lbase);
 				mapping_set_error(mapping, hammer2_vfs_errno(
 				    hammer2_error_to_errno(error)));
 				folio_end_writeback(folio);

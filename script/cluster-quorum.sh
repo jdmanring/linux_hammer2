@@ -419,7 +419,10 @@ sync
 f1=$(fc xop_fills); r1=$(fc xop_fill_reads)
 dd if=/dev/urandom of=/mnt/h2q/heal bs=4k seek=33 count=1 conv=notrunc 2>/dev/null
 echo 1 > /proc/sys/vm/drop_caches
+fl() { dmesg | grep -c "inode $(printf %016x "$hino") error"; }	# the failed fill's line
+l0=$(fl)
 xfs_io -c fsync /mnt/h2q/heal > /tmp/s2.err 2>&1; s=$?
+l1=$(fl)
 r2=$(fc xop_fill_reads)
 umount /mnt/h2q
 hshow "vote s2after"
@@ -428,7 +431,7 @@ echo 3 > /proc/sys/vm/drop_caches
 dd if=/mnt/h2q/heal of=/tmp/s2.got bs=64k skip=1 count=1 2>/dev/null
 same=0; [ "$(wc -c < /tmp/s2.want)" = 65536 ] && cmp -s /tmp/s2.want /tmp/s2.got && same=1
 echo "vote s2heal fills $f0 $f1 reads $r0 $r1 same $same"
-echo "vote s2eio exit $s eio $(grep -c 'Input/output error' /tmp/s2.err) reads $r1 $r2"
+echo "vote s2eio exit $s eio $(grep -c 'Input/output error' /tmp/s2.err) reads $r1 $r2 lines $l0 $l1"
 rm -f /mnt/h2q/heal; sync
 # Q1. A writeback beside the seek and the map. xop_gap_ms holds the
 # strategy write between the first master and the second with the order
@@ -919,10 +922,10 @@ if [ "$QVOTE" = 1 ]; then
 		[ -n "$aa1" ] && [ "$aa1" = "$ab1" ] && [ "$8" = 1 ] &&
 		    moved "$2" "$3" && [ "$6" = "$5" ]
 		check "S2 a 4 KiB write into a block the masters disagree on, every page cached, writes the cached block to both: one tid and check, read back as cached, no quorum read" $? "block 1 after ${aa1:-absent} / ${ab1:-absent}, ${x:-no line}"
-		y=$(vote s2eio); set -- $y	# exit s eio n reads r1 r2
-		[ "${4:-0}" -ge 1 ] 2>/dev/null && moved "$6" "$7" &&
+		y=$(vote s2eio); set -- $y	# exit s eio n reads r1 r2 lines l0 l1
+		[ "${4:-0}" -ge 1 ] 2>/dev/null && moved "$6" "$7" && moved "$9" "${10}" &&
 		    [ "$aa2" = "$sa2" ] && [ "$ab2" = "$sb2" ]
-		check "S2 the same write with the block's clean pages dropped reads it through the quorum and fails fsync EIO, both masters keeping their block" $? "block 2 ${sa2}/${sb2} before, ${aa2:-absent}/${ab2:-absent} after, ${y:-no line}"
+		check "S2 the same write with the block's clean pages dropped reads it through the quorum and fails fsync EIO with the fill's line printed, both masters keeping their block" $? "block 2 ${sa2}/${sb2} before, ${aa2:-absent}/${ab2:-absent} after, ${y:-no line}"
 	fi
 	# Q1. A block on one master because its write has not reached the next
 	# is not a disagreement: the call runs once more under the order and
