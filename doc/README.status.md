@@ -20,9 +20,12 @@ stale slave's block at the master's tid with different contents at
 1.0.93, now fills the block once and every element writes it, measured
 on both volumes; two MASTERs whose block is disputed heal it from a fully
 cached page or fail the write EIO through the quorum read. A stop that
-lands in the pass's second round leaves part of what the pass copied
-off the slave's media until the resumed pass copies it again, on the
-module before that change as on its own. The quorum a two-MASTER cluster is decided
+lands in the pass's second round leaves the snapshot's state of the
+files the pass had marked off the slave's media, read on the module
+before that change as on its own with the stop forced there; in two
+KASAN runs of its own module the slave's teardown also scrapped five
+inodes the pass had copied, which the resumed pass copied again, a
+reading the module before it has not made. Neither cause is read. The quorum a two-MASTER cluster is decided
 by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; a master on another host
 is read through a remote element over the transport P5 and P6 closed,

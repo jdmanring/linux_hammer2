@@ -24208,9 +24208,14 @@ first round that verified clean it still compares the whole set, 4.6 to
 read only between deferrals and at the thread's loop top
 (`hammer2_synchro.c:785`, `:1577`), so the teardown waits for the round
 and the pass ends verified: `didbreak=0 rounds=0` in all four seq27 and
-seq28 runs. Whether the first round fails is inferred to be timing: the
-KASAN module `43e303f1` read "failed 1" in seq25's control
-(`cluster-run-20261109-131453.klog:57208`) and "failed 0" in seq28's.
+seq28 runs. Whether the first round fails is inferred to be timing:
+C3's source read a whole first round "failed 1 kept 0 error 0" in seq23
+and seq25 (`cluster-run-20261109-035923.klog:56373`,
+`132932.klog:56496`, module `1683af6c`) and "failed 0" in seq28
+(`154630.klog:83822`, module `6b25b646`, the same `src/` built in
+another directory). seq25's control (`131453.klog:57208`) is no such
+pair: its "failed 1" is a round the stop cut, error 2048, and the
+flag is set on any of seven paths.
 seq29 adds `H2_COLLAPSE=1`, which collapses an insert's indirect parent
 during the copy so the round its scan ends in fails; every seq29 run's
 first round failed one and every stop landed in the second round.
@@ -24222,26 +24227,37 @@ slave's media at all, where the three runs whose stop landed in the
 first round, seq23's debug C3 and control and seq25's KASAN control,
 read 10 (`seq23-debug-sync.out:28`, `seq23-control-sync.out:28`,
 `seq25-kasan-sync-control.out:28`), and C3's two KASAN runs stopped in
-their second round 0. Why the marked set is absent is not read; it is
-the sync thread's, since the module before C3 reads it on both builds,
-and is open beside N10.6 rather than inside it. None of the four scraps
-a chain (`seq29-*-collapse-*.out:64`).
+their second round 0. Why the marked set is absent is not read. The
+module before C3 reads it on both builds with the stop forced there, so
+it is read as the sync thread's; that C3's two KASAN runs, whose first
+round failed by itself, lost it to the same cause is inferred, since the
+control has not reached that shape. It is open beside N10.6 on that
+inference. None of the four scraps a chain
+(`seq29-*-collapse-*.out:64`).
 
 The scrap C3's KASAN runs read is not reproduced by it. In seq23 and
-seq25 the first round failed one by itself, the second re-copied 1002
-items, its flush ran, and the slave's teardown then scrapped five inodes
-of the backlog, `0x6280` to `0x6284`, with a data block each
-(`cluster-run-20261109-132932.klog:57494-57521`), modified after that
-flush; the resumed pass copied them again, and the slave matched the
-master entry for entry and block for block at the end
-(`seq25-kasan-sync-fill.out:69-71`), so what was scrapped was the
-interrupted pass's own work, not data. The module before C3 never had
-its stop land in a naturally failed first round's second round, so the
-reading does not say whose it is; C3's change touches the write path's
-fill, the order lock and the write XOP's block, and nothing the sync
-thread copies or the teardown scraps through (read from its diff). It is
-open beside the marked set as the second-round stop's, attribution not
-read.
+seq25 the first round failed one by itself and the slave's teardown
+scrapped five inodes of the backlog with a data block each, `0x6600` to
+`0x6604` in seq23 (`cluster-run-20261109-035923.klog:57389-57398`) and
+`0x6280` to `0x6284` in seq25, where the second round re-copied 1002
+items and its flush ran before them
+(`cluster-run-20261109-132932.klog:57494-57521`); the resumed pass
+copied them again, and the slave matched the master entry for entry and
+block for block at the end (`seq25-kasan-sync-fill.out:69-71`), so what
+was scrapped was the interrupted pass's own work, not data. The scrap is
+read on C3's module alone: of the day's thirteen `cluster-sync.sh` runs
+it is nonzero in C3's two KASAN runs (`seq23-kasan-sync.out:62`,
+`seq25-kasan-sync-fill.out:62`) and 0 in the other eleven, the
+control's six and C3's five (each report's line 62, 64 in seq29's). The module before C3
+never had its stop land in a naturally failed first round's second
+round, so the reading does not say whose it is. C3's diff changes the
+write path's fill, the order lock and the write XOP's block, and edits
+`hammer2_xop_start_except()`, which every XOP of the sync thread starts
+through, under a flag only `hammer2_writepages()` sets
+(`HAMMER2_XOP_ORDERED`), so the edit is inert for them; read from the
+diff, not driven. The scrap is open inside N10.6 until a run of the
+module before C3 reaches the natural shape or a run of C3's in the
+forced shape scraps.
 
 ## N10.6 C3: one fill of a block for every element, 2026-11-09
 
@@ -24253,8 +24269,11 @@ run with C3's harness, and in part again as seq25, seq27, seq28 and seq29
 `-expected21.md` to `-expected23.md`). Each sequence built C3 from a copy
 of its commit rebased as the main line moved under it; the copies' code
 is the same, and seq23's and seq25's differ from the rest in one comment
-of `hammer2.h` that the main line rewrapped (each sequence's log names its
-copy). The control is the main line before C3 in each.
+of `hammer2.h` that the main line reworded (each sequence's log names its
+copy). One `src/` built in two directories gives two module hashes, as
+the second-round table's two debug C3 modules do, the paths compiled
+into the module differing (inferred). The control is the main line
+before C3 in each.
 
 **S1 and S2, the checks C3 exists for.** The stale-slave write leaves both
 volumes at one tid and one check code, unchanged after a sync pass, on
@@ -24269,19 +24288,28 @@ with the clean pages dropped fails fsync EIO with both masters' blocks
 unchanged, on all three builds (`seq23-debug-quorum.out:42-43`,
 `seq23-kasan-quorum.out:42-43`, `seq23-release-quorum.out:42-43`); the
 control fails both, two contents under one tid and the write landing
-(`seq23-control-quorum.out:42-43`). KASAN reported nothing in any
-sequence and QEMU left no core (`n10-6-seq23.log:31`, `:48`;
-`seq25.log:15`, `:22`; `seq27.log:21`; `seq28.log:9`, `:18`;
-`seq29.log:11`, `:17`).
+(`seq23-control-quorum.out:42-43`). The eight KASAN runs' kept logs
+hold no kernel warning, lockdep, KASAN or UBSAN report
+(`seq23-kasan-sync.out:65`, `seq23-kasan-quorum.out:70`,
+`seq25-kasan-sync-control.out:65`, `-fill.out:65`,
+`seq28-kasan-round2-control.out:65`, `-fill.out:65`,
+`seq29-kasan-collapse-control.out:67`, `-fill.out:67`), each read from
+the whole capture, where the count each sequence took from `dmesg` at
+its end (`n10-6-seq23.log:31`, `seq25.log:15`, `seq28.log:9`,
+`seq29.log:11`) reads only the 128 KiB ring's tail. seq27 ran no KASAN
+kernel. QEMU left no core in any of the five sequences
+(`n10-6-seq23.log:48`, `seq25.log:22`, `seq27.log:21`, `seq28.log:18`,
+`seq29.log:17`).
 
 **The single-element set** on debug: fixtures 0 failures
 (`seq23-fixtures.out:23`), the full-volume fill as root and as a user 0
 (`seq23-enospc.out:423`, `seq23-enospc-user.out:410`, the fill's debug
 line read, `:266`), storm 0 (`seq23-storm.out:33`), xfstests `-g seek` 8
-of 8 (`seq23-xfstests-seek.out:76`). The six-test list ran without
-`H2_XFSTESTS_SIZE`, which generic/127 needs (`abce169`), and ran out of
-space on both modules; at 24 GiB C3 passed 127 and 469
-(`seq23-fsx24-fill.out:23`). f4 read DragonFly's manifest listing itself,
+of 8 (`seq23-xfstests-seek.out:76`). The six-test list ran on C3
+without `H2_XFSTESTS_SIZE`, which generic/127 needs (`abce169`), and
+failed 127 and 469 (`seq23-xfstests.out:86`), out of space as the
+control's two-test run was (`seq23-fsx-control-1.out:35`); at 24 GiB C3
+passed 127 and 469 (`seq23-fsx24-fill.out:23`). f4 read DragonFly's manifest listing itself,
 a harness race fixed at `00a6cfe`; run again on C3 it passes
 (`seq25-f4-fill.out:18`).
 
@@ -24293,19 +24321,24 @@ control's.
 **What did not pass.** The order-off arm of Q2, whose call must meet the
 held writeback, read "reruns 0" once on debug (pwrite,
 `seq23-debug-quorum.out:53`) and once on KASAN (fibmap,
-`seq23-kasan-quorum.out:51`): the call ran outside the window, so the
-check had nothing to meet. Each Q2 line prints the sync's own time since
+`seq23-kasan-quorum.out:51`): the call is inferred to have run outside
+the window, so the check had nothing to meet, since seq23's lines carry
+no sync time to show it. Each Q2 line prints the sync's own time since
 `95dc046`; on three debug runs after it, two of C3 and one of the
 control, all eighteen Q2 lines read ok
 (`seq25-debug-quorum-fill-1.out:48-53`, `-fill-2.out:48-53`,
 `-control-1.out:46-51`).
 
-generic/127 at 24 GiB printed five "A-OK" lines of six with no fsx
-failure line in runs on both modules (`seq23-fsx24-control.out`,
-`seq25-fsx-control-2.out`, `seq25-fsx-fill-1.out`, `seq27-fsx-3.out`).
-Upstream's test runs its six fsx processes concurrently into one
-`$tmp.output`, each redirect truncating it, under the guest's `/tmp`
-rather than the test volume (`tests/generic/127:31-81`), so a `cat` that
+C3 ran generic/127 at 24 GiB eight times: six passed
+(`seq23-fsx24-fill.out:23`, `seq27-fsx-1.out:13`, `seq27-fsx-2.out:13`,
+and seq28's three below), and two printed five "A-OK" lines of six with
+no fsx failure line (`seq25-fsx-fill-1.out`, `seq27-fsx-3.out`), as runs
+of the control did (`seq23-fsx24-control.out`,
+`seq25-fsx-control-2.out`). Upstream's test runs its six fsx processes
+concurrently into one `$tmp.output`, each redirect truncating it, under
+the guest's `/tmp` rather than the test volume (xfstests-dev `a6d1f76`,
+`tests/generic/127:31-81` for the redirects, `:87-107` for the six
+background starts and the wait), so a `cat` that
 follows another run's truncation prints nothing; read from the test, not
 measured. Three runs on C3 in seq28 with the fsxlog reading each passed,
 six A-OK lines and six logs ending A-OK with the remount at exit 0
@@ -24317,7 +24350,48 @@ marked set absent from the slave's media and ten chains scrapped
 (`seq23-kasan-sync.out:46`, `:62`; `seq25-kasan-sync-fill.out:46`, `:62`),
 where its stop had landed in the pass's second round. "A stop in the sync
 pass's second round" above reads it: the marked set is absent on the
-module before C3 too, on both builds, so that half is the sync thread's;
-the scrap was not reproduced in four runs whose stop was forced into the
-second round, two of them C3's, and its attribution is not read. Both
-are open as the second-round stop's, outside N10.6.
+module before C3 too, on both builds, with the stop forced there, so
+that half is read as the sync thread's, and is inferred to be the same
+in C3's two runs; it is open beside N10.6. The scrap is read on C3's
+module alone, was not reproduced in four runs whose stop was forced into
+the second round, two of them C3's, and its attribution is not read; it
+is open inside N10.6.
+
+**The instruments no gate runs.** On C3's source (`02632c8`), read in
+a tree whose `src/` is the same (`p7-notes/c3-instruments-20261109.log`,
+whose header names that tree's hash before three rewrites of messages),
+W=1 read 0 warnings and the analyzer's default seven files the same 8
+candidates as `0bbeeb2`'s. `smatch` on the same source
+(`p7-notes/gates-c3-20261109-smatch.out`) read 59 lines, the same set as `0bbeeb2`'s with line numbers set aside, none in
+a file C3 changed; its first run there named no `KDIR` and took the
+host's 7.2 tree, below the floor, and exited 2. The analyzer over C3's
+four `.c` files (`p7-notes/c3-analyze4-20261109.log`) read their four
+known candidates and one more, reported once per file:
+`hammer2_os.h:1664`, the TLS record reader's socket stored and not
+read. The plain 7.3 tree has `CONFIG_NET_HANDSHAKE` off, so
+`IS_ENABLED()` folds the read away; against `linux-7.3-tls`
+`hammer2_admin.c` reads 0. The line predates C3 (`3e3a8c9`).
+
+**A failed fill's line** (`f1db080`, round 16's S4). A fill that fails
+ended the folio's writeback with the mapping's error and printed
+nothing, where an element's failed write prints its error and lbase; it
+now prints the inode, the error and the lbase, and S2 counts the line
+in the guest's log around the fsync that fails. seq30 ran
+`cluster-quorum.sh H2_QUORUM_SEEKVOTE=1` on `h2debug-7.3tls` at
+`f1db080`: 62 checks, 0 failed (`seq30-debug-quorum-s4.out:82`), S2's
+fsync failing EIO with the quorum read made and the line counted 0
+before and 1 after (`:43`), the line itself
+`hammer2_writepages: inode 000000000000041f error 00010000 at lbase
+0000000000020000` (`fixtures/quorum-run-20261109-185436.klog:462`),
+`00010000` being `HAMMER2_ERROR_EDEADLK`, the masters' disagreement.
+The same tree with the print removed fails S2 on the line alone, `lines
+0 0` beside the same exit, EIO and read counts
+(`seq30-debug-quorum-s4-control.out:43`). That run also failed Q2's
+order-off pwrite, "reruns 0" with `sync-ms 538` against the 2000 ms
+gap (`:53`): the writeback was not held, so the control had no window
+to meet, the reading "What did not pass" names; the S4 run's Q2 lines
+read ok. No core (`seq30.log:5`). At `f1db080`
+(`p7-notes/s4-instruments-20261109.log`) W=1 read 0 warnings, `smatch`
+the same 59 lines as C3's source, and the analyzer over
+`hammer2_vnops.c` its two known candidates, `:2187` and the TLS reader's
+`hammer2_os.h:1664` above.

@@ -83,12 +83,14 @@ has been read back by DragonFly and the other way round
   criteria to their runs.
 - **A sync pass stopped in its second round**: a slave's device torn
   down while the pass re-copies what its first round failed to verify
-  leaves the pass's marked set off the slave's media, and in two KASAN
-  runs left five copied inodes unwritten, until the resumed pass copies
-  them again; the volumes then match entry for entry. Measured by
-  `script/cluster-sync.sh` on both builds and on the module before the
-  partial-write fix as on its own; why is not read (the verification
-  record, 2026-11-09).
+  leaves the snapshot's state of the files the pass had marked off the
+  slave's media, measured by `script/cluster-sync.sh` on both builds and
+  on the module before the partial-write fix as on its own, with the stop
+  forced there. In two KASAN runs of the fix's own module the teardown
+  also scrapped five copied inodes, which the resumed pass copied again,
+  the volumes then matching entry for entry; the module before the fix
+  has not made that reading. Why is not read for either (the
+  verification record, 2026-11-09).
 - **A directory replaced under a PFS root during a sync**: the root's new
   entry can reach the media in that sync while the new inode, and the
   removal of the old directory's inode, wait for the next. A snapshot
