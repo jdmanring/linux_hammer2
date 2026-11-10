@@ -778,6 +778,10 @@ check() {	# check <name> <condition-result 0/1> <reading>
 	checks=$((checks + 1))
 	if [ "$2" = 0 ]; then echo "  ok    $1: $3"; else echo "  FAIL  $1: $3"; fail=$((fail + 1)); fi
 }
+cnr() {	# cnr <reason>: the run could not read this check; printed, so a run failing elsewhere still shows it
+	echo "  cnr   $1"
+	cnr="${cnr:+$cnr; }$1"
+}
 
 a=$(val clid-len); [ "${a:-0}" -ge 32 ] 2>/dev/null; check "the first MASTER has a cluster id to share" $? "${a:-0} characters"
 a=$(val master-b-rc); [ "${a:-1}" = 0 ]; check "a second MASTER of that cluster id is accepted" $? "exit ${a:-none}"
@@ -919,7 +923,7 @@ if [ "$QVOTE" = 1 ]; then
 	sa1=$(s2v s2split a 1); sb1=$(s2v s2split b 1); sa2=$(s2v s2split a 2); sb2=$(s2v s2split b 2)
 	if [ -z "$sa1" ] || [ -z "$sb1" ] || [ "${sa1%% *}" = "${sb1%% *}" ] ||
 	    [ -z "$sa2" ] || [ -z "$sb2" ] || [ "${sa2%% *}" = "${sb2%% *}" ]; then
-		cnr="${cnr:+$cnr; }S2's split left no two tids (block 1 ${sa1:-absent}/${sb1:-absent}, block 2 ${sa2:-absent}/${sb2:-absent})"
+		cnr "S2's split left no two tids (block 1 ${sa1:-absent}/${sb1:-absent}, block 2 ${sa2:-absent}/${sb2:-absent})"
 	else
 		aa1=$(s2v s2after a 1); ab1=$(s2v s2after b 1); aa2=$(s2v s2after a 2); ab2=$(s2v s2after b 2)
 		x=$(vote s2heal); set -- $x	# fills f0 f1 reads r0 r1 same n
@@ -958,8 +962,7 @@ if [ "$QVOTE" = 1 ]; then
 	# reading. The order-on arm is checked whatever the sync took, since a
 	# broken order can itself end the writeback before the gap.
 	unheld() { ym=$(vf "$1" sync-ms); [ -n "$ym" ] && [ "$ym" -lt "$QGAP" ] 2>/dev/null &&
-	    echo "  cnr   $1's writeback was not held (sync-ms $ym, gap $QGAP)" &&
-	    cnr="${cnr:+$cnr; }$1's writeback was not held (sync-ms $ym, gap $QGAP)"; }
+	    cnr "$1's writeback was not held (sync-ms $ym, gap $QGAP)"; }
 	for k in read fibmap pwrite; do
 		x=$(vote "q20-$k")
 		s=$(vf q20-$k exit); e=$(vf q20-$k eio); r=$(vf q20-$k reruns); m=$(vf q20-$k ms); sm=$(vf q20-$k same); f=$(vf q20-$k final); wr=$(vf q20-$k wrote)
@@ -996,13 +999,13 @@ if [ "$QVOTE" = 1 ]; then
 		[ "$e" = 0 ] && [ "$b" = 0 ]
 		check "Q3(b) the loop beside the writeback held 5 ms between the masters answers every call" $? "${xb:-no line} (want eio 0, bad 0)"
 	else
-		cnr="${cnr:+$cnr; }Q3(b) exercised no rerun (${xb:-no line})"
+		cnr "Q3(b) exercised no rerun (${xb:-no line})"
 	fi
 	e=$(vf q3-c eio)
 	if [ "${e:-0}" -ge 1 ] 2>/dev/null; then
 		check "Q3(c) with xop_order_off the loop fails EIO, so it met the window" 0 "$xc"
 	else
-		cnr="${cnr:+$cnr; }Q3(c)'s control did not fire (${xc:-no line})"
+		cnr "Q3(c)'s control did not fire (${xc:-no line})"
 	fi
 	echo "  read  Q3 writeback ms: no gap alone $(vf q3-a-alone ms) beside the loop $(vf q3-a ms); 5 ms gap alone $(vf q3-b-alone ms) beside the loop $(vf q3-b ms)"
 	ba=$(vf q3-b-alone ms); bl=$(vf q3-b ms)
@@ -1055,7 +1058,7 @@ if [ "$QVOTE" = 1 ]; then
 	*)	if [ "${oo:-0}" -ge 1 ] 2>/dev/null; then
 			[ "$o" = 0 ]; check "order_check: every modify of a hashed inode's chain was made under its order" $? "$o, $oo with the order out"
 		else
-			cnr="${cnr:+$cnr; }order_check's control did not fire: $oo with the order out"
+			cnr "order_check's control did not fire: $oo with the order out"
 		fi ;;
 	esac
 	hd=$(val hung-task | cut -d' ' -f1); ht=$(val hung-task | sed -n 's/.* timeout //p')
