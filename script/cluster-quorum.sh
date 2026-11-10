@@ -953,19 +953,20 @@ if [ "$QVOTE" = 1 ]; then
 	# from the page cache would answer with no rerun, which the delta
 	# catches. With the order out the read and the write fail EIO, and
 	# FIBMAP, which has no error to return, reports the block unmapped.
-	# A sync that exits before the gap ends was not held, so the call had
-	# no window to meet: that arm is COULD-NOT-RUN rather than a reading.
+	# A sync that exits before the gap ends was not held, so an order-off
+	# call had no window to meet: that arm is COULD-NOT-RUN rather than a
+	# reading. The order-on arm is checked whatever the sync took, since a
+	# broken order can itself end the writeback before the gap.
 	unheld() { ym=$(vf "$1" sync-ms); [ -n "$ym" ] && [ "$ym" -lt "$QGAP" ] 2>/dev/null &&
+	    echo "  cnr   $1's writeback was not held (sync-ms $ym, gap $QGAP)" &&
 	    cnr="${cnr:+$cnr; }$1's writeback was not held (sync-ms $ym, gap $QGAP)"; }
 	for k in read fibmap pwrite; do
 		x=$(vote "q20-$k")
-		if unheld "q20-$k"; then :; else
-			s=$(vf q20-$k exit); e=$(vf q20-$k eio); r=$(vf q20-$k reruns); m=$(vf q20-$k ms); sm=$(vf q20-$k same); f=$(vf q20-$k final); wr=$(vf q20-$k wrote)
-			ok=1
-			[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$f" = 1 ] && ok=0
-			case $k in read) [ "$sm" = 1 ] || ok=1 ;; pwrite) [ "$wr" = 1 ] || ok=1 ;; fibmap) [ "$(vf q20-$k ext)" = 1 ] || ok=1 ;; esac
-			check "Q2 $k beside a writeback held between the masters reruns under the order and answers" $ok "${x:-no line} (want exit 0, eio 0, reruns at least 1, ms at least $((QGAP - QDELAY)), final 1)"
-		fi
+		s=$(vf q20-$k exit); e=$(vf q20-$k eio); r=$(vf q20-$k reruns); m=$(vf q20-$k ms); sm=$(vf q20-$k same); f=$(vf q20-$k final); wr=$(vf q20-$k wrote)
+		ok=1
+		[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$f" = 1 ] && ok=0
+		case $k in read) [ "$sm" = 1 ] || ok=1 ;; pwrite) [ "$wr" = 1 ] || ok=1 ;; fibmap) [ "$(vf q20-$k ext)" = 1 ] || ok=1 ;; esac
+		check "Q2 $k beside a writeback held between the masters reruns under the order and answers" $ok "${x:-no line} (want exit 0, eio 0, reruns at least 1, ms at least $((QGAP - QDELAY)), final 1)"
 		x=$(vote "q21-$k"); e=$(vf q21-$k eio); r=$(vf q21-$k reruns)
 		if unheld "q21-$k"; then :
 		elif [ $k = fibmap ]; then
