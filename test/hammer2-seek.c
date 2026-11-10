@@ -570,7 +570,12 @@ window_shapes(const char *path, long bsize)
 		if (media_on(path, s->name)) {
 			win_ask(fd, s->nblk, bsize, ctl);
 			media_off(path, s->name);
-			/* what the last flush left, less a block punched since */
+			/*
+			 * What the last flush left, less a block written or
+			 * punched since.  Holds while no shape moves a flushed
+			 * block's chain under a new parent before the window:
+			 * the moved chain would be unflushed and read a hole.
+			 */
 			mo = *s;
 			snprintf(mname, sizeof(mname), "%s, media only",
 			    s->name);
