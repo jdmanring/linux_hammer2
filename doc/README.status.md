@@ -15,13 +15,14 @@ and the write path's one invariant that no check code can see is now
 measured rather than argued, a count of folios changed under the core
 reading 14160919 on a build with its guard removed and 0 with it. The cluster's synchronization thread is carried and keeps
 a SLAVE on a second local device in step with its MASTER, measured by
-`script/cluster-sync.sh`, with one exception that script measured at
-1.0.93 and nothing yet fixes: after a write of less than a block into a
-block the slave holds stale, both volumes hold the block at the master's
-tid with different contents; from the code, the slave keeps its own old
-bytes beside the new ones, no later pass replaces them, and two MASTERs
-reach the same state through a page cached before their block came to be
-disputed. The quorum a two-MASTER cluster is decided
+`script/cluster-sync.sh`. A write of less than a block, which left a
+stale slave's block at the master's tid with different contents at
+1.0.93, now fills the block once and every element writes it, measured
+on both volumes; two MASTERs whose block is disputed heal it from a fully
+cached page or fail the write EIO through the quorum read. A stop that
+lands in the pass's second round leaves part of what the pass copied
+off the slave's media until the resumed pass copies it again, on the
+module before that change as on its own. The quorum a two-MASTER cluster is decided
 by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; a master on another host
 is read through a remote element over the transport P5 and P6 closed,

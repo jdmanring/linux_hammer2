@@ -81,14 +81,14 @@ has been read back by DragonFly and the other way round
   state held until the link ends, with no bound found. P7 is closed at
   1.0.84, its closure mapping the pass's reading over TLS and the five
   criteria to their runs.
-- **A SLAVE behind its MASTER under a partial write**: a write of less
-  than a 64 KiB block into a block the slave holds stale leaves both
-  volumes holding it at the master's tid with different contents,
-  measured by `script/cluster-sync.sh` at 1.0.93; not fixed. From the
-  code, the slave keeps its old bytes beside the new ones and the
-  synchronization pass, which compares tids, never replaces them. Two MASTERs reach
-  the same assembly, from the code, through a page cached before their
-  block came to be disputed.
+- **A sync pass stopped in its second round**: a slave's device torn
+  down while the pass re-copies what its first round failed to verify
+  leaves the pass's marked set off the slave's media, and in two KASAN
+  runs left five copied inodes unwritten, until the resumed pass copies
+  them again; the volumes then match entry for entry. Measured by
+  `script/cluster-sync.sh` on both builds and on the module before the
+  partial-write fix as on its own; why is not read (the verification
+  record, 2026-11-09).
 - **A directory replaced under a PFS root during a sync**: the root's new
   entry can reach the media in that sync while the new inode, and the
   removal of the old directory's inode, wait for the next. A snapshot
