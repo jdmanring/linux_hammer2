@@ -418,8 +418,8 @@ echo 0 > $P/xop_gap_ms
 # and the block read back cold the splice of the writes that answered.
 # With xop_order_off set the read and the write must fail EIO. FIBMAP has
 # no error to give: ->bmap returns a block number, and hammer2_bmap()
-# answers 0 for an error as for a hole, so filefrag reports the block unmapped. Its
-# control is that: 0 extents with the order out, 1 with it.
+# answers 0 for an error as for a hole, so filefrag reports the block
+# unmapped. Its control is that: 0 extents with the order out, 1 with it.
 dd if=/dev/zero bs=4k count=1 2>/dev/null | tr '\000' '\132' > /tmp/q2.5a
 dd if=/dev/zero bs=4k count=1 2>/dev/null | tr '\000' '\245' > /tmp/q2.a5
 q2() {	# off tag
