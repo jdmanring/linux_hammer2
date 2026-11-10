@@ -24321,25 +24321,23 @@ control's.
 **What did not pass.** The order-off arm of Q2, whose call must meet the
 held writeback, read "reruns 0" once on debug (pwrite,
 `seq23-debug-quorum.out:53`) and once on KASAN (fibmap,
-`seq23-kasan-quorum.out:51`): the call is inferred to have run outside
-the window, so the check had nothing to meet, since seq23's lines carry
-no sync time to show it. Each Q2 line prints the sync's own time since
+`seq23-kasan-quorum.out:51`): the check had nothing to meet, the call
+outside the window or the window never held, which seq23's lines, with
+no sync time, cannot tell apart. Each Q2 line prints the sync's own time since
 `95dc046`; on three debug runs after it, two of C3 and one of the
 control, all eighteen Q2 lines read ok
 (`seq25-debug-quorum-fill-1.out:48-53`, `-fill-2.out:48-53`,
 `-control-1.out:46-51`). Two more debug runs, seq30's of `f1db080` and
 its control, make five after it: 29 of 30 lines read ok, and the
 control's order-off pwrite failed with `sync-ms 538` against the 2000 ms
-gap (`seq30-debug-quorum-s4-control.out:53`), a writeback never held,
-which is a second way for the arm to miss beside a call outside the
-window, though seq23's two lines carry no sync time and cannot be told
-from it. Of the day's eleven quorum runs, seq31's two included, 66 Q2
+gap (`seq30-debug-quorum-s4-control.out:53`), the window not held. Of the day's eleven quorum runs, seq31's two included, 66 Q2
 lines, three failed, each an order-off arm (`seq23-debug-quorum.out:53`,
 `seq23-kasan-quorum.out:51`, and seq30's), and 41 of the 42 on the seven
 debug runs that print the sync's time read ok. Since `f28ef05` an
 order-off arm whose sync exits before the gap ends makes the run
-COULD-NOT-RUN; the order-on arm is checked whatever the sync took, since
-a broken order can itself end the writeback early (round 18).
+COULD-NOT-RUN; `f28ef05` gated the order-on arm the same way, and since
+`1cc0368` that arm is checked whatever the sync took, since a broken
+order can itself end the writeback early (round 18).
 
 C3 ran generic/127 at 24 GiB eight times: six passed
 (`seq23-fsx24-fill.out:23`, `seq27-fsx-1.out:13`, `seq27-fsx-2.out:13`,
@@ -24429,7 +24427,8 @@ scope, so `hammer2_decompress_zlib()`'s `vmalloc()` (`:257`) can
 recurse into the filesystem from writeback, as C3's first review found;
 the block buffer itself is `GFP_NOFS` whatever the scope.
 
-**S2's EIO, and Q2's unheld window** (`f28ef05`, round 17). The split
+**S2's EIO, and Q2's unheld window** (`f28ef05`, round 17; the order-on
+arm restored at `1cc0368`, round 18). The split
 that sets S2 up fails the excepted element's writes, which leaves an
 error on the file's mapping that no file has seen, and a new open is
 handed it, so S2's fsync could read EIO whether or not the fill set one.
