@@ -58,6 +58,9 @@ cd "$(dirname "$0")/.." || exit 2
 # the remote block is one quoted string and cannot share a variable with
 # the host half, so these are copies and copies drift. A pattern edited
 # there and not here fails this check rather than going quiet.
+# The seek exerciser's note that no HAMMER2_LOCKDEBUG module answered,
+# printed by test/hammer2-seek.c and failed below on a LOCKDEBUG run.
+H2_SEEK_NOTE='no HAMMER2_LOCKDEBUG module answers'
 if [ "${1:-}" = "--selftest" ]; then
 	t=$(mktemp -d) || exit 2
 	trap 'rm -rf "$t"' EXIT
@@ -150,6 +153,16 @@ if [ "${1:-}" = "--selftest" ]; then
 	check "a held chain" \
 	    "sync_pmp entry" \
 	    "6,907,1,-;hammer2: __hammer2_dbg_held_chains: sync_pmp entry: chain type 1 key 0000000000000402"
+	# The note lives in another file, so the drift check above cannot
+	# see it: a reworded note would leave the verdict matching nothing.
+	nread=$((nread + 1))
+	if command grep -qF "$H2_SEEK_NOTE" "$(dirname "$0")/../test/hammer2-seek.c"; then
+		echo "  ok    the seek exerciser's no-LOCKDEBUG note"
+	else
+		echo "  FAIL  test/hammer2-seek.c no longer prints \"$H2_SEEK_NOTE\","
+		echo "        so a LOCKDEBUG run skipping its media-only checks passes"
+		sfail=$((sfail + 1))
+	fi
 	[ "$nread" -gt 0 ] || {
 		echo "enospc: FAIL: the selftest checked no reading at all" >&2
 		exit 1; }
@@ -1116,19 +1129,21 @@ if [ -z "$sc" ] || [ "${sc:-0}" -eq 0 ]; then
 	echo "  FAIL  the seek exerciser printed no check, so it ran and"
 	echo "        proved nothing"
 	fail=$((fail + 1))
-elif [ "$lockdebug" = 1 ] && printf '%s\n' "$out" | command grep -q '^seek-note .*no HAMMER2_LOCKDEBUG module answers'; then
-	# Built with the option, so every media-only reading must have run;
-	# the exerciser's own detection skipping one leaves its count short
-	# by that check and otherwise reads as a pass.
-	echo "  FAIL  the seek exerciser found no HAMMER2_LOCKDEBUG module in a"
-	echo "        run built with it, so its media-only readings did not run"
-	fail=$((fail + 1))
 elif [ "${sf:-0}" -ne 0 ]; then
 	echo "  FAIL  the seek exerciser answered wrongly on a live mount:"
 	printf '%s\n' "$out" | sed -n 's/^seek-fail /        /p' | head -6
 	fail=$((fail + 1))
 else
 	echo "  ok    seek $sc check(s) on a live mount, 0 failed"
+fi
+# Built with the option, so every media-only reading must have run; the
+# exerciser's own detection skipping one leaves its count short by that
+# check and otherwise reads as a pass. The note's text lives in
+# test/hammer2-seek.c, and the selftest checks the two still agree.
+if [ "$lockdebug" = 1 ] && printf '%s\n' "$out" | command grep -q "^seek-note .*$H2_SEEK_NOTE"; then
+	echo "  FAIL  the seek exerciser found no HAMMER2_LOCKDEBUG module in a"
+	echo "        run built with it, so its media-only readings did not run"
+	fail=$((fail + 1))
 fi
 
 # Dedup, on the same terms: a count printed by the exerciser, checked for
