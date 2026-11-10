@@ -236,6 +236,48 @@ unsynced(const char *path, const char *buf, long bsize, long nbytes)
 }
 
 /*
+ * The same file written back and not flushed, the state 0d0182bdb4's
+ * message names: "certain portions of the hammer2 btree may not yet be
+ * synchronized even when the file buffers are synced".  sync_file_range()
+ * waiting before and after leaves no page dirty or under writeback, so
+ * the page cache's tags answer nothing, while the blocks the strategy
+ * writes made are chains in memory that no flush has put under the
+ * inode's blockrefs on media; fsync() would flush them, which is why the
+ * phase below cannot see this either.  The walk merges a parent's live
+ * children (hammer2_chain_scan()), and a walk of the media alone answers
+ * the written blocks as a hole, which a build skipping live data chains
+ * in hammer2_xop_seek_walk() reads, the control.
+ */
+static void
+written_back(const char *path, const char *buf, long bsize, long nbytes)
+{
+	int fd = build(path, buf, bsize, nbytes);
+
+	if (fd < 0 || sync_file_range(fd, 0, 0,
+	    SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE |
+	    SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
+		checks++;
+		fails++;
+		printf("seek-fail written back: the file could not be built "
+		    "or written back\n");
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	probe(fd, "written back SEEK_DATA at 0", SEEK_DATA, 0, 0);
+	probe(fd, "written back SEEK_DATA in data", SEEK_DATA,
+	    2 * bsize + 10, 2 * bsize + 10);
+	probe_range(fd, "written back SEEK_DATA in hole", SEEK_DATA,
+	    bsize + 100, bsize + 100, 2 * bsize);
+	probe_range(fd, "written back SEEK_HOLE at 0", SEEK_HOLE, 0, bsize,
+	    nbytes);
+	probe_range(fd, "written back SEEK_HOLE in data", SEEK_HOLE,
+	    2 * bsize + 10, 3 * bsize, nbytes);
+	close(fd);
+	unlink(path);
+}
+
+/*
  * One byte at `off` in a file three blocks long, synced or not.  The
  * offsets that matter are either side of a block boundary and on it,
  * since the scan asks by block and rounds.  The bounds hold on any block
@@ -775,6 +817,7 @@ main(int argc, char **argv)
 	/* First, before any sync of its own has run on this file. */
 	snprintf(dpath, sizeof(dpath), "%s.unsynced", path);
 	unsynced(dpath, buf, bsize, nbytes);
+	written_back(dpath, buf, bsize, nbytes);
 	{
 		long offs[] = { bsize - 1, bsize, bsize + 1 };
 		int i, s;
