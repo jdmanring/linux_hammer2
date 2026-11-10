@@ -24395,3 +24395,19 @@ read ok. No core (`seq30.log:5`). At `f1db080`
 the same 59 lines as C3's source, and the analyzer over
 `hammer2_vnops.c` its two known candidates, `:2187` and the TLS reader's
 `hammer2_os.h:1664` above.
+
+**Open from round 16, read from the code and not driven.** A truncate
+down past a clean cached slot and an ftruncate back up past the fill's
+first size sample, both inside the fill's quorum read, would leave the
+removed folio's old bytes in the block below the new size: the walk
+references its slots before the read (`hammer2_strategy.c:1495-1503`),
+the copy follows it (`:1528`), and the zeroing runs from the smaller of
+the two samples (`:1544`), the old size. `hammer2_zero_tail()` has by
+then dirtied fresh folios over the range, whose writeback waits on this
+one's order and writes the block again, so only a crash between the two
+flushes could read it. A candidate; testing the folio's mapping again at
+the copy would close it, and no harness here makes the race. With
+`xop_order_off` set, the debug build's control, the fill's read takes no
+NOFS scope, so `hammer2_decompress_zlib()`'s `vmalloc()` (`:256`) can
+recurse into the filesystem from writeback, as C3's first review found;
+the block buffer itself is `GFP_NOFS` whatever the scope.
