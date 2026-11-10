@@ -24483,7 +24483,8 @@ fuzz, giving the same `FIOSEEKHOLE` case
 HAMMER2 (`:10`). `dfly-backport/seekdelay.c`, plain POSIX, writes a
 fresh file's blocks 0 and 2 for each delay, truncates it to three and a
 half blocks, and asks SEEK_DATA and SEEK_HOLE after the delay, after
-`fsync()`, and of an 11-byte file held in its inode. Run 2 asked after
+`fsync()`, and of an 11-byte file held in its inode; every run was in
+`/root/sd` on the root, a command line not captured. Run 2 asked after
 0, 1, 2, 5 and 10 s and called `fsync()` after the 10 s file, a source
 rebuilt after run 3 as `seekdelay-run2.patch`; run 3 added 40 s and
 called `fsync()` after it. Of eleven askings before `fsync()`, nine
@@ -24507,7 +24508,7 @@ answering as data agrees with the code reading. The guest was returned
 to its snapshot from before the backport and boots 6.4's own kernel
 again (`dfly-capture.out:4`, `:7-8`).
 
-The same program on the port at `8c74ea6`, on `h2debug-7.3tls` with a
+The same program on the port at `fbb91b9`, on `h2debug-7.3tls` with a
 fresh volume (`dfly-backport/seqsd.sh`): 0 bad at every delay, after
 `fsync()` and for the embedded file (`seqsd-port.out:4-12`); unmount
 and module unload returned 0, the kernel log held no warning-like line,
@@ -24549,9 +24550,9 @@ questions would make them the after-fsync shape, which passes; the
 controls landed in the window in two runs of two, and the syncer runs
 every 30 s or past half the dirty-chain or dirty-inode limit, but a
 passing run of `written_back()` had no reading of its own that it asked
-inside the window until `7eacc03`, below.
+inside the window until `dd6f99d`, below.
 
-`window_shapes()` (`8c74ea6`) takes four shapes the five probes do not:
+`window_shapes()` (`fbb91b9`) takes four shapes the five probes do not:
 a block that does not compress, a file whose blockrefs move to an
 indirect block made in memory, a flushed file whose hole is filled and
 whose block is punched, and a page written into a hole. Each is written
@@ -24562,9 +24563,9 @@ which makes the walk skip a data chain still carrying
 `HAMMER2_CHAIN_FLUSH_MASK`. The walk then reads the parents' blockref
 arrays as the last flush left them, less any block deleted since, since
 a delete takes its blockref out of the array at once
-(`hammer2_base_delete()`, `hammer2_chain.c:3507`); that is not the
+(`hammer2_base_delete()`, `hammer2_chain.c:3508`); that is not the
 media, which still holds a block punched since its flush. seq35 at
-`8c74ea6` passed a shape on any changed answer: seek 143 checks, 0
+`fbb91b9` passed a shape on any changed answer: seek 143 checks, 0
 failed, on `h2debug-7.3tls` and `h2kasan-7.3tls` (`seq35-debug.out:433`,
 `seq35-kasan.out:434`), the parameter changing 8 of 10, 14 of 16, 3 of
 10 and 3 of 6 answers (`seq35-debug.out:27`, `:30`, `:33`, `:36`, the
@@ -24573,7 +24574,7 @@ arrays' count; the media, block 2 still on it, would change 5 (computed
 from the layout). A change shows some chain of a shape unflushed, not
 each block, and gave `written_back()` no reading of its own run.
 
-`7eacc03` asks for the whole layout. With the parameter set each shape
+`dd6f99d` asks for the whole layout. With the parameter set each shape
 must answer the layout its last flush left, a block written or punched
 since reading as a hole, with at least one answer changed, and
 `written_back()` asks SEEK_DATA at 0 and must get ENXIO, since every
@@ -24586,7 +24587,7 @@ at the two ends a filesystem gives. The page written into a hole takes a
 whole-block folio (`hammer2_write_begin()`, `hammer2_vnops.c:2545-2555`,
 read from code, not counted in a run), so no shape drives
 `hammer2_strategy_fill()`, which completes a folio smaller than its
-block. seq36 at `7eacc03`, on `h2debug-7.3tls`: with `HAMMER2_LOCKDEBUG`
+block. seq36 at `dd6f99d`, on `h2debug-7.3tls`: with `HAMMER2_LOCKDEBUG`
 seek 144 checks, 0 failed, the written-back file reading no data and
 every shape its layout, at the same 8, 14, 3 and 3 changed answers
 (`seq36-debug.out:25`, `:28`, `:31`, `:34`, `:37`, `:435`); without it
@@ -24595,13 +24596,19 @@ every shape its layout, at the same 8, 14, 3 and 3 changed answers
 `p7-notes/seek-ctl-inert.patch`, makes the parameter skip nothing, the
 window's state with every chain flushed: 144 checks, exactly the five
 media-only checks failed (`seq36-debug-inert.out:25`, `:36`, `:53`,
-`:59`, `:65`, `:177-178`). On the host's `tmpfs` 124 checks pass and on
-`btrfs` 128 with its two negative-offset answers
-(`seekprobe-host/tmpfs3.out:131-132`, `btrfs3.out:105`, `:109`,
-`:135-136`), and a copy with the punched shape's layout wrong fails it
-(`tmpfs3-mut.out:26-29`, `:135`). On `h2kasan-7.3tls` the same 144
-checks pass at the same counts (`seq36-kasan.out:25-37`, `:435`), and
-the run's unbuffered kernel log, whose count takes KASAN and UBSAN
-reports since `c41fe9a`, holds none after the run marker (`:2`, `:260`,
-`:266`); seq35's KASAN reading was a dmesg of the ring after the run
-(`seq35.log:9`). No core (`seq36.log:1`, `:20`).
+`:59`, `:65`, `:177-178`). A parameter hiding chains a flush had cleared
+as well would fail too: the filled-and-punched and page-into-a-hole
+shapes predict their flushed blocks as data, and both passed. On the
+host's `tmpfs` 124 checks pass and on `btrfs` 128 with its two
+negative-offset answers (`seekprobe-host/tmpfs3.out:131-132`,
+`btrfs3.out:105`, `:109`, `:135-136`), and a copy with the punched
+shape's layout wrong fails it (`tmpfs3-mut.out:26-29`, `:135`). On
+`h2kasan-7.3tls` the same 144 checks pass at the same counts
+(`seq36-kasan.out:25-37`, `:435`), and the run's unbuffered kernel log,
+whose count takes a KASAN report since `9f04f8c` (a UBSAN report prints
+a cut-here line and was counted before), holds none after the run marker
+(`:2`, `:260`, `:266`); seq35's KASAN reading was a dmesg of the ring
+after the run (`seq35.log:9`). No core (`seq36.log:1`, `:20`). The
+outputs of seq35 and seq36 name `fbb91b9` and `dd6f99d` by the hashes
+they had before round 22 reworded three messages, the trees unchanged;
+the branch `pre-r22-rewrite` keeps those.
