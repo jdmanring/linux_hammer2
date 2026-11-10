@@ -24264,32 +24264,32 @@ forced shape scraps.
 C3 (`hammer2_writepages()` fills a block smaller than its folio once,
 under the file's order, and every element writes that block) ran as
 seq23 on all three guest kernels beside the control, the tree before it
-run with C3's harness, and in part again as seq25, seq27, seq28 and seq29
-(predictions `p7-notes/n10-6-expected17.md`, `-expected19.md`,
-`-expected21.md` to `-expected23.md`). Each sequence built C3 from a copy
-of its commit rebased as the main line moved under it; the copies' code
-is the same, and seq23's and seq25's differ from the rest in one comment
-of `hammer2.h` that the main line reworded (each sequence's log names its
-copy). One `src/` built in two directories gives two module hashes, as
-the second-round table's two debug C3 modules do, the paths compiled
-into the module differing (inferred). The control is the main line
-before C3 in each.
+run with C3's harness, and in part again as seq25, seq27, seq28 and
+seq29 (predictions `p7-notes/n10-6-expected17.md`, `-expected19.md`,
+`-expected21.md` to `-expected23.md`). Each sequence built C3 from a
+copy of its commit rebased as the main line moved under it; the copies'
+code is the same, and seq23's and seq25's differ from the rest in one
+comment of `hammer2.h` that the main line reworded (each sequence's log
+names its copy). One `src/` built in two directories gives two module
+hashes, as the second-round table's two debug C3 modules do, the paths
+compiled into the module differing (inferred). The control is the main
+line before C3 in each.
 
-**S1 and S2, the checks C3 exists for.** The stale-slave write leaves both
-volumes at one tid and one check code, unchanged after a sync pass, on
-debug (`seq23-debug-sync.out:18`, `seq27-round2-fill.out:18`,
+**S1 and S2, the checks C3 exists for.** The stale-slave write leaves
+both volumes at one tid and one check code, unchanged after a sync pass,
+on debug (`seq23-debug-sync.out:18`, `seq27-round2-fill.out:18`,
 `seq29-debug-collapse-fill.out:18`) and on KASAN
 (`seq23-kasan-sync.out:18`, `seq28-kasan-round2-fill.out:18`,
-`seq29-kasan-collapse-fill.out:18`); the control reads the defect, one tid
-and two contents (`seq23-control-sync.out:18`,
+`seq29-kasan-collapse-fill.out:18`); the control reads the defect, one
+tid and two contents (`seq23-control-sync.out:18`,
 `seq27-round2-control.out:18`). On two MASTERs, a 4 KiB write into a
 disputed block with every page cached heals it with no quorum read, and
 with the clean pages dropped fails fsync EIO with both masters' blocks
 unchanged, on all three builds (`seq23-debug-quorum.out:42-43`,
 `seq23-kasan-quorum.out:42-43`, `seq23-release-quorum.out:42-43`); the
 control fails both, two contents under one tid and the write landing
-(`seq23-control-quorum.out:42-43`). The eight KASAN runs' kept logs
-hold no kernel warning, lockdep, KASAN or UBSAN report
+(`seq23-control-quorum.out:42-43`). The eight KASAN runs' kept logs hold
+no kernel warning, lockdep, KASAN or UBSAN report
 (`seq23-kasan-sync.out:65`, `seq23-kasan-quorum.out:70`,
 `seq25-kasan-sync-control.out:65`, `-fill.out:65`,
 `seq28-kasan-round2-control.out:65`, `-fill.out:65`,
@@ -24323,14 +24323,15 @@ held writeback, read "reruns 0" once on debug (pwrite,
 `seq23-debug-quorum.out:53`) and once on KASAN (fibmap,
 `seq23-kasan-quorum.out:51`): the check had nothing to meet, the call
 outside the window or the window never held, which seq23's lines, with
-no sync time, cannot tell apart. Each Q2 line prints the sync's own time since
-`95dc046`; on three debug runs after it, two of C3 and one of the
-control, all eighteen Q2 lines read ok
+no sync time, cannot tell apart. Each Q2 line prints the sync's own
+time since `95dc046`; on three debug runs after it, two of C3 and one
+of the control, all eighteen Q2 lines read ok
 (`seq25-debug-quorum-fill-1.out:48-53`, `-fill-2.out:48-53`,
 `-control-1.out:46-51`). Two more debug runs, seq30's of `f1db080` and
 its control, make five after it: 29 of 30 lines read ok, and the
 control's order-off pwrite failed with `sync-ms 538` against the 2000 ms
-gap (`seq30-debug-quorum-s4-control.out:53`), the window not held. Of the day's eleven quorum runs, seq31's two included, 66 Q2
+gap (`seq30-debug-quorum-s4-control.out:53`), the window not held. Of
+the day's eleven quorum runs, seq31's two included, 66 Q2
 lines, three failed, each an order-off arm (`seq23-debug-quorum.out:53`,
 `seq23-kasan-quorum.out:51`, and seq30's), and 41 of the 42 on the seven
 debug runs that print the sync's time read ok. Since `f28ef05` an
@@ -24355,17 +24356,17 @@ six A-OK lines and six logs ending A-OK with the remount at exit 0
 (`seq28-fsx-1.out:11-17`, `-2.out:11-17`, `-3.out:11-17`), so no short
 run has yet been read against its logs.
 
-C3's two KASAN runs of `cluster-sync.sh` failed two interrupt checks, the
-marked set absent from the slave's media and ten chains scrapped
-(`seq23-kasan-sync.out:46`, `:62`; `seq25-kasan-sync-fill.out:46`, `:62`),
-where its stop had landed in the pass's second round. "A stop in the sync
-pass's second round" above reads it: the marked set is absent on the
-module before C3 too, on both builds, with the stop forced there, so
-that half is read as the sync thread's, and is inferred to be the same
-in C3's two runs; it is open beside N10.6. The scrap is read on C3's
-module alone, was not reproduced in four runs whose stop was forced into
-the second round, two of them C3's, and its attribution is not read; it
-is open inside N10.6.
+C3's two KASAN runs of `cluster-sync.sh` failed two interrupt checks,
+the marked set absent from the slave's media and ten chains scrapped
+(`seq23-kasan-sync.out:46`, `:62`; `seq25-kasan-sync-fill.out:46`,
+`:62`), where its stop had landed in the pass's second round. "A stop in
+the sync pass's second round" above reads it: the marked set is absent
+on the module before C3 too, on both builds, with the stop forced there,
+so that half is read as the sync thread's, and is inferred to be the
+same in C3's two runs; it is open beside N10.6. The scrap is read on
+C3's module alone, was not reproduced in four runs whose stop was forced
+into the second round, two of them C3's, and its attribution is not
+read; it is open inside N10.6.
 
 **The instruments no gate runs.** On C3's source (`02632c8`), read in a
 tree whose `src/` is the same (`p7-notes/c3-instruments-20261109.log`,
@@ -24449,17 +24450,77 @@ Each run's six Q2 lines found their writeback held. No core
 
 DragonFly's `0d0182bdb451` (2025-11-18, read from the forge) disabled
 `FIOSEEKHOLE` because "certain portions of the hammer2 btree may not yet
-be synchronized even when the file buffers are synced", and it is still
-disabled at upstream's head, the only later commit to
-`hammer2_ioctl.c` being `c5cc81fefa`'s RECLUSTER fix. Upstream's seek
-was `vn_bmap_seekhole()`, which cleans the VM pages and asks
-`VOP_BMAP` a block at a time (`bd41e746e6`), so a block whose buffer the
-strategy write had not made a chain read as a hole, as did a file held
-in its inode, which P1 found here. The port's walk merges a parent's
-live children and reads the page cache's tags, but no probe had asked in
-the window the message names: the exerciser asked a file dirty and
-after `fsync()`, which here flushes the chains under the inode
-(`hammer2_vop_fsync()`, `hammer2_vnops.c:1431-1470`).
+be synchronized even when the file buffers are synced. A SEEK_HOLE
+operation just after a file is written but prior to the next full
+filesystem may return incorrect data. And there are other issues with
+the H2 implementation too." It is still disabled at upstream's head,
+the only later commit to `hammer2_ioctl.c` being `c5cc81fefa`'s
+RECLUSTER fix. Upstream's seek was `vn_bmap_seekhole()`
+(`bd41e746e6`), which cleans the VM pages and asks `VOP_BMAP` a block
+at a time through the bmap XOP's `hammer2_chain_lookup()`. Read from
+upstream's code and not run: a block still in a dirty buffer, which the
+strategy write has not made a chain, has nothing for that lookup to find
+and answers as a hole, the candidate for the failure the message
+describes; the lookup does see chains in memory, so the state after the
+buffers' strategy writes, which the message also names, is not shown to
+fail there; and a file held in its inode answers as data, since the
+lookup returns the inode chain for embedded data, so P1's embedded-file
+defect was the port's own early scan and not upstream's. The "other
+issues" are not named.
+
+Upstream's failure, reproduced on a 6.4 backport. `dragonflybsd642`'s
+6.4-RELEASE source took the four upstream commits that bring seek to
+HAMMER2, `cc8e70bd59` (lseek made generic), `128dc99841` (SEEK_HOLE and
+SEEK_DATA in the kernel), `0c27d8551f` (ext2fs and ufs) and `bd41e746e6`
+(HAMMER2), and booted the kernel built from it
+(`p7-notes/dfly-backport/seekdelay-dfly-run2.out:1`), whose
+`hammer2_ioctl.c` is the state `0d0182bdb4` changed (`:14-20`). The
+patching and the build were not captured. Applied again afterwards, in
+order, to a copy of the files they touch from the restored snapshot's
+source, every hunk of the four was taken, some at an offset or with
+fuzz, giving the same `FIOSEEKHOLE` case
+(`dfly-backport/dfly-capture.out:27-34`), and the guest's root is
+HAMMER2 (`:10`). `dfly-backport/seekdelay.c`, plain POSIX, writes a
+fresh file's blocks 0 and 2 for each delay, truncates it to three and a
+half blocks, and asks SEEK_DATA and SEEK_HOLE after the delay, after
+`fsync()`, and of an 11-byte file held in its inode. Run 2 asked after
+0, 1, 2, 5 and 10 s and called `fsync()` after the 10 s file, a source
+rebuilt after run 3 as `seekdelay-run2.patch`; run 3 added 40 s and
+called `fsync()` after it. Of eleven askings before `fsync()`, nine
+answered the file as all hole, SEEK_DATA -1 and SEEK_HOLE at 0 answering
+0: all five of run 2's (`run2.out:2-6`) and run 3's at 0, 1, 5 and 10 s
+(`run3.out:2-3`, `:5-6`). Run 3's at 2 s and 40 s answered right (`:4`,
+`:7`), as did `fsync()` and the embedded file in both runs
+(`run2.out:7-8`, `run3.out:8-9`). That an unflushed file is what reads
+as all hole, and that a flush is what ends it, is inferred. `fsync()`
+flushes, and the candidate for the two passes before it is the mount's
+syncer vnode, which syncs the whole mount every `kern.syncdelay` of 30 s
+at a phase unrelated to the write (6.4's `vfs_sync.c:83`, `:689`;
+`dfly-capture.out:12`, `:16`, `:18`), so a sync can land inside one
+file's 2 s and miss the next files' 5 and 10 s; the per-file
+`kern.filedelay` of 30 s cannot end a failure 2 s after the write. A
+strategy write that write-behind starts would end a failure without a
+flush: 6.4's write path hands a buffer to `cluster_write()` (`:22`), and
+nothing here tells a buffer still dirty from a chain not yet flushed, so
+which state a failing answer was asked in is not read. The embedded file
+answering as data agrees with the code reading. The guest was returned
+to its snapshot from before the backport and boots 6.4's own kernel
+again (`dfly-capture.out:4`, `:7-8`).
+
+The same program on the port at `8c74ea6`, on `h2debug-7.3tls` with a
+fresh volume (`dfly-backport/seqsd.sh`): 0 bad at every delay, after
+`fsync()` and for the embedded file (`seqsd-port.out:4-12`); unmount
+and module unload returned 0, the kernel log held no warning-like line,
+and no core (`:14-17`). The host's `tmpfs` answers the same
+(`seekdelay-host-tmpfs.out`). This program asks the dirty state and the
+syncer's interval; the written-back state is driven below.
+
+The port's seek reads the page cache's dirty and writeback tags first
+and then walks the tree merging a parent's live children, so it answers
+both states from design. The dirty state has been probed since P1
+(`unsynced()`). The second had no probe: the exerciser asked a file
+dirty and after `fsync()`, which here flushes the chains under the inode
+(`hammer2_vop_fsync()`, `hammer2_vnops.c:1431-1472`).
 
 `written_back()` (`a1d71c5`) writes the file back with
 `sync_file_range()` waiting on both sides and asks the unsynced file's
@@ -24469,13 +24530,78 @@ the two negative-offset answers the unchanged exerciser fails there).
 seq33 on `h2debug-7.3tls` at `a1d71c5`: seek 131 checks, 0 failed
 (`seq33-s4.out:136-137`). The control skips, in
 `hammer2_xop_seek_walk()`, a data chain still carrying a flag a flush
-clears, leaving the media's blockrefs alone. A first control skipping
+clears, leaving the parents' blockref arrays as the last flush left
+them. A first control skipping
 only `MODIFIED` chains failed two of the five
 (`seq33-s4-control.out:15`, `:21`): block 2 holds the same bytes as
 block 0, and its write is deduplicated, which assigns the existing
-block and clears `MODIFIED` (`hammer2_chain.c:1570-1610`), so its live
-chain read as data. With `HAMMER2_CHAIN_FLUSH_MASK` the control fails
-exactly the five written-back probes and no other
-(`seq34-s4-control.out:15-18`, `:20`, `:134`): the probe reaches chains no
-flush has put on media, deduplicated ones among them, and the walk is
-what answers them. No core (`seq33.log`, `seq34.log`).
+block and clears `MODIFIED` (`hammer2_chain.c:1570-1610`), while the
+`UPDATE` the modify set earlier stays (`:1543-1546`), so its live chain
+read as data. The two controls are kept as
+`p7-notes/seek-ctl-modified.patch`, rebuilt after seq33 since its
+worktree was overwritten for seq34, and `seek-ctl-flushmask.patch`.
+With `HAMMER2_CHAIN_FLUSH_MASK` the control fails exactly the five
+written-back probes and no other (`seq34-s4-control.out:15-18`, `:20`,
+`:134`): the probe reaches chains no flush has put on media,
+deduplicated ones among them, and the walk is what answers them. No
+core (`seq33.log`, `seq34.log`). A flush between the write-back and the
+questions would make them the after-fsync shape, which passes; the
+controls landed in the window in two runs of two, and the syncer runs
+every 30 s or past half the dirty-chain or dirty-inode limit, but a
+passing run of `written_back()` had no reading of its own that it asked
+inside the window until `7eacc03`, below.
+
+`window_shapes()` (`8c74ea6`) takes four shapes the five probes do not:
+a block that does not compress, a file whose blockrefs move to an
+indirect block made in memory, a flushed file whose hole is filled and
+whose block is punched, and a page written into a hole. Each is written
+back with `sync_file_range()` and asked at every block, FIEMAP must
+cover exactly its data blocks, and on a `HAMMER2_LOCKDEBUG` module the
+same questions are asked again with the `seek_media_only` parameter set,
+which makes the walk skip a data chain still carrying
+`HAMMER2_CHAIN_FLUSH_MASK`. The walk then reads the parents' blockref
+arrays as the last flush left them, less any block deleted since, since
+a delete takes its blockref out of the array at once
+(`hammer2_base_delete()`, `hammer2_chain.c:3507`); that is not the
+media, which still holds a block punched since its flush. seq35 at
+`8c74ea6` passed a shape on any changed answer: seek 143 checks, 0
+failed, on `h2debug-7.3tls` and `h2kasan-7.3tls` (`seq35-debug.out:433`,
+`seq35-kasan.out:434`), the parameter changing 8 of 10, 14 of 16, 3 of
+10 and 3 of 6 answers (`seq35-debug.out:27`, `:30`, `:33`, `:36`, the
+KASAN run the same at the same lines). The punched shape's 3 is the
+arrays' count; the media, block 2 still on it, would change 5 (computed
+from the layout). A change shows some chain of a shape unflushed, not
+each block, and gave `written_back()` no reading of its own run.
+
+`7eacc03` asks for the whole layout. With the parameter set each shape
+must answer the layout its last flush left, a block written or punched
+since reading as a hole, with at least one answer changed, and
+`written_back()` asks SEEK_DATA at 0 and must get ENXIO, since every
+block of its file is a data chain no flush has cleared. A flush cannot
+be taken back, so a pass on the second asking places the first inside
+the window too. A module with `seek_depth_max`, which
+`HAMMER2_LOCKDEBUG` also adds, whose parameter cannot be set or cleared
+now fails rather than skipping, and a shape's SEEK_HOLE is accepted only
+at the two ends a filesystem gives. The page written into a hole takes a
+whole-block folio (`hammer2_write_begin()`, `hammer2_vnops.c:2545-2555`,
+read from code, not counted in a run), so no shape drives
+`hammer2_strategy_fill()`, which completes a folio smaller than its
+block. seq36 at `7eacc03`, on `h2debug-7.3tls`: with `HAMMER2_LOCKDEBUG`
+seek 144 checks, 0 failed, the written-back file reading no data and
+every shape its layout, at the same 8, 14, 3 and 3 changed answers
+(`seq36-debug.out:25`, `:28`, `:31`, `:34`, `:37`, `:435`); without it
+139, 0 failed, each of the five printing that no such module answers
+(`seq36-debug-plain.out:25-37`, `:429`). The control,
+`p7-notes/seek-ctl-inert.patch`, makes the parameter skip nothing, the
+window's state with every chain flushed: 144 checks, exactly the five
+media-only checks failed (`seq36-debug-inert.out:25`, `:36`, `:53`,
+`:59`, `:65`, `:177-178`). On the host's `tmpfs` 124 checks pass and on
+`btrfs` 128 with its two negative-offset answers
+(`seekprobe-host/tmpfs3.out:131-132`, `btrfs3.out:105`, `:109`,
+`:135-136`), and a copy with the punched shape's layout wrong fails it
+(`tmpfs3-mut.out:26-29`, `:135`). On `h2kasan-7.3tls` the same 144
+checks pass at the same counts (`seq36-kasan.out:25-37`, `:435`), and
+the run's unbuffered kernel log, whose count takes KASAN and UBSAN
+reports since `c41fe9a`, holds none after the run marker (`:2`, `:260`,
+`:266`); seq35's KASAN reading was a dmesg of the ring after the run
+(`seq35.log:9`). No core (`seq36.log:1`, `:20`).
