@@ -24222,7 +24222,7 @@ first round failed one and every stop landed in the second round.
 
 What the second-round stop reads, on both modules: the marked set check
 fails in all four seq29 runs, `mark-old=0`
-(`seq29-*-collapse-*.out:48`): no file of the marked set is on the
+(`seq29-*-collapse-*.out:28`, the check failing at `:48`): no file of the marked set is on the
 slave's media at all, where the three runs whose stop landed in the
 first round, seq23's debug C3 and control and seq25's KASAN control,
 read 10 (`seq23-debug-sync.out:28`, `seq23-control-sync.out:28`,
@@ -24327,7 +24327,15 @@ no sync time to show it. Each Q2 line prints the sync's own time since
 `95dc046`; on three debug runs after it, two of C3 and one of the
 control, all eighteen Q2 lines read ok
 (`seq25-debug-quorum-fill-1.out:48-53`, `-fill-2.out:48-53`,
-`-control-1.out:46-51`).
+`-control-1.out:46-51`). Two more debug runs, seq30's of `f1db080` and
+its control, make five after it: 29 of 30 lines read ok, and the
+control's order-off pwrite failed with `sync-ms 538` against the 2000 ms
+gap (`seq30-debug-quorum-s4-control.out:53`), a writeback never held,
+which is a second way for the arm to miss beside a call outside the
+window. Of the day's nine quorum runs, 54 Q2 lines, three failed, each
+an order-off arm (`seq23-debug-quorum.out:53`,
+`seq23-kasan-quorum.out:51`, and seq30's). Since `f28ef05` an arm whose
+sync exits before the gap ends makes the run COULD-NOT-RUN.
 
 C3 ran generic/127 at 24 GiB eight times: six passed
 (`seq23-fsx24-fill.out:23`, `seq27-fsx-1.out:13`, `seq27-fsx-2.out:13`,
@@ -24362,8 +24370,10 @@ a tree whose `src/` is the same (`p7-notes/c3-instruments-20261109.log`,
 whose header names that tree's hash before three rewrites of messages),
 W=1 read 0 warnings and the analyzer's default seven files the same 8
 candidates as `0bbeeb2`'s. `smatch` on the same source
-(`p7-notes/gates-c3-20261109-smatch.out`) read 59 lines, the same set as `0bbeeb2`'s with line numbers set aside, none in
-a file C3 changed; its first run there named no `KDIR` and took the
+(`p7-notes/gates-c3-20261109-smatch.out`) read 59 lines, 44 of them one static assertion in a kernel header
+(`neighbour.h:317`) repeated, the same set as `0bbeeb2`'s with line
+numbers and tree paths set aside (that run read `linux-7.3-tls`, these
+`linux-7.3`), none in a file C3 changed; its first run there named no `KDIR` and took the
 host's 7.2 tree, below the floor, and exited 2. The analyzer over C3's
 four `.c` files (`p7-notes/c3-analyze4-20261109.log`) read their four
 known candidates and one more, reported once per file:
@@ -24389,8 +24399,8 @@ The same tree with the print removed fails S2 on the line alone, `lines
 (`seq30-debug-quorum-s4-control.out:43`). That run also failed Q2's
 order-off pwrite, "reruns 0" with `sync-ms 538` against the 2000 ms
 gap (`:53`): the writeback was not held, so the control had no window
-to meet, the reading "What did not pass" names; the S4 run's Q2 lines
-read ok. No core (`seq30.log:5`). At `f1db080`
+to meet, which "What did not pass" counts; the S4 run's Q2 lines read
+ok (`seq30-debug-quorum-s4.out:48-53`). No core (`seq30.log:5`). At `f1db080`
 (`p7-notes/s4-instruments-20261109.log`) W=1 read 0 warnings, `smatch`
 the same 59 lines as C3's source, and the analyzer over
 `hammer2_vnops.c` its two known candidates, `:2187` and the TLS reader's
@@ -24407,7 +24417,23 @@ then dirtied fresh folios over the range, whose writeback waits on this
 one's order and writes the block again, so only a crash between the two
 flushes could read it. A candidate; testing the folio's mapping again at
 the copy would close it, and no harness here makes the race. With
-`xop_order_off` set, the debug build's control, the fill's read takes no
-NOFS scope, so `hammer2_decompress_zlib()`'s `vmalloc()` (`:256`) can
+`xop_order_off` set, the debug build's control, or with the module
+parameter `nofs_scope=0` on any build, the fill's read takes no NOFS
+scope, so `hammer2_decompress_zlib()`'s `vmalloc()` (`:257`) can
 recurse into the filesystem from writeback, as C3's first review found;
 the block buffer itself is `GFP_NOFS` whatever the scope.
+
+**S2's EIO, and Q2's unheld window** (`f28ef05`, round 17). The split
+that sets S2 up fails the excepted element's writes, which leaves an
+error on the file's mapping that no file has seen, and a new open is
+handed it, so S2's fsync could read EIO whether or not the fill set one.
+An fsync after the split now reports that error first. seq31 ran
+`cluster-quorum.sh H2_QUORUM_SEEKVOTE=1` on `h2debug-7.3tls` at
+`f28ef05`: 62 checks, 0 failed (`seq31-debug-quorum-s4.out:82`), the
+drain's fsync failing (`drain 1`), then S2's fsync failing EIO with the
+quorum read made and the fill's line for block 2 counted 0 then 1
+(`:43`). The same tree with the fill's `mapping_set_error()` removed
+fails S2 alone, `exit 0 eio 0` beside the same read, line and drain
+(`seq31-debug-quorum-s4-control.out:43`, `:82`): the drain read EIO in
+both, so before `f28ef05` the split's error alone could have answered
+S2's fsync. Each run's six Q2 lines found their writeback held. No core (`seq31.log:5`).
