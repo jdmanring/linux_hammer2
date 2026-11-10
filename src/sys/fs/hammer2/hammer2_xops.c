@@ -1579,9 +1579,10 @@ static int hammer2_seek_fail_elm = -1;
 module_param_named(seek_fail_elm, hammer2_seek_fail_elm, int, 0644);
 /*
  * Linux: skips a data chain carrying a flag a flush clears, so the walk
- * answers from the blockrefs the media holds alone.  The control for
- * test/hammer2-seek.c's written-back probes, which must then answer
- * differently in the same run they pass in.
+ * answers from the parents' blockref arrays as the last flush left them,
+ * less any block deleted since, whose blockref a delete takes out of the
+ * array at once.  The control for test/hammer2-seek.c's written-back
+ * probes, which must then answer that layout in the same run they pass in.
  */
 static int hammer2_seek_media_only;
 module_param_named(seek_media_only, hammer2_seek_media_only, int, 0644);

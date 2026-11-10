@@ -248,17 +248,74 @@ unsynced(const char *path, const char *buf, long bsize, long nbytes)
  * writes made are chains in memory that no flush has put under the
  * inode's blockrefs on media; fsync() would flush them, which is why the
  * phase below cannot see this either.  The walk merges a parent's live
- * children (hammer2_chain_scan()), and a walk of the media alone answers
- * the written blocks as a hole: window_shapes() below reads that in the
- * same run through seek_media_only.  A flush between the write-back and
+ * children (hammer2_chain_scan()).  A flush between the write-back and
  * these questions would make them the after-fsync shape, which passes;
  * the syncer runs every 30 s or past half the dirty-chain or dirty-inode
- * limit, and window_shapes() is the reading that the window held.
+ * limit.  The run's own reading that no flush came first is the last
+ * question, asked with seek_media_only set: every block of this file is a
+ * data chain no flush has cleared, so the walk then finds no data, and a
+ * flush before it, and so before the five, leaves a block to find.
  */
+#define H2_SUPER_MAGIC	0x48414d32	/* HAMMER2_SUPER_MAGIC */
+#define MEDIA_ONLY	"/sys/module/hammer2/parameters/seek_media_only"
+#define DEPTH_MAX	"/sys/module/hammer2/parameters/seek_depth_max"
+
+/*
+ * Writes seek_media_only: 0 when written, 1 where no HAMMER2_LOCKDEBUG
+ * module answers for the file (another filesystem, or a module without
+ * seek_depth_max, which the same option adds), -1 when such a module's
+ * parameter could not be written.
+ */
+static int
+media_only(const char *path, const char *v)
+{
+	struct statfs sfs;
+	int fd, ok;
+
+	if (statfs(path, &sfs) != 0 || sfs.f_type != H2_SUPER_MAGIC ||
+	    access(DEPTH_MAX, F_OK) != 0)
+		return (1);
+	if ((fd = open(MEDIA_ONLY, O_WRONLY)) < 0)
+		return (-1);
+	ok = write(fd, v, 1) == 1;
+	close(fd);
+	return (ok ? 0 : -1);
+}
+
+/* 1 when the parameter is set and the caller may ask */
+static int
+media_on(const char *path, const char *name)
+{
+	int rc = media_only(path, "1");
+
+	if (rc == 1)
+		printf("seek-note %s: no HAMMER2_LOCKDEBUG module answers for "
+		    "this file, so no media-only reading\n", name);
+	else if (rc != 0) {
+		checks++;
+		fails++;
+		printf("seek-fail %s: seek_media_only could not be set\n",
+		    name);
+	}
+	return (rc == 0);
+}
+
+static void
+media_off(const char *path, const char *name)
+{
+	if (media_only(path, "0") != 0) {
+		checks++;
+		fails++;
+		printf("seek-fail %s: seek_media_only could not be cleared, so "
+		    "no answer after this one can be trusted\n", name);
+	}
+}
+
 static void
 written_back(const char *path, const char *buf, long bsize, long nbytes)
 {
-	int fd = build(path, buf, bsize, nbytes);
+	int fd = build(path, buf, bsize, nbytes), e;
+	off_t d;
 
 	if (fd < 0 || sync_file_range(fd, 0, 0,
 	    SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE |
@@ -280,6 +337,20 @@ written_back(const char *path, const char *buf, long bsize, long nbytes)
 	    nbytes);
 	probe_range(fd, "written back SEEK_HOLE in data", SEEK_HOLE,
 	    2 * bsize + 10, 3 * bsize, nbytes);
+	if (media_on(path, "written back")) {
+		d = lseek(fd, 0, SEEK_DATA);
+		e = errno;
+		media_off(path, "written back");
+		checks++;
+		if (d != -1 || e != ENXIO) {
+			fails++;
+			printf("seek-fail written back: with seek_media_only "
+			    "SEEK_DATA at 0 answered %lld, want ENXIO, so a "
+			    "flush came before the questions\n", (long long)d);
+		} else
+			printf("seek-ok   written back: with seek_media_only no "
+			    "data, so no flush came before the questions\n");
+	}
 	close(fd);
 	unlink(path);
 }
@@ -289,26 +360,30 @@ written_back(const char *path, const char *buf, long bsize, long nbytes)
  * Each shape gives, per block, how many bytes from the block's start are
  * written (0 a hole, bsize the whole block), and the answers lseek(2) may
  * give follow from that: SEEK_DATA exactly, since every write starts at
- * a block's start, and SEEK_HOLE from the end of the bytes written to the
- * end of the run of data blocks, since a filesystem may end data at its
- * own granularity and HAMMER2 ends it at its block's.
+ * a block's start, and SEEK_HOLE at one of two ends, the end of the bytes
+ * written, where a filesystem ending data at its page ends it, or the end
+ * of the run of data blocks, where HAMMER2 ends it at its block's.
  *
  * In the window, after sync_file_range() as in written_back(): every
  * answer must fall in its range, FIEMAP must cover exactly the data
  * blocks where the filesystem has it, and, on a HAMMER2_LOCKDEBUG module,
- * seek_media_only set must change at least one answer, the walk then
- * reading the media's blockrefs alone.  That last is the run's own
- * reading that it asked inside the window: a flush between the write-back
- * and the questions would leave the media agreeing with the window and
- * fail it.  The shapes are the ones the five probes above do not take: a
- * block that does not compress, a file of more blocks than an inode holds
- * blockrefs for, so they move to an indirect block made in memory, a
- * flushed file whose hole is filled and whose block is punched, and a
- * page written into a hole, which the writeback fills to its block
- * through hammer2_strategy_fill().
+ * the same questions asked with seek_media_only set must answer the
+ * layout the last flush left, with at least one answer changed.  The
+ * parameter reads the parents' blockref arrays without any data chain a
+ * flush has not cleared; a delete takes its blockref out of the array at
+ * once, so a block punched since the flush reads as a hole there too.
+ * That is the run's own reading that it asked inside the window: a flush
+ * cannot be taken back, so a flush before the second asking leaves the
+ * live layout, and one before the first leaves it too.  The shapes are
+ * the ones the five probes above do not take: a block that does not
+ * compress, a file of more blocks than an inode holds blockrefs for, so
+ * they move to an indirect block made in memory, a flushed file whose
+ * hole is filled and whose block is punched, and a page written into a
+ * hole.  That page takes a whole-block folio, so the writeback writes the
+ * block whole; a folio smaller than its block, which
+ * hammer2_strategy_fill() completes, is not driven here.
  */
 #define WIN_MAX		8
-#define MEDIA_ONLY	"/sys/module/hammer2/parameters/seek_media_only"
 
 struct win_shape {
 	const char *name;
@@ -317,18 +392,6 @@ struct win_shape {
 	long after[WIN_MAX];	/* the layout asked in the window */
 	int punch;		/* the block punched after the flush, or -1 */
 };
-
-static int
-media_only(const char *v)
-{
-	int fd = open(MEDIA_ONLY, O_WRONLY), ok;
-
-	if (fd < 0)
-		return (-1);
-	ok = write(fd, v, 1) == 1;
-	close(fd);
-	return (ok ? 0 : -1);
-}
 
 static void
 win_fill(int fd, int blk, long n, long bsize, unsigned int seed)
@@ -378,7 +441,7 @@ win_bad(const struct win_shape *s, long bsize, const long *got)
 			    "want %ld\n", s->name, i, got[2 * i], lo);
 			bad++;
 		}
-		/* SEEK_HOLE: from the written bytes' end to the run's end */
+		/* SEEK_HOLE: the written bytes' end or the run's end */
 		if (s->after[i] <= 10) {
 			lo = hi = i * bsize + 10;
 		} else {
@@ -393,9 +456,9 @@ win_bad(const struct win_shape *s, long bsize, const long *got)
 			if (lo > size)
 				lo = size;
 		}
-		if (got[2 * i + 1] < lo || got[2 * i + 1] > hi) {
+		if (got[2 * i + 1] != lo && got[2 * i + 1] != hi) {
 			printf("seek-fail %s: SEEK_HOLE at block %d: got %ld, "
-			    "want %ld..%ld\n", s->name, i, got[2 * i + 1], lo,
+			    "want %ld or %ld\n", s->name, i, got[2 * i + 1], lo,
 			    hi);
 			bad++;
 		}
@@ -407,9 +470,10 @@ win_bad(const struct win_shape *s, long bsize, const long *got)
 static long
 win_map(int fd, long bsize, int nblk)
 {
-	struct {
+	union {
 		struct fiemap fm;
-		struct fiemap_extent fe[WIN_MAX * 2];
+		char b[sizeof(struct fiemap) +
+		    WIN_MAX * 2 * sizeof(struct fiemap_extent)];
 	} m;
 	long mask = 0, b;
 	unsigned int i;
@@ -420,9 +484,9 @@ win_map(int fd, long bsize, int nblk)
 	if (ioctl(fd, FS_IOC_FIEMAP, &m.fm) != 0)
 		return (-1);
 	for (i = 0; i < m.fm.fm_mapped_extents; i++)
-		for (b = m.fe[i].fe_logical / bsize;
-		    b * bsize < (long)(m.fe[i].fe_logical +
-		    m.fe[i].fe_length) && b < nblk; b++)
+		for (b = m.fm.fm_extents[i].fe_logical / bsize;
+		    b * bsize < (long)(m.fm.fm_extents[i].fe_logical +
+		    m.fm.fm_extents[i].fe_length) && b < nblk; b++)
 			mask |= 1L << b;
 	return (mask);
 }
@@ -443,8 +507,10 @@ window_shapes(const char *path, long bsize)
 		    { bsize, 0, bsize }, { bsize, P, bsize }, -1 },
 	};
 	long got[2 * WIN_MAX], ctl[2 * WIN_MAX], want, map;
+	struct win_shape mo;
+	char mname[64];
 	unsigned int n;
-	int fd, i, d, ctlrc = 1;
+	int fd, i, d;
 
 	for (n = 0; n < sizeof(shapes) / sizeof(shapes[0]); n++) {
 		struct win_shape *s = &shapes[n];
@@ -501,28 +567,35 @@ window_shapes(const char *path, long bsize)
 				    s->name, map);
 		}
 
-		if ((ctlrc = media_only("1")) == 0) {
+		if (media_on(path, s->name)) {
 			win_ask(fd, s->nblk, bsize, ctl);
-			media_only("0");
+			media_off(path, s->name);
+			/* what the last flush left, less a block punched since */
+			mo = *s;
+			snprintf(mname, sizeof(mname), "%s, media only",
+			    s->name);
+			mo.name = mname;
+			for (i = 0; i < s->nblk; i++)
+				mo.after[i] = s->before[0] &&
+				    s->before[i] == s->after[i] ? s->after[i] : 0;
 			for (d = 0, i = 0; i < 2 * s->nblk; i++)
 				d += ctl[i] != got[i];
 			checks++;
-			if (d == 0) {
+			if (win_bad(&mo, bsize, ctl) || d == 0) {
 				fails++;
-				printf("seek-fail %s: seek_media_only changed "
-				    "no answer, so nothing was asked inside "
-				    "the window\n", s->name);
+				printf("seek-fail %s: seek_media_only did not "
+				    "answer the layout the last flush left (%d "
+				    "of %d answers changed), so a flush came "
+				    "between\n", s->name, d, 2 * s->nblk);
 			} else
-				printf("seek-ok   %s: seek_media_only changed "
-				    "%d of %d answers\n", s->name, d,
+				printf("seek-ok   %s: seek_media_only answered "
+				    "the layout the last flush left, %d of %d "
+				    "answers changed\n", s->name, d,
 				    2 * s->nblk);
 		}
 		close(fd);
 		unlink(path);
 	}
-	if (ctlrc != 0)
-		printf("seek-note window: no %s, so no shape read its own "
-		    "window\n", MEDIA_ONLY);
 }
 
 /*
@@ -867,7 +940,6 @@ written_blocks(const char *t, const char *buf, long bsize, long nbytes)
  * Only on HAMMER2, whose statfs type is HAMMER2_SUPER_MAGIC: the control
  * filesystems have no setcomp, and the phase prints that it was skipped.
  */
-#define H2_SUPER_MAGIC	0x48414d32	/* HAMMER2_SUPER_MAGIC */
 
 static void
 compressed(const char *path, const char *buf, long bsize, long nbytes)
