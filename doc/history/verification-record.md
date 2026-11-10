@@ -24072,25 +24072,29 @@ inodes are on the media and reached through it alone: `0x616f` holds all
 no walk from the root reaches
 (`p7-notes/dangling-20261109b.log:7-20`). So the sync wrote the root's
 entries, the old name gone and the new one in, and neither the old
-inode's removal from the index, nor, in four of the five, any unlink of
-the old directory's own files (in `0xad98`, 111 of its 200 had reached
-the media), nor the new inode's insertion: a snapshot taken at
+inode's removal from the index, nor, in four of the five orphans, any unlink of
+the old directory's own files (in `0xad98`, 111 of the 200 every
+directory is made with, `p7-notes/dfly-churn-guest.sh:5`, `:11-14`, had
+reached the media), nor the new inode's insertion: a snapshot taken at
 that sync keeps a name that does not open and a deleted directory's
 contents where no namespace walk reaches them, and the checkers of
 neither tree see either. A crash after that sync would mount
 the same state, read from the code, not run.
 
-seq27 ran the churn twice more on `h2release-7.3tls`, on the module of
-`48113c1`, whose `src/` differs from seq24's HEAD in four comment lines
+seq27 ran the churn twice more on `h2release-7.3tls`, on modules built
+from `48113c1` and `95ab6c0` (`seq27-tree-1.out:1`, `-2.out:1`), whose
+`src/` is the same and differs from seq24's HEAD in four comment lines
 of `hammer2.h`, and both runs kept a name without its inode, `d60` and
 `d57`, on both sides (`seq27-tree-1.out:25-27`, `:46-48`; `-2.out`, the
 same lines): HEAD's module now 4 of 7, and over seq22, seq24 and seq27
 5 of 12. Of the two kept images (`p7-notes/seq27-tree-dangling.log`), the
 second holds the replaced directory named by nothing, `0xe2e1`, with its
 1000 entries (`:7-9`); the first holds the dangling name alone, 999999
-inodes for 1000000 entries (`:3-4`), so there the old directory's
-removal and its files' unlinks reached the media and only the new
-inode's insertion did not. The orphan half is 4 of the 5 snapshots read
+inodes for 1000000 entries (`:3-4`): there the old directory's removal
+and its files' unlinks reached the media, and the new directory by its
+name alone, neither its inode nor the 1000 files written under it
+(1001000 inodes and 1001000 entries in the second image, less 1001 and
+1000). The orphan half is 4 of the 5 snapshots read
 on media, not each one.
 
 The candidate mechanism is read from the code and the same in both trees:
@@ -24098,16 +24102,17 @@ The candidate mechanism is read from the code and the same in both trees:
 inode joining the dependency is still on the SYNCQ, when it carries
 `HAMMER2_INODE_SYNCQ_PASS2`, which the syncer sets as it takes an inode
 off the SYNCQ and clears once that inode is flushed, or when the merged
-dependency already has pass2 (`hammer2_inode.c:102-107`, `:169-173`). A mkdir or rmdir
-under the PFS root after the root has been flushed in the sync's first
-stage and before its second therefore sets none of them, and the inode it
-creates or destroys waits on the SIDEQ, while the second stage of
-`hammer2_vfs_sync_pmp()` flushes the PFS root's chain, which holds the
-root directory's entries as well as the inode index. DragonFly's sync and
-dependency code is unchanged at its head since this port's clone (the
-forge's newest commits to `hammer2_vfsops.c` and `hammer2_inode.c` are of
-2026-09-02 and earlier); its tracker was not searched. The defect is
-carried, not N10.6's. The first attempt (`n10-6-seq22-norun.log`) was
+dependency already has pass2 (`hammer2_inode.c:102-107`, `:169-173`). A
+mkdir or rmdir under the PFS root after the root has been flushed in the
+sync's first stage and before its second therefore sets none of them,
+and the inode it creates or destroys waits on the SIDEQ, while the
+second stage of `hammer2_vfs_sync_pmp()` flushes the PFS root's chain,
+which holds the root directory's entries as well as the inode index.
+DragonFly's sync and dependency code is unchanged at its head since this
+port's clone (the forge's newest commits to `hammer2_vfsops.c` and
+`hammer2_inode.c` are of 2026-09-02 and earlier); its tracker was not
+searched. The defect is carried, not N10.6's. The first attempt
+(`n10-6-seq22-norun.log`) was
 COULD-NOT-RUN on every run, the wrapper having left the guest running,
 which `million-tree.sh` refuses.
 
