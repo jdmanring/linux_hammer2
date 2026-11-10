@@ -510,10 +510,13 @@ STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
 # default depth sits inside the first round (11000 updates past the
 # mutation where seq27's debug control ended its first round at 20024),
 # and which round a stop lands in followed the speed of the cluster
-# unmount. A second round copies only what the first failed to verify, so
-# after a first round that verified clean it ends in milliseconds and the
-# stop misses the pass: seq27's debug control, round 1 "failed 0", printed
-# no interrupted line. The KASAN runs' first rounds failed one.
+# unmount. A second round copies only what the first failed to verify;
+# after a first round that verified clean it still compares the whole set
+# (4.6 s on debug in seq27, 16.7 s on KASAN in seq28) but defers nothing,
+# so it never reads the stop, the teardown waits for it, and the pass ends
+# verified with no interrupted line. Whether the first round fails is
+# timing: seq25's KASAN runs failed one, seq27's and seq28's none.
+# H2_COLLAPSE=1 makes the round its scan ends in fail.
 STOP_ROUND=${H2_STOP_ROUND:-0}
 # Phase 2b, the refused copy: how many allocations the freemap refuses
 # inside the thread's first pass (0 leaves the phase out). Needs
@@ -2075,8 +2078,10 @@ m=$(val mutate-mount-rc); [ "${m:-1}" = 0 ] && [ "$(val mutate-in-pass)" = 0 ]; 
 # in-pass is the host's reading at the stop; the pass can still end before
 # the teardown reaches it, and only the kernel's interrupted line says the
 # teardown met it (seq27's control stopped after a round that verified
-# clean, and its empty second round ended inside the unmount).
-c=$(val interrupt-stop-copied | awk '{print $1}'); r=$(val interrupt-rounds); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass), interrupted in round ${r:-none}"
+# clean, and its second round, deferring nothing, ran to its end inside
+# the unmount). That line prints only from the snapshot pass, so the live
+# pass (H2_SYNC_SNAPSHOT=0) is read by in-pass alone.
+c=$(val interrupt-stop-copied | awk '{print $1}'); r=$(val interrupt-rounds); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ] && { [ "$H2SNAP" != 1 ] || [ "${r:-0}" -ge 1 ] 2>/dev/null; }; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass), interrupted in round ${r:-none}"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the device teardown waits for the pass to reach a stop point" $? "${ms:-0} ms"
 d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the thread reads the stop between deferrals" $? "${d:-none} didbreak"
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1 ] && [ "${a:-1}" = 0 ]; check "the device teardown stops the thread" $? "threads ${tb:-none} to ${a:-none}"
