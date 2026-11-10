@@ -26,7 +26,8 @@ Exit 2 when show fails, when the dump holds no PFS (empty, or flattened),
 when a blockref fails its check (show then lists only its direct children
 and exits 0), when a named PFS is not found, or when an entry's name or
 inode number does not parse, since a reading of nothing must not read as
-clean; 1 when anything dangles or is orphaned; 0 otherwise.
+clean; 1 when anything dangles, is orphaned or is not reached from the root;
+0 otherwise.
 """
 import importlib.util
 import os
@@ -134,7 +135,7 @@ def report(pfs, want, out):
                     seen.add(inum)
                     todo.append(inum)
         held = len(d["inodes"] - seen) - len(orph)
-        bad += len(lost) + len(orph)
+        bad += len(lost) + len(orph) + held
         print("%s: %d inode(s), %d dirent(s), %d without an inode, %d inode(s) no entry names, "
               "%d more no walk from the root reaches"
               % (n, len(d["inodes"]), len(d["dirents"]), len(lost), len(orph), held), file=out)
@@ -159,7 +160,7 @@ def main(argv, out=sys.stdout):
             text = show(argv[1])
         nfail = len(leafcount().CHECKFAIL.findall(text))
     except (OSError, IndexError, ValueError) as e:
-        print("dangling: COULD-NOT-READ: %s" % (e or "no dump file named"), file=out)
+        print("dangling: COULD-NOT-READ: %s" % e, file=out)
         return 2
     if nfail:
         print("dangling: COULD-NOT-READ: %d blockref(s) fail their check, and show lists "
@@ -247,6 +248,16 @@ def selftest():
     rc, o = run(clean + inode(4, 0x402) + dirent(5, "h", 0x403) + inode(4, 0x403))
     expect(rc == 1 and "1 inode(s) no entry names, 1 more no walk" in o and "0x402, 1 entry under it" in o,
            "an orphan directory's contents count as unreached, not as named")
+    # Two directories naming each other and nothing naming either: no
+    # orphan, and both unreached.
+    rc, o = run(clean + inode(4, 0x406) + dirent(5, "y", 0x407) + inode(4, 0x407) + dirent(5, "z", 0x406))
+    expect(rc == 1 and "0 inode(s) no entry names, 2 more no walk" in o,
+           "a detached cycle no entry outside it names is unreached, and fails")
+    # A small PFS whose root's blockset holds an inode beside a root entry:
+    # the entry is the root's, not the inode's at the same depth.
+    rc, o = run(inode(1, 0) + inode(2, 1, "C") + inode(3, 0x500) + dirent(3, "x", 0x500))
+    expect(rc == 0 and "C: 1 inode(s), 1 dirent(s), 0 without an inode, 0 inode(s) no entry names, 0 more" in o,
+           "an entry beside an inode at its own depth belongs to the root")
     print("dangling selftest: %d failed" % fails)
     return 1 if fails else 0
 
