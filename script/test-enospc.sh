@@ -1116,6 +1116,13 @@ if [ -z "$sc" ] || [ "${sc:-0}" -eq 0 ]; then
 	echo "  FAIL  the seek exerciser printed no check, so it ran and"
 	echo "        proved nothing"
 	fail=$((fail + 1))
+elif [ "$lockdebug" = 1 ] && printf '%s\n' "$out" | command grep -q '^seek-note .*no HAMMER2_LOCKDEBUG module answers'; then
+	# Built with the option, so every media-only reading must have run;
+	# the exerciser's own detection skipping one leaves its count short
+	# by that check and otherwise reads as a pass.
+	echo "  FAIL  the seek exerciser found no HAMMER2_LOCKDEBUG module in a"
+	echo "        run built with it, so its media-only readings did not run"
+	fail=$((fail + 1))
 elif [ "${sf:-0}" -ne 0 ]; then
 	echo "  FAIL  the seek exerciser answered wrongly on a live mount:"
 	printf '%s\n' "$out" | sed -n 's/^seek-fail /        /p' | head -6
