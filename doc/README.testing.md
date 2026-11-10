@@ -783,12 +783,15 @@ names beside the dirty one, is asked the unsynced file's five questions;
 a walk skipping data chains a flush has not cleared fails all five. Four
 more shapes are asked in that state, a block that does not compress, an
 indirect block made in memory, a filled hole beside a punched block and a
-page written into a hole, each with FIEMAP's coverage and, on a
-`HAMMER2_LOCKDEBUG` module, the `seek_media_only` parameter, which must
-change an answer: the run's own reading that no flush came first. 143
-checks in all on this port with `HAMMER2_LOCKDEBUG`; 124 on the host's
-`tmpfs`, which skips compression and has neither FIEMAP nor the
-parameter, and 101 on the guest's `tmpfs` and
+page written into a hole, each with FIEMAP's coverage. On a
+`HAMMER2_LOCKDEBUG` module the `seek_media_only` parameter, which skips
+the data chains a flush has not cleared, is the run's own reading that
+no flush came first: with it set the written-back file must have no data
+and each shape must answer the layout its last flush left, a block
+punched since reading as a hole. 144 checks in all on this port with
+`HAMMER2_LOCKDEBUG` and 139 without; 124 on the host's `tmpfs`, which
+skips compression and has neither FIEMAP nor the parameter, and 101 on
+the guest's `tmpfs` and
 `btrfs` before the 40-block file. On the module before the position was
 set, 46 of 112 failed, every one a position check; on a module whose scan
 stops after 16 chains, the two deep SEEK_HOLE answers and the concurrent
