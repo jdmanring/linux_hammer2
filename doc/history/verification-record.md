@@ -24518,10 +24518,24 @@ syncer's interval; the written-back state is driven below.
 
 The port's seek reads the page cache's dirty and writeback tags first
 and then walks the tree merging a parent's live children, so it answers
-both states from design. The dirty state has been probed since P1
-(`unsynced()`). The second had no probe: the exerciser asked a file
-dirty and after `fsync()`, which here flushes the chains under the inode
-(`hammer2_vop_fsync()`, `hammer2_vnops.c:1431-1472`).
+both states from design. The dirty state has been asked since P1
+(`unsynced()`) and answered from the tags since `10c9dc0`. The second
+was reached before this section by several routes, among them the
+following, none with a reading that no flush came between. From
+`9b0bc92` until `10c9dc0` the seek wrote a dirty file back from the
+offset's block to its end and waited before its scan, so its answers
+about a dirty file came from a tree in that state, as the code reads.
+Since `10c9dc0` `seekprobe wbrace` in `seek-matrix.sh`'s race mode
+writes one block back inside the seek's hold, and on the walk at
+`f09e415` the `nolive` control made its SEEK_HOLE wrong, which reads
+that a chain answered and not its flush flags (the sections "SEEK_DATA
+and SEEK_HOLE at scale, the page cache, FIEMAP and the remote scan" and
+"SEEK_DATA, SEEK_HOLE and FIEMAP walk the blockref arrays" above).
+`cluster-quorum.sh`'s Q3 seeks while a `sync` writes its file back.
+The exerciser itself asked about written data only while dirty or after
+`fsync()`, which here flushes the chains under the inode
+(`hammer2_vop_fsync()`, `hammer2_vnops.c:1431-1472`). What this section
+adds is a reading that no flush reached the file before it was asked.
 
 `written_back()` (`a1d71c5`) writes the file back with
 `sync_file_range()` waiting on both sides and asks the unsynced file's
