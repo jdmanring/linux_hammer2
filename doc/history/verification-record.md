@@ -24444,3 +24444,38 @@ failed in both, inferred to be EIO since only its exit status prints, so
 before `f28ef05` the split's error alone could have answered S2's fsync.
 Each run's six Q2 lines found their writeback held. No core
 (`seq31.log:5`).
+
+## A seek in the window upstream disabled FIOSEEKHOLE for, 2026-11-10
+
+DragonFly's `0d0182bdb451` (2025-11-18, read from the forge) disabled
+`FIOSEEKHOLE` because "certain portions of the hammer2 btree may not yet
+be synchronized even when the file buffers are synced", and it is still
+disabled at upstream's head, the only later commit to
+`hammer2_ioctl.c` being `c5cc81fefa`'s RECLUSTER fix. Upstream's seek
+was `vn_bmap_seekhole()`, which cleans the VM pages and asks
+`VOP_BMAP` a block at a time (`bd41e746e6`), so a block whose buffer the
+strategy write had not made a chain read as a hole, as did a file held
+in its inode, which P1 found here. The port's walk merges a parent's
+live children and reads the page cache's tags, but no probe had asked in
+the window the message names: the exerciser asked a file dirty and
+after `fsync()`, which here flushes the chains under the inode
+(`hammer2_vop_fsync()`, `hammer2_vnops.c:1431-1470`).
+
+`written_back()` (`a1d71c5`) writes the file back with
+`sync_file_range()` waiting on both sides and asks the unsynced file's
+five questions. On the host's `tmpfs` and `btrfs` its ten lines pass
+(`p7-notes/seekprobe-host/tmpfs.out`, `btrfs.out`; `btrfs` fails only
+the two negative-offset answers the unchanged exerciser fails there).
+seq33 on `h2debug-7.3tls` at `a1d71c5`: seek 131 checks, 0 failed
+(`seq33-s4.out:136-137`). The control skips, in
+`hammer2_xop_seek_walk()`, a data chain still carrying a flag a flush
+clears, leaving the media's blockrefs alone. A first control skipping
+only `MODIFIED` chains failed two of the five
+(`seq33-s4-control.out:15`, `:21`): block 2 holds the same bytes as
+block 0, and its write is deduplicated, which assigns the existing
+block and clears `MODIFIED` (`hammer2_chain.c:1570-1610`), so its live
+chain read as data. With `HAMMER2_CHAIN_FLUSH_MASK` the control fails
+exactly the five written-back probes and no other
+(`seq34-s4-control.out:15-18`, `:20`, `:134`): the probe reaches chains no
+flush has put on media, deduplicated ones among them, and the walk is
+what answers them. No core (`seq33.log`, `seq34.log`).
