@@ -13,7 +13,9 @@ inode number has no inode (dangling) and every inode no entry names
 counted.  An orphan that is a directory is the top of a subtree: the
 entries under it name their own inodes, so those read as named, and the
 count of inodes no walk from the PFS root reaches through entries is
-printed beside it as the size of what the orphans hold.  A directory's
+printed beside it: what the orphans hold, and any detached set that no
+entry outside it names, such as two directories naming each other.  A
+directory's
 entries are the dirent blockrefs nested under its inode in show's dump.
 An inode is known by its blockref key, which is its number on media this
 port and DragonFly 6.4 write; older media embed an inode in its

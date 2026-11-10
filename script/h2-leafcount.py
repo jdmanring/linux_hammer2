@@ -293,11 +293,13 @@ def selftest():
     # A blockref whose check fails, as show prints it under the blockref
     # line: show lists only its direct children and exits 0.
     failed = full[:2] + ["    (xxh xxhash64|none:default dfe7b7d89b7e2912/aa370e5c9d6509f3 failed) {\n"] + full[2:]
+    sha = full[:2] + ["    (sha192 sha192|none:default failed) {\n"] + full[2:]
     unknown = full[:2] + ["    (xxh xxhash64|unknown(7):default 0000000000000001/0000000000000002 failed) {\n"] + full[2:]
     for what, lines in (("an empty dump", []),
                         ("a flat dump", [l.lstrip() for l in full]),
                         ("a dump with a failed check", failed),
-                        ("a failed check under an unknown compression method", unknown)):
+                        ("a failed check under an unknown compression method", unknown),
+                        ("a failed sha192 check", sha)):
         try:
             read(lines, what)
             expect(False, "%s is refused" % what)
