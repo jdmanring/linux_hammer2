@@ -512,11 +512,12 @@ STOP_DEPTH_MS=${H2_STOP_DEPTH_MS:-240000}
 # and which round a stop lands in followed the speed of the cluster
 # unmount. A second round copies only what the first failed to verify;
 # after a first round that verified clean it still compares the whole set
-# (4.6 s on debug in seq27, 16.7 s on KASAN in seq28) but defers nothing,
-# so it never reads the stop, the teardown waits for it, and the pass ends
-# verified with no interrupted line. Whether the first round fails is
-# timing: seq25's KASAN runs failed one, seq27's and seq28's none.
-# H2_COLLAPSE=1 makes the round its scan ends in fail.
+# but defers nothing, so it never reads the stop, the teardown waits for
+# it, and the pass ends verified with no interrupted line (the record,
+# "A stop in the sync pass's second round", 2026-11-09). Whether the first
+# round fails is inferred to be timing: one KASAN module read "failed 1"
+# in seq25 and "failed 0" in seq28. H2_COLLAPSE=1 makes the round its
+# scan ends in fail.
 STOP_ROUND=${H2_STOP_ROUND:-0}
 # Phase 2b, the refused copy: how many allocations the freemap refuses
 # inside the thread's first pass (0 leaves the phase out). Needs
@@ -1497,7 +1498,7 @@ echo "h2probe: bigdir2 write end" > /dev/kmsg
 timeout 60 umount /mnt/h2c
 verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer clindex') + $(klog 'syncsnap: unverified') )); }
 copied() { grep -c 'syncthr: update inode' $K; }
-p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode'); r10=$(klog 'syncsnap: verify clindex 1 round 1 '); ir0=$(klog 'syncsnap: interrupted clindex')
+p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode'); r10=$(klog 'syncsnap: verify clindex 1 round 1 '); ir0=$(klog 'syncsnap: interrupted clindex'); db0=$(klog didbreak)
 # Set before the slave's device returns, so the knob is read by the copy.
 if [ "$H2_COLLAPSE" != 0 ]; then
 	[ -e /sys/module/hammer2/parameters/sync_collapse_parent ] || {
@@ -1598,7 +1599,7 @@ echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "interrupt-copied $(( $(copied) - u1 ))"
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
-echo "interrupt-didbreak $(klog didbreak)"
+echo "interrupt-didbreak $(( $(klog didbreak) - db0 ))"
 echo "interrupt-rounds $(awk -v n="$ir0" '/syncsnap: interrupted clindex/ { if (++c > n) v = $(NF - 2) } END { print v + 0 }' $K)"
 echo "interrupt-src-cleaned $(klog 'syncsnap: unmount deleted CL.h2sync-src error 0')"
 # The target the interrupted pass meant to keep is on the slave's media, read
@@ -2081,7 +2082,7 @@ m=$(val mutate-mount-rc); [ "${m:-1}" = 0 ] && [ "$(val mutate-in-pass)" = 0 ]; 
 # clean, and its second round, deferring nothing, ran to its end inside
 # the unmount). That line prints only from the snapshot pass, so the live
 # pass (H2_SYNC_SNAPSHOT=0) is read by in-pass alone.
-c=$(val interrupt-stop-copied | awk '{print $1}'); r=$(val interrupt-rounds); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ] && { [ "$H2SNAP" != 1 ] || [ "${r:-0}" -ge 1 ] 2>/dev/null; }; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass), interrupted in round ${r:-none}"
+c=$(val interrupt-stop-copied | awk '{print $1}'); r=$(val interrupt-rounds); [ "${c:-0}" -ge 1 ] 2>/dev/null && [ "$(val interrupt-in-pass)" = 0 ] && { [ "$H2SNAP" != 1 ] || [ "${r:-0}" -ge 1 ] 2>/dev/null; }; check "the stop lands inside the copy" $? "${c:-none} updates past the mutation of $(val interrupt-stop-copied | awk '{print $3}') wanted, in-pass rc $(val interrupt-in-pass)$([ "$H2SNAP" = 1 ] && echo ", interrupted in round ${r:-none}")"
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the device teardown waits for the pass to reach a stop point" $? "${ms:-0} ms"
 d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the thread reads the stop between deferrals" $? "${d:-none} didbreak"
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1 ] && [ "${a:-1}" = 0 ]; check "the device teardown stops the thread" $? "threads ${tb:-none} to ${a:-none}"
