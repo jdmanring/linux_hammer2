@@ -2759,7 +2759,7 @@ hammer2_writepages(struct address_space *mapping,
 			 * (hammer2_strategy_fill()).  On a failed fill the
 			 * folio and its siblings end their writeback with the
 			 * mapping's error, nothing is written, and a line
-			 * names the inode, as an element's failed write does.
+			 * names the inode, the error and the lbase.
 			 */
 			hammer2_gather_block(mapping, folio, &siblings);
 			held = hammer2_xop_order_lock(ip);

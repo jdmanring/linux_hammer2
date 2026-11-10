@@ -1468,13 +1468,13 @@ hammer2_strategy_fill_read(hammer2_inode_t *ip, hammer2_key_t lbase,
  * assembly sampled the folio and its siblings: a change there is a writer
  * the stable wait missed.  A clean folio copied unlocked may change under
  * the copy, and that writer dirties it and writes it again, so it is not
- * counted.  When a
- * slot below i_size has no uptodate folio the block is read through the
- * quorum first, so a block the masters disagree on fails the writeback
- * with EIO rather than taking one master's bytes; a block the page cache
- * holds whole is written as it is, which heals such a block with the
- * writer's bytes, as a whole-block folio does.  The rest is zeros.  The
- * caller holds the file's order for write across this and the write XOP.
+ * counted.  When a slot below i_size has no uptodate folio the block is
+ * read through the quorum first, so a block the masters disagree on fails
+ * the writeback with EIO rather than taking one master's bytes; a block
+ * the page cache holds whole is written as it is, which heals such a
+ * block with the writer's bytes, as a whole-block folio does.  The rest
+ * is zeros.  The caller holds the file's order for write across this and
+ * the write XOP.
  * Returns a HAMMER2_ERROR_ code.
  */
 int
