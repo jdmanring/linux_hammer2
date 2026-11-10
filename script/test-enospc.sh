@@ -132,7 +132,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	check "a KASAN report, which prints no cut-here line" \
 	    "BUG: KASAN: " \
 	    "3,1300,1,-;BUG: KASAN: slab-use-after-free in hammer2_chain_drop+0x5e/0x3a0 [hammer2]"
-	check "a UBSAN report, which prints no cut-here line" \
+	check "a UBSAN report's own line, printed after its cut-here line" \
 	    "UBSAN: " \
 	    "3,1301,1,-;UBSAN: shift-out-of-bounds in fs/hammer2/hammer2_chain.c:1234:20"
 	check "a kernel fault" \
@@ -897,11 +897,13 @@ out=$(ssh "$GUEST_SSH" '
 	# itself there, a DMA allocation in the USB host controller at boot,
 	# PID 1, untainted. A missing marker is COULD-NOT-RUN rather than a
 	# count from the start: counting the ring would fold every earlier
-	# run in this boot into this one. A KASAN or UBSAN report prints no
-	# cut-here line either, so on the sanitizer kernel this capture,
-	# not a dmesg of the ring afterwards, is what holds the whole run.
+	# run in this boot into this one. A KASAN report prints no cut-here
+	# line, so it is counted by its own; a UBSAN report prints one before
+	# its UBSAN line (lib/ubsan.c, ubsan_prologue()) and is counted by it,
+	# its own line shown below. On the sanitizer kernel this capture, not a
+	# dmesg of the ring afterwards, is what holds the whole run.
 	anchor=$(command grep -an "$(cat /tmp/h2mark)" /tmp/kmsg.log | tail -1 | cut -d: -f1)
-	w=$(tail -n +"${anchor:-0}" /tmp/kmsg.log | command grep -c "cut here\|page allocation failure\|BUG: KASAN: \|UBSAN: " || true)
+	w=$(tail -n +"${anchor:-0}" /tmp/kmsg.log | command grep -c "cut here\|page allocation failure\|BUG: KASAN: " || true)
 	if [ -n "$anchor" ]; then
 		echo "kernel warnings $w after the run marker $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "WARNING: .*\|BUG: KASAN: .*\|UBSAN: .*" | cut -c1-90)"
 	else
@@ -926,7 +928,7 @@ out=$(ssh "$GUEST_SSH" '
 	fi
 	if [ "$w" -gt 0 ]; then
 		echo "=== first warning begins"
-		tail -n +"${anchor:-1}" /tmp/kmsg.log | command sed -n "/cut here\|BUG: KASAN: \|UBSAN: /,+60p" | command sed "s/^[0-9,;]*;//" | command grep -v "^ SUBSYSTEM=\|^ DEVICE=\|Modules linked in" | head -60
+		tail -n +"${anchor:-1}" /tmp/kmsg.log | command sed -n "/cut here\|BUG: KASAN: /,+60p" | command sed "s/^[0-9,;]*;//" | command grep -v "^ SUBSYSTEM=\|^ DEVICE=\|Modules linked in" | head -60
 		echo "=== first warning ends"
 	fi
 	# Scoped to the oops. Taking the first match in the whole log reads
