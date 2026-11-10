@@ -24069,17 +24069,16 @@ are `S10`'s `d36` to `d39`; every other PFS on the image holds neither
 `SNAP1`. Each orphan is a whole directory, with entries under it whose
 inodes are on the media and reached through it alone: `0x616f` holds all
 200 of its files, and `S11`'s four hold 89, 200, 200 and 200, 689 inodes
-no walk from the root reaches
-(`p7-notes/dangling-20261109b.log:7-20`). So the sync wrote the root's
-entries, the old name gone and the new one in, and neither the old
-inode's removal from the index, nor, in four of the five orphans, any unlink of
-the old directory's own files (in `0xad98`, 111 of the 200 every
-directory is made with, `p7-notes/dfly-churn-guest.sh:5`, `:11-14`, had
-reached the media), nor the new inode's insertion: a snapshot taken at
-that sync keeps a name that does not open and a deleted directory's
-contents where no namespace walk reaches them, and the checkers of
-neither tree see either. A crash after that sync would mount
-the same state, read from the code, not run.
+no walk from the root reaches (`p7-notes/dangling-20261109b.log:7-20`).
+So the sync wrote the root's entries, the old name gone and the new one
+in, and neither the old inode's removal from the index, nor, in four of
+the five orphans, any unlink of the old directory's own files (in
+`0xad98`, 111 of the 200 each directory was made with,
+`dfly-churn-1.out:3`, had reached the media), nor the new inode's
+insertion: a snapshot taken at that sync keeps a name that does not open
+and a deleted directory's contents where no namespace walk reaches them,
+and the checkers of neither tree see either. A crash after that sync
+would mount the same state, read from the code, not run.
 
 seq27 ran the churn twice more on `h2release-7.3tls`, on modules built
 from `48113c1` and `95ab6c0` (`seq27-tree-1.out:1`, `-2.out:1`), whose
@@ -24092,10 +24091,11 @@ second holds the replaced directory named by nothing, `0xe2e1`, with its
 1000 entries (`:7-9`); the first holds the dangling name alone, 999999
 inodes for 1000000 entries (`:3-4`): there the old directory's removal
 and its files' unlinks reached the media, and the new directory by its
-name alone, neither its inode nor the 1000 files written under it
-(1001000 inodes and 1001000 entries in the second image, less 1001 and
-1000). The orphan half is 4 of the 5 snapshots read
-on media, not each one.
+name alone, neither its inode nor any entry or file under it (1001000
+inodes and 1001000 entries in the second image, less 1001 and 1000). How
+many of its files the churn had written when the snapshot was taken is
+not read. The orphan half is 4 of the 5 snapshots read on media, not
+each one.
 
 The candidate mechanism is read from the code and the same in both trees:
 `hammer2_inode_setdepend_locked()` sets `HAMMER2_TRANS_RESCAN` when an
