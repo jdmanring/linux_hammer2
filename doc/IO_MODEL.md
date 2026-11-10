@@ -353,7 +353,7 @@ and whether the quorum was read, so the count is read with the module's
 `dyndbg=+p` parameter, and the debug build counts fills and fill reads
 in `xop_fills` and `xop_fill_reads`.
 
-The assembly happens only where it is needed. A folio that is the
+The fill happens only where it is needed. A folio that is the
 whole block, which is every folio a write on a volume with room
 produces, is handed to the core as `folio_address()` and no scratch
 buffer is allocated for it: the copy into one was one of the two full

@@ -1836,8 +1836,8 @@ On a PFS with more than one voting element, `hammer2_write_begin()`
 therefore reads such a folio through `->read_folio` even when the write
 covers it, unless its whole block lies past the end of the file, so a
 write through a folio not yet uptodate into a disputed block fails. With
-one voting element the assembly is already the quorum's and nothing is
-read. Without that read, the 1.0.92 quorum runs measured a 4 KiB write
+one voting element that element's bytes are already the quorum's and
+nothing is read. Without that read, the 1.0.92 quorum runs measured a 4 KiB write
 into a disputed block, made after the failed reads had left page-sized
 folios, succeeding and leaving both masters at one new tid with their
 other 60 KiB still different.
