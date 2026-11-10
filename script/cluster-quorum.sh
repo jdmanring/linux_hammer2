@@ -411,6 +411,10 @@ echo 1 > $P/write_except
 dd if=/dev/urandom of=/mnt/h2q/heal bs=64k seek=1 count=2 conv=notrunc 2>/dev/null
 sync
 echo -1 > $P/write_except
+# The excepted element's failed writes left an error on the mapping that
+# no file has seen; a new open would be handed it, so it is reported
+# here and the fsync below reads only the fill's.
+xfs_io -c fsync /mnt/h2q/heal > /tmp/s2.drain 2>&1; sd=$?
 hshow "vote s2split"
 f0=$(fc xop_fills); r0=$(fc xop_fill_reads)
 dd if=/dev/urandom of=/mnt/h2q/heal bs=4k seek=17 count=1 conv=notrunc 2>/dev/null
@@ -419,7 +423,7 @@ sync
 f1=$(fc xop_fills); r1=$(fc xop_fill_reads)
 dd if=/dev/urandom of=/mnt/h2q/heal bs=4k seek=33 count=1 conv=notrunc 2>/dev/null
 echo 1 > /proc/sys/vm/drop_caches
-fl() { dmesg | grep -c "inode $(printf %016x "$hino") error"; }	# the failed fill's line
+fl() { dmesg | grep -c "inode $(printf %016x "$hino") error [0-9a-f]* at lbase 0000000000020000"; }	# the failed fill's line, block 2
 l0=$(fl)
 xfs_io -c fsync /mnt/h2q/heal > /tmp/s2.err 2>&1; s=$?
 l1=$(fl)
@@ -431,7 +435,7 @@ echo 3 > /proc/sys/vm/drop_caches
 dd if=/mnt/h2q/heal of=/tmp/s2.got bs=64k skip=1 count=1 2>/dev/null
 same=0; [ "$(wc -c < /tmp/s2.want)" = 65536 ] && cmp -s /tmp/s2.want /tmp/s2.got && same=1
 echo "vote s2heal fills $f0 $f1 reads $r0 $r1 same $same"
-echo "vote s2eio exit $s eio $(grep -c 'Input/output error' /tmp/s2.err) reads $r1 $r2 lines $l0 $l1"
+echo "vote s2eio exit $s eio $(grep -c 'Input/output error' /tmp/s2.err) reads $r1 $r2 lines $l0 $l1 drain $sd"
 rm -f /mnt/h2q/heal; sync
 # Q1. A writeback beside the seek and the map. xop_gap_ms holds the
 # strategy write between the first master and the second with the order
@@ -922,7 +926,7 @@ if [ "$QVOTE" = 1 ]; then
 		[ -n "$aa1" ] && [ "$aa1" = "$ab1" ] && [ "$8" = 1 ] &&
 		    moved "$2" "$3" && [ "$6" = "$5" ]
 		check "S2 a 4 KiB write into a block the masters disagree on, every page cached, writes the cached block to both: one tid and check, read back as cached, no quorum read" $? "block 1 after ${aa1:-absent} / ${ab1:-absent}, ${x:-no line}"
-		y=$(vote s2eio); set -- $y	# exit s eio n reads r1 r2 lines l0 l1
+		y=$(vote s2eio); set -- $y	# exit s eio n reads r1 r2 lines l0 l1 drain d
 		[ "${4:-0}" -ge 1 ] 2>/dev/null && moved "$6" "$7" && moved "$9" "${10}" &&
 		    [ "$aa2" = "$sa2" ] && [ "$ab2" = "$sb2" ]
 		check "S2 the same write with the block's clean pages dropped reads it through the quorum and fails fsync EIO with the fill's line printed, both masters keeping their block" $? "block 2 ${sa2}/${sb2} before, ${aa2:-absent}/${ab2:-absent} after, ${y:-no line}"
@@ -949,15 +953,22 @@ if [ "$QVOTE" = 1 ]; then
 	# from the page cache would answer with no rerun, which the delta
 	# catches. With the order out the read and the write fail EIO, and
 	# FIBMAP, which has no error to return, reports the block unmapped.
+	# A sync that exits before the gap ends was not held, so the call had
+	# no window to meet: that arm is COULD-NOT-RUN rather than a reading.
+	unheld() { ym=$(vf "$1" sync-ms); [ -n "$ym" ] && [ "$ym" -lt "$QGAP" ] 2>/dev/null &&
+	    cnr="${cnr:+$cnr; }$1's writeback was not held (sync-ms $ym, gap $QGAP)"; }
 	for k in read fibmap pwrite; do
 		x=$(vote "q20-$k")
-		s=$(vf q20-$k exit); e=$(vf q20-$k eio); r=$(vf q20-$k reruns); m=$(vf q20-$k ms); sm=$(vf q20-$k same); f=$(vf q20-$k final); wr=$(vf q20-$k wrote)
-		ok=1
-		[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$f" = 1 ] && ok=0
-		case $k in read) [ "$sm" = 1 ] || ok=1 ;; pwrite) [ "$wr" = 1 ] || ok=1 ;; fibmap) [ "$(vf q20-$k ext)" = 1 ] || ok=1 ;; esac
-		check "Q2 $k beside a writeback held between the masters reruns under the order and answers" $ok "${x:-no line} (want exit 0, eio 0, reruns at least 1, ms at least $((QGAP - QDELAY)), final 1)"
+		if unheld "q20-$k"; then :; else
+			s=$(vf q20-$k exit); e=$(vf q20-$k eio); r=$(vf q20-$k reruns); m=$(vf q20-$k ms); sm=$(vf q20-$k same); f=$(vf q20-$k final); wr=$(vf q20-$k wrote)
+			ok=1
+			[ "$s" = 0 ] && [ "$e" = 0 ] && [ "${r:-0}" -ge 1 ] 2>/dev/null && [ "${m:-0}" -ge $((QGAP - QDELAY)) ] 2>/dev/null && [ "$f" = 1 ] && ok=0
+			case $k in read) [ "$sm" = 1 ] || ok=1 ;; pwrite) [ "$wr" = 1 ] || ok=1 ;; fibmap) [ "$(vf q20-$k ext)" = 1 ] || ok=1 ;; esac
+			check "Q2 $k beside a writeback held between the masters reruns under the order and answers" $ok "${x:-no line} (want exit 0, eio 0, reruns at least 1, ms at least $((QGAP - QDELAY)), final 1)"
+		fi
 		x=$(vote "q21-$k"); e=$(vf q21-$k eio); r=$(vf q21-$k reruns)
-		if [ $k = fibmap ]; then
+		if unheld "q21-$k"; then :
+		elif [ $k = fibmap ]; then
 			[ "${r:-0}" -ge 1 ] 2>/dev/null && [ "$(vf q21-$k ext)" = 0 ]
 			check "Q2 fibmap with xop_order_off reports the block unmapped in the held window, so the call met it" $? "${x:-no line} (want reruns at least 1, ext 0)"
 		else
