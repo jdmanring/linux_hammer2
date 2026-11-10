@@ -778,11 +778,17 @@ after a success, with one `read()` there matching `pread()`, and must still
 be the sentinel after `ENXIO`; a two-descriptor case follows, and a file
 of 40 data blocks, a hole and one more, whose SEEK_HOLE answers drain and
 refill the scan's 16-chain feed. A file written back with
-`sync_file_range()` and not flushed, the window DragonFly disabled
-`FIOSEEKHOLE` for in `0d0182bdb4`, is asked the unsynced file's five
-questions; a walk skipping data chains a flush has not cleared fails all
-five. 131 checks in all on this port; 120 on the host's `tmpfs`, which
-skips compression, and 101 on the guest's `tmpfs` and
+`sync_file_range()` and not flushed, the state `0d0182bdb4`'s message
+names beside the dirty one, is asked the unsynced file's five questions;
+a walk skipping data chains a flush has not cleared fails all five. Four
+more shapes are asked in that state, a block that does not compress, an
+indirect block made in memory, a filled hole beside a punched block and a
+page written into a hole, each with FIEMAP's coverage and, on a
+`HAMMER2_LOCKDEBUG` module, the `seek_media_only` parameter, which must
+change an answer: the run's own reading that no flush came first. 143
+checks in all on this port with `HAMMER2_LOCKDEBUG`; 124 on the host's
+`tmpfs`, which skips compression and has neither FIEMAP nor the
+parameter, and 101 on the guest's `tmpfs` and
 `btrfs` before the 40-block file. On the module before the position was
 set, 46 of 112 failed, every one a position check; on a module whose scan
 stops after 16 chains, the two deep SEEK_HOLE answers and the concurrent
