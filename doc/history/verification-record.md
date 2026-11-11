@@ -24634,3 +24634,66 @@ core (`seq36.log:1`, `:20`). The outputs of seq35 and seq36,
 its file name carry the hashes `aabc483` and `57abcb2` had before rounds
 22 and 23 reworded messages, the trees unchanged; the branch
 `pre-r22-rewrite` keeps those.
+
+## Compatibility and the fleet at HEAD, 2026-11-11
+
+The crash matrix and `cut-flush.sh` were last recorded on 2026-10-14,
+two hundred `src/` commits before `efa09a6`, and the round trip's newest
+run was on C3's tree on 2026-11-09 (`seq25-f4-fill.out`). Every fleet harness that reads the write path was
+run again at `efa09a6`, on `h2debug-7.3tls` with `KDIR` the 7.3 TLS
+tree, each from a frozen copy in a clean checkout
+(`linux_hammer2-data/ctl/h1`); the wrappers are `p7-notes/seq37.sh`
+to `seq40.sh`, and QEMU cores read 0 before and after each.
+
+The crash matrix, both ports writing, five cells, two runs each: nine
+cells agree in both runs with every verdict ok, the torn cells reporting
+the torn zone as designed (`seq37-crash.out:426-435`), and the summary
+reads 0 failures and one cell that never reached its condition (`:436`).
+That cell is the FreeBSD writer's sync cell, which misses by design
+(above, 2026-10-14: FreeBSD's sync path has no task in D state for the
+detector to see); its power was cut regardless and both recoveries were
+clean. Both runs of this port's sync cell cut power with the detector
+holding `in-sync D sync` (`:382`, `:404`). `cut-flush.sh`: DragonFly cut
+off after 25 s of writing, this port recovered it with 0 unreadable
+(`seq37-cut.out:6`), DragonFly's fsck clean on both copies (`:15`,
+`:17`), and with the header's `freemap_tid` lowered by four the replay
+ran, `hammer2_recovery: freemap recovery 000000000000009e-00000000000000a1`
+(`:21`), with DragonFly's fsck clean after it (`:32`); 0 failures
+(`:33`).
+
+The round trip read 0 failures in both directions (`seq38-f4.out:18`),
+three PFS roots and a snapshot mounted by label on both sides 0
+(`seq38-pfs.out:30`), bulkfree 0 (`seq38-bulkfree.out:30`),
+`sync-empty-base.sh` 18 checks 0 failed (`seq38-sync-empty.out:23`),
+`root-boot.sh` two boots and a control 0 (`seq38-rootboot.out:24`),
+`seek-matrix.sh` 31 checks 0 (`seq40-seekm.out:42`) and its race mode
+0 (`seq40-seekm-race.out:39`), `ccms-lockdep.sh` 7 checks 0 over 60 s
+(`seq40-ccms.out:8`), and `storm.sh` one cycle over eight files 0, with
+2053 cell checks and fsck clean (`seq40-storm.out:33`). `fuzz-mount.sh`
+seed 1 read 40 of 50 images mounted, 10 refused and 0 faults, hangs or
+kernel reports, read-only and written (`seq40-fuzz.out:3`,
+`seq40-fuzz-write.out:3`); the written run's 30 images that refused a
+write are the count of the mode's first run (above).
+
+`hpanic-contain.sh` exited 0 whatever it read: it printed its readings
+and ended with `echo done`. The knob-2 run and its control were read by
+hand from their lines, files synced before the fault 20 and after it 0,
+the control's after-files 20, the host's fsck clean in both
+(`seq38-hpanic.out`, `seq38-hpanic-ctl.out`). `893134c` makes it judge
+each mode and exit 1 on a wrong reading. The judge, replayed over those
+two outputs, passes each in its own mode and fails each in the other's
+(`hpanic-judge-replay.sh`); run, it read knob 2 5 checks 0 failed
+(`seq40-hpanic2.out:47`), the acceptance mode 8 and 0
+(`seq39-hpanic3.out:22`) and its control 5 and 0
+(`seq39-hpanic3-ctl.out:17`). No other fleet script lacks a failing
+exit: `fuzz-mount.sh`, `latency.sh` and `test-shim.sh` end on a test of
+their failure count, and `guest-dmesg.sh` and `uninstall.sh` give no
+verdict.
+
+Not read here. `seek-matrix.sh`, `fuzz-mount.sh` and the guest-up group
+first exited 2 in seq38 for the wrapper's own reasons (the guest's state,
+and an `on()` that returned the loop's last test), and were run again in
+seq40; the two `sync-*-fault.sh` exit 2 on any tree without fault
+injection and `nfsd-export.sh` on any without `CONFIG_NFSD`, so they run
+on the KASAN build and on an nfsd build respectively. `dfly-enospc.sh`
+fills a volume on DragonFly and reads no code of this port.
