@@ -562,6 +562,12 @@ NARROW=${H2_SYNC_NARROW:-0}
 # which compares every root key, puts it back.
 NARROW_ALTER=${H2_NARROW_ALTER:-0}
 COLLAPSE=${H2_COLLAPSE:-0}
+# H2_COLLAPSE_LATE=1 writes that knob only once the copy has gone the stop
+# depth past the mutation, so the round it fails is one that has copied the
+# marked set; with H2_STOP_ROUND=2 the stop then lands in the second round
+# after a first that copied the set, the shape whose teardown scrapped the
+# copy in two KASAN runs on 2026-11-09, without waiting on timing.
+COLLAPSE_LATE=${H2_COLLAPSE_LATE:-0}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
 # _replace() and _destroy(), one line per chain the thread writes, which
@@ -623,6 +629,10 @@ if [ "$NARROW" = 1 ] && { [ "$TREE" = 0 ] || [ "$WALKS" = 0 ] || { [ "$LOCKDEBUG
 fi
 case $COLLAPSE in 0|1|2) ;; *)
 	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE is 0, 1 or 2" >&2; exit 2 ;;
+esac
+case $COLLAPSE_LATE in 0) ;; 1) [ "$COLLAPSE" != 0 ] || {
+	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE_LATE=1 needs H2_COLLAPSE=1 or 2" >&2; exit 2; } ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE_LATE is 0 or 1" >&2; exit 2 ;;
 esac
 if [ "$COLLAPSE" != 0 ] && { [ "$TREE" != 0 ] || { [ "$LOCKDEBUG" != 1 ] && [ -z "${H2_KO:-}" ]; }; }; then
 	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE needs the default shape, not H2_PASS_TREE, and H2_LOCKDEBUG=1 (or an H2_KO built with it)" >&2
@@ -1515,11 +1525,12 @@ timeout 60 umount /mnt/h2c
 verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer clindex') + $(klog 'syncsnap: unverified') )); }
 copied() { grep -c 'syncthr: update inode' $K; }
 p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode'); r10=$(klog 'syncsnap: verify clindex 1 round 1 '); ir0=$(klog 'syncsnap: interrupted clindex'); db0=$(klog didbreak)
-# Set before the slave's device returns, so the knob is read by the copy.
+# Set before the slave's device returns, so the knob is read by the copy;
+# under H2_COLLAPSE_LATE=1 it is written in the stop's wait instead.
 if [ "$H2_COLLAPSE" != 0 ]; then
 	[ -e /sys/module/hammer2/parameters/sync_collapse_parent ] || {
 		echo "cluster: COULD-NOT-RUN: no sync_collapse_parent knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
-	echo "$H2_COLLAPSE" > /sys/module/hammer2/parameters/sync_collapse_parent
+	[ "$H2_COLLAPSE_LATE" = 1 ] || echo "$H2_COLLAPSE" > /sys/module/hammer2/parameters/sync_collapse_parent
 fi
 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
 echo "backlog-threads-up $(ps -eo comm | grep -c '^h2nod-CL')"
@@ -1597,7 +1608,12 @@ STOP_DEPTH=${H2_STOP_DEPTH:-0}
 # The bound is wall time: counting 50 ms polls made the 240000 default
 # 12000 s, which only a run whose pass never copies reaches.
 t0=$(date +%s)
+armed_at=
 while [ $(( ($(date +%s) - t0) * 1000 )) -lt "${H2_STOP_DEPTH_MS:-240000}" ]; do
+	if [ "$H2_COLLAPSE_LATE" = 1 ] && [ -z "$armed_at" ] && [ $(( $(copied) - u1 )) -ge "$STOP_DEPTH" ]; then
+		echo "$H2_COLLAPSE" > /sys/module/hammer2/parameters/sync_collapse_parent
+		armed_at=$(( $(copied) - u1 ))
+	fi
 	if [ "$H2_STOP_ROUND" = 2 ]; then
 		[ "$(klog 'syncsnap: verify clindex 1 round 1 ')" -gt "$r10" ] && break
 	else
@@ -1607,6 +1623,7 @@ while [ $(( ($(date +%s) - t0) * 1000 )) -lt "${H2_STOP_DEPTH_MS:-240000}" ]; do
 	sleep 0.05
 done
 echo "interrupt-stop-copied $(( $(copied) - u1 )) wanted $STOP_DEPTH after $(( $(date +%s) - t0 )) s"
+[ "$H2_COLLAPSE_LATE" = 1 ] && echo "collapse-late-armed-at ${armed_at:-never}"
 echo "interrupt-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
 timeout 60 umount /mnt/h2c
@@ -1737,7 +1754,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_STOP_ROUND=$STOP_ROUND H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
+GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_STOP_ROUND=$STOP_ROUND H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE H2_COLLAPSE_LATE=$COLLAPSE_LATE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
@@ -2099,6 +2116,9 @@ b=$(val interrupt-begun); [ "$b" = 0 ]; check "the thread's copy of the backlog 
 i=$(val backlog-inserts); [ "${i:-0}" -ge "$NBIG2" ] 2>/dev/null; check "the backlog is the thread's copy, not the frontend's" $? "${i:-none} file-key inserts for $NBIG2 files; the step-2 runs read 64 to 70 over a whole run"
 if [ "$COLLAPSE" != 0 ]; then
 	a=$(val collapse-done); [ "${a:-0}" = 1 ]; check "an insert's parent is collapsed once on demand" $? "${a:-none} collapse(s), knob left at $(val collapse-knob-left)"
+	if [ "$COLLAPSE_LATE" = 1 ]; then
+		a=$(val collapse-late-armed-at); [ "${a:-never}" != never ]; check "the knob is armed only once the copy has gone the stop depth" $? "armed at ${a:-no line} of $(val interrupt-stop-copied | awk '{print $3}') wanted"
+	fi
 	a=$(val collapse-guard); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the scan ends on its deleted parent" $? "${a:-none} line(s)"
 	a=$(val collapse-round-failed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the round that scan ended in does not verify" $? "${a:-none} failure(s) in that round"
 else
