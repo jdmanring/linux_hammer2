@@ -977,9 +977,24 @@ again:
  * with the flags cleared and no children left the drop frees it and
  * removes it from parent's tree.  A chain still referenced by someone is
  * left alone rather than looped on.
+ *
+ * Each chain's line is rate-limited, so the lines alone cap a count at
+ * the burst: two teardowns that scrapped thousands of inodes printed ten
+ * lines each and no "suppressed" line, since that prints only on a later
+ * call.  sc counts every chain scrapped, and the caller prints the count
+ * once, unlimited.
  */
+struct hammer2_scrap_count {
+	int		inode;
+	int		indirect;
+	int		data;
+	int		other;
+	hammer2_key_t	ilo;
+	hammer2_key_t	ihi;
+};
+
 static void
-hammer2_unmount_scrap(hammer2_chain_t *parent)
+hammer2_unmount_scrap(hammer2_chain_t *parent, struct hammer2_scrap_count *sc)
 {
 	hammer2_chain_t *chain, *next;
 
@@ -991,7 +1006,25 @@ hammer2_unmount_scrap(hammer2_chain_t *parent)
 		hammer2_chain_ref(chain);
 		hammer2_spin_unex(&parent->core.spin);
 
-		hammer2_unmount_scrap(chain);
+		hammer2_unmount_scrap(chain, sc);
+		switch (chain->bref.type) {
+		case HAMMER2_BREF_TYPE_INODE:
+			++sc->inode;
+			if (chain->bref.key < sc->ilo)
+				sc->ilo = chain->bref.key;
+			if (chain->bref.key > sc->ihi)
+				sc->ihi = chain->bref.key;
+			break;
+		case HAMMER2_BREF_TYPE_INDIRECT:
+			++sc->indirect;
+			break;
+		case HAMMER2_BREF_TYPE_DATA:
+			++sc->data;
+			break;
+		default:
+			++sc->other;
+			break;
+		}
 		hprintf("scrapping unflushed %s %016llx/%d flags %08x\n",
 		    hammer2_breftype_to_str(chain->bref.type),
 		    (long long)chain->bref.key, chain->bref.keybits,
@@ -2966,8 +2999,17 @@ again:
 	 * bottom-up here and say what is lost: nothing in them reached
 	 * the disk, and the fill's writers were told so at the time.
 	 */
-	hammer2_unmount_scrap(&hmp->vchain);
-	hammer2_unmount_scrap(&hmp->fchain);
+	{
+		struct hammer2_scrap_count sc = { .ilo = HAMMER2_KEY_MAX };
+
+		hammer2_unmount_scrap(&hmp->vchain, &sc);
+		hammer2_unmount_scrap(&hmp->fchain, &sc);
+		hprintf_each("unmount scrapped %d chain(s): %d inode %d indirect %d data %d other, inode keys %016llx-%016llx\n",
+		    sc.inode + sc.indirect + sc.data + sc.other, sc.inode,
+		    sc.indirect, sc.data, sc.other,
+		    (unsigned long long)(sc.inode ? sc.ilo : 0),
+		    (unsigned long long)sc.ihi);
+	}
 
 #ifdef HAMMER2_INVARIANTS
 	hammer2_dump_chain(&hmp->vchain, 0, 0, -1, 'v');

@@ -62,7 +62,7 @@ set -u
 # banner spelled from memory. Each print a reading counts is declared once
 # below as a sample line, copied from a kept klog where a run has printed
 # it, and a sample marked f must match, whole, a format string of a
-# kprintf or hprintf under src/sys/fs/hammer2 outside a comment, with each
+# kprintf, hprintf or hprintf_each under src/sys/fs/hammer2 outside a comment, with each
 # conversion read as the text it prints, so a word after a conversion is
 # checked as well as one before it (a kernel line or this script's own
 # echo is checked where it comes from; a reading keyed on a function's
@@ -104,9 +104,9 @@ if [ "${1:-}" = "--selftest" ]; then
 	    d == 1 && /^#[ \t]*(else|elif)/ { d = 0; next } !d' "$src"/*.c |
 	    command sed 's/\x01//g' | tr '\n' '\001' |
 	    command sed -E 's:/\*([^*]|\*+[^*/])*\*+/::g; s://[^\x01]*::g' | tr '\001' ' ' |
-	    command grep -oE 'printf\(("([^"\\]|\\.)*"[[:space:]]*)+' |
+	    command grep -oE 'printf(_each)?\(("([^"\\]|\\.)*"[[:space:]]*)+' |
 	    awk '{
-		s = $0; sub(/^printf\(/, "", s); gsub(/"[[:space:]]*"/, "", s)
+		s = $0; sub(/^printf(_each)?\(/, "", s); gsub(/"[[:space:]]*"/, "", s)
 		sub(/^"/, "", s); sub(/"[[:space:]]*$/, "", s)
 		r = ""; lit = ""
 		for (i = 1; i <= length(s); i++) {
@@ -229,13 +229,10 @@ if [ "${1:-}" = "--selftest" ]; then
 	# Built from the format: the lead hprintf prints under HAMMER2_INVARIANTS,
 	# which no kept run has printed.
 	sample 'f' '[  886.179769] hammer2: hammer2_unmount_scrap(umount|1234): scrapping unflushed indirect 8000000000000000/62 flags 00046102'
-	sample k '[  576.057410] hammer2_unmount_scrap: 22201 callbacks suppressed'
-	# The scrap count's suppressed lines key on the function's name, which
-	# the ratelimit's line carries and no format does, so the print must be
-	# in that function.
-	F=hammer2_unmount_scrap awk 'BEGIN { f = ENVIRON["F"] } index($0, f "(") == 1 { in_f = 1 }
-	    in_f && /printf\("scrapping unflushed / { n++ } in_f && /^}/ { in_f = 0 } END { exit !n }' "$src"/*.c ||
-	    bad "no hprintf \"scrapping unflushed\" inside hammer2_unmount_scrap() in $src"
+	# Built from the format: no kept run has printed it yet.
+	sample 'f' '[  886.200000] hammer2: hammer2_unmount_helper: unmount scrapped 5130 chain(s): 5110 inode 20 indirect 0 data 0 other, inode keys 0000000000006600-0000000000007cff'
+	grep -q 'hprintf_each("unmount scrapped %d chain' "$src"/hammer2_vfsops.c ||
+	    bad "no unlimited \"unmount scrapped\" summary in $src/hammer2_vfsops.c"
 	sample k '[   40.907752] WARNING: possible circular locking dependency detected'
 	sample k '[43173.515795] WARNING: drivers/gpu/drm/drm_atomic_helper.c:1927 at drm_atomic_helper_wait_for_vblanks.part.0+0x22e/0x270, CPU#4: kworker/4:2/6661'
 	sample k '[25202.064358] WARNING: possible recursive locking detected'
@@ -278,8 +275,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	pat g 'syncsnap: unmount deleted CL.h2sync-src error 0' 1
 	pat g 'syncsnap: narrow alter destroyed [0-9a-f]* error 0$' 1
 	pat g 'syncthr: rescan all' 1
-	pat g 'scrapping unflushed' 2
-	pat g 'unmount_scrap: [0-9]* callbacks suppressed' 1
+	pat g 'unmount scrapped [0-9]* chain' 1
 	pat g 'WARNING.*drivers/gpu/drm/' 1
 	pat g 'drivers/gpu/drm/' 1
 	pat E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' 5
@@ -862,9 +858,13 @@ finish() {
 	timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
 	echo "cluster-umount ok"
 	echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
-	# The scrap print is rate-limited, so the lines under-read it: one run
-	# printed 20 and "22201 callbacks suppressed" (2026-10-18). Both counted.
-	echo "scrapped $(( $(grep -c 'scrapping unflushed' $K) + $(grep 'unmount_scrap: [0-9]* callbacks suppressed' $K | awk '{s += $(NF-2)} END {print s + 0}') ))"
+	# The per-chain scrap print is rate-limited, so its lines cap a count at
+	# the burst: two KASAN runs on 2026-11-09 printed ten each for thousands
+	# scrapped, with no "suppressed" line, which prints only on a later call.
+	# Every teardown prints one unlimited summary, which is the count; a run
+	# with no summary line read nothing and cannot pass as zero.
+	echo "scrapped $(grep -o 'unmount scrapped [0-9]* chain' $K | awk '{s += $3} END {print s + 0}')"
+	echo "scrap-summaries $(grep -c 'unmount scrapped [0-9]* chain' $K)"
 	# The guest's virtual GPU times out waiting for a vblank under a heavy
 	# write (drm_vblank.c and drm_atomic_helper.c WARNINGs, two in one run on
 	# 2026-10-18), which is the guest's and not the port's. Those lines name
@@ -2217,7 +2217,7 @@ fi
 e=$(val resume-errors); [ "${e:-1}" = 0 ]; check "no pass reports an error across the interruption" $? "${e:-none}"
 fi
 echo "  raw   space start=$(val space-start) end=$(val space-end) after-bulkfree=$(val space-after-bulkfree) bulkfree-rc=$(val space-bulkfree-rc-1)/$(val space-bulkfree-rc-2) free blocks of the master's device, snapshot passes $(val snap-passes)"
-s=$(val scrapped); [ "${s:-1}" = 0 ]; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped"
+s=$(val scrapped); n=$(val scrap-summaries); [ "${s:-1}" = 0 ] && [ "${n:-0}" -ge 1 ] 2>/dev/null; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped, ${n:-no} teardown summaries"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
 if [ "$want_asan" = y ]; then
 	[ "${have_asan:-0}" -gt 0 ] 2>/dev/null

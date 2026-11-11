@@ -725,7 +725,10 @@ elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kern
 	echo "kmemleak-unloaded $h2n"
 	[ "$h2n" = 0 ] || sed 's/^/kmemleak-unloaded-report /' /sys/kernel/debug/kmemleak | head -200
 fi
-echo "scrapped $(dmesg | grep -c unmount_scrap)"
+# The per-chain scrap line is rate-limited and caps at its burst; each
+# teardown's unlimited summary is the count, and a run with none read nothing.
+echo "scrapped $(dmesg | grep -o 'unmount scrapped [0-9]* chain' | awk '{s += $3} END {print s + 0}')"
+echo "scrap-summaries $(dmesg | grep -c 'unmount scrapped [0-9]* chain')"
 dmesg | tail -40 > /tmp/q.log
 dmesg > /tmp/q.klog
 GUEST
@@ -1076,7 +1079,7 @@ if [ "$QVOTE" = 1 ]; then
 fi
 grep -q '^cluster-umount ok' "$W/out"; check "the cluster unmounts" $? "$(grep -c '^cluster-umount ok' "$W/out") of 1"
 a=$(val threads-after); [ "${a:-1}" = 0 ]; check "no thread is left" $? "${a:-none}"
-a=$(val scrapped); [ "${a:-1}" = 0 ]; check "nothing is scrapped unwritten" $? "${a:-none} chain(s) scrapped"
+a=$(val scrapped); n=$(val scrap-summaries); [ "${a:-1}" = 0 ] && [ "${n:-0}" -ge 1 ] 2>/dev/null; check "nothing is scrapped unwritten" $? "${a:-none} chain(s) scrapped, ${n:-no} teardown summaries"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
 if [ "$want_asan" = y ]; then
 	[ "${have_asan:-0}" -gt 0 ] 2>/dev/null
