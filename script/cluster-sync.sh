@@ -2115,6 +2115,18 @@ c=$(val interrupt-stop-copied | awk '{print $1}'); r=$(val interrupt-rounds); [ 
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the device teardown waits for the pass to reach a stop point" $? "${ms:-0} ms"
 d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the thread reads the stop between deferrals" $? "${d:-none} didbreak"
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1 ] && [ "${a:-1}" = 0 ]; check "the device teardown stops the thread" $? "threads ${tb:-none} to ${a:-none}"
+# The marked-set checks read what the interrupted pass wrote of the set,
+# which needs the pass to have reached it. The default stop depth is chosen
+# so it has; H2_STOP_ROUND=2 stops on round 1's verify line instead, and
+# seq29's four runs stopped 1001 updates past the mutation of 11000 wanted,
+# before the set, where mark-old 0 reads no copy rather than a lost one
+# (2026-11-11). Short of the depth, the marked-set reading is void.
+mvoid=
+if [ "$STOP_ROUND" = 2 ]; then
+	mc=$(val interrupt-stop-copied | awk '{print $1}'); mw=$(val interrupt-stop-copied | awk '{print $3}')
+	[ "${mc:-0}" -ge "${mw:-1}" ] 2>/dev/null ||
+	    mvoid="the stop came ${mc:-no} update(s) past the mutation of ${mw:-no} wanted, before the pass reached the marked set"
+fi
 if [ "$H2SNAP" = 1 ]; then
 	a=$(val pass-src-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot is a listed PFS on the master's device while the pass runs" $? "${a:-none} .h2sync-src listed"
 	a=$(val pass-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the target snapshot is a listed PFS on the slave's device while the pass runs" $? "${a:-none} .h2sync-tgt listed"
@@ -2122,10 +2134,12 @@ if [ "$H2SNAP" = 1 ]; then
 	[ "${H2_CRASH:-0}" = 1 ] || { a=$(val interrupt-tgt-on-media); [ "${a:-0}" = 1 ]; check "the interrupted pass's target snapshot survives on the slave's media" $? "${a:-none} .h2sync-tgt root(s) on /dev/vdc" ; }
 	a=$(val resume-tgt-kept); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the resumed thread finds the kept target by name" $? "${a:-none} kept"
 	a=$(val resume-tgt-listed); [ "${a:-1}" = 0 ]; check "the target is deleted once the resumed pass verifies" $? "${a:-none} listed after the settle"
-	[ "${H2_CRASH:-0}" = 1 ] || { o=$(val interrupt-mark-old); w=$(val interrupt-mark-new); [ "${o:-0}" -ge 10 ] 2>/dev/null && [ "${w:-1}" = 0 ]; check "the interrupted pass wrote the snapshot's state of the marked set, not the live master's" $? "${o:-none} line(s) of the ten deleted files on the slave's media, ${w:-none} of the ten written; kept $(val mutate-kept)" ; }
+	[ "${H2_CRASH:-0}" = 1 ] || [ -z "$mvoid" ] || cnr="${cnr:+$cnr; }the marked set: $mvoid"
+	[ "${H2_CRASH:-0}" = 1 ] || [ -n "$mvoid" ] || { o=$(val interrupt-mark-old); w=$(val interrupt-mark-new); [ "${o:-0}" -ge 10 ] 2>/dev/null && [ "${w:-1}" = 0 ]; check "the interrupted pass wrote the snapshot's state of the marked set, not the live master's" $? "${o:-none} line(s) of the ten deleted files on the slave's media, ${w:-none} of the ten written; kept $(val mutate-kept)" ; }
 else
 	a=$(val pass-src-listed); b=$(val pass-tgt-listed); [ "${a:-1}" = 0 ] && [ "${b:-1}" = 0 ]; check "the live pass takes no snapshot" $? "${a:-none} src, ${b:-none} tgt listed"
-	[ "${H2_CRASH:-0}" = 1 ] || { o=$(val interrupt-mark-old); w=$(val interrupt-mark-new); [ "${o:-1}" = 0 ] && [ "${w:-0}" -ge 10 ] 2>/dev/null; check "the live pass wrote the master's state of the marked set as it found it" $? "${o:-none} line(s) of the ten deleted files on the slave's media, ${w:-none} of the ten written" ; }
+	[ "${H2_CRASH:-0}" = 1 ] || [ -z "$mvoid" ] || cnr="${cnr:+$cnr; }the marked set: $mvoid"
+	[ "${H2_CRASH:-0}" = 1 ] || [ -n "$mvoid" ] || { o=$(val interrupt-mark-old); w=$(val interrupt-mark-new); [ "${o:-1}" = 0 ] && [ "${w:-0}" -ge 10 ] 2>/dev/null; check "the live pass wrote the master's state of the marked set as it found it" $? "${o:-none} line(s) of the ten deleted files on the slave's media, ${w:-none} of the ten written" ; }
 fi
 f=$(val mark-files); [ "${f:-0}" = 20 ]; check "the marked set ends at 20 files on the master" $? "${f:-none}"
 a=$(val resume-device-rc); [ "${a:-1}" = 0 ]; check "the slave's device returns" $? "rc ${a:-none}"
