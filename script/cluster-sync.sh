@@ -2205,16 +2205,15 @@ d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the thread 
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1 ] && [ "${a:-1}" = 0 ]; check "the device teardown stops the thread" $? "threads ${tb:-none} to ${a:-none}"
 # The marked-set checks read what the interrupted pass wrote of the set,
 # which needs the pass to have reached it. The default stop depth is chosen
-# so it has; H2_STOP_ROUND=2 stops on round 1's verify line instead, and
+# so it has, but the stop loop also leaves on a verdict change or its time
+# bound, and H2_STOP_ROUND=2 stops on round 1's verify line instead:
 # seq29's four runs stopped 1001 updates past the mutation of 11000 wanted,
 # before the set, where mark-old 0 reads no copy rather than a lost one
-# (2026-11-11). Short of the depth, the marked-set reading is void.
+# (2026-11-11). Short of the depth, in any shape, the reading is void.
 mvoid=
-if [ "$STOP_ROUND" = 2 ]; then
-	mc=$(val interrupt-stop-copied | awk '{print $1}'); mw=$(val interrupt-stop-copied | awk '{print $3}')
-	[ "${mc:-0}" -ge "${mw:-1}" ] 2>/dev/null ||
-	    mvoid="the stop came ${mc:-no} update(s) past the mutation of ${mw:-no} wanted, before the pass reached the marked set"
-fi
+mc=$(val interrupt-stop-copied | awk '{print $1}'); mw=$(val interrupt-stop-copied | awk '{print $3}')
+[ "${mc:-0}" -ge "${mw:-1}" ] 2>/dev/null ||
+    mvoid="the stop came ${mc:-no} update(s) past the mutation of ${mw:-no} wanted, before the pass reached the marked set"
 if [ "$H2SNAP" = 1 ]; then
 	a=$(val pass-src-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot is a listed PFS on the master's device while the pass runs" $? "${a:-none} .h2sync-src listed"
 	a=$(val pass-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the target snapshot is a listed PFS on the slave's device while the pass runs" $? "${a:-none} .h2sync-tgt listed"

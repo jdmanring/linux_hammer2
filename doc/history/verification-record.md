@@ -24643,11 +24643,13 @@ its file name carry the hashes `aabc483` and `57abcb2` had before rounds
 
 The crash matrix and `cut-flush.sh` were last recorded on 2026-10-14,
 two hundred `src/` commits before `efa09a6`, and the round trip's newest
-run was on C3's tree on 2026-11-09 (`seq25-f4-fill.out`). Every fleet harness that reads the write path was
-run again at `efa09a6`, on `h2debug-7.3tls` with `KDIR` the 7.3 TLS
-tree, each from a frozen copy in a clean checkout
-(`linux_hammer2-data/ctl/h1`); the wrappers are `p7-notes/seq37.sh`
-to `seq40.sh`, and QEMU cores read 0 before and after each.
+run was on C3's tree on 2026-11-09 (`seq25-f4-fill.out`). The fleet harnesses
+the wrappers `p7-notes/seq37.sh` to `seq40.sh` list were run again at
+`efa09a6`, on `h2debug-7.3tls` with `KDIR` the 7.3 TLS tree, each from a
+frozen copy in a clean checkout (`linux_hammer2-data/ctl/h1`), and QEMU
+cores read 0 before and after each. `million-tree.sh` and
+`nix-closure.sh`, which also write, are not among them; they are read
+last, on the tree this step ends at.
 
 The crash matrix, both ports writing, five cells, two runs each: nine
 cells agree in both runs with every verdict ok, the torn cells reporting
@@ -24786,8 +24788,7 @@ the count stood high after the last flush before its teardown.
 
 **The lone unmount.** seq42's first run failed "unmount right after a
 pass stops it at once" at 5960 ms (`seq42-head-1.out:8`), the first
-reading over 500 ms in the 113 kept reports that carry the check (458 ms
-the next highest). Its log shows the thread's last pass and flush
+reading over 500 ms in the 113 kept reports that carry the check then. Its log shows the thread's last pass and flush
 complete 0.9 s before the teardown began and nothing between
 (`cluster-run-20261111-160813.klog:23-36`). A probe repeating that step
 300 times on the KASAN build, each unmount's kernel stack read at 1 s
@@ -24887,15 +24888,17 @@ transaction before the pass-end flush did (`:62240`). Its
 above the kept inodes and stopped at them. When the pass-end flush ran,
 all 11039 were modified with no flush bit one level above each (`:62275`,
 `path-flagged 0`, `gap-at-level 0/11039/0`), and the flush saw the top
-indirect block unflagged and skipped it (`:62313`). It returned error 0,
-the pass verified its copy in memory, and the teardown scrapped 42280
-chains. `cd9ffaf` runs the re-flag inside the pass-end flush's own
+indirect block unflagged and skipped it (`:62313`). It returned error 0;
+the pass's first round failed one copy and its second was interrupted
+(`:62320`, `:63349`), and the teardown scrapped 42280 chains the pass had
+copied. A pass whose flush skipped its pins could also verify the copy in
+memory, which the control below reads (seq51). `1428b54` runs the re-flag inside the pass-end flush's own
 transaction, which `hammer2_trans_init()` admits one at a time per PFS
 (`hammer2_flush.c:102-104`).
 
 **The verdict guard.** The verify rounds compare the slave's chains in
 memory, so a flush that never descended to its pins let the pass verify
-an unwritten copy. `cd9ffaf` releases the done list after the flush's
+an unwritten copy. `1428b54` releases the done list after the flush's
 transaction ends and counts the kept chains still modified
 (`hammer2_sync_done_release()`, `hammer2_synchro.c:514`). A count above
 zero fails the pass with `EIO`, since the flush returns only the errors
@@ -24919,12 +24922,17 @@ a mounted PFS.
 | seq52 control | `baa2120` | 2 | scan failed in round 1, census 15580 | 51663 | `cluster-run-20261112-032642.klog:69492`, `:69497`, `:69523` |
 | seq52 fix | `baa2120` | 1 | census 0 | 0 | `seq52-fix.out:63-64` |
 | seq53 control | `b62d485` | 2 | `completed ... error 00000000 modified 60423`, census 20022, round 1 acted 60064 failed 0 error 1, unverified | 60582 | `cluster-run-20261112-061248.klog:83800-83803`, `:83827`; `seq53-ctl-1.out:63` |
-| seq53 fix | `b62d485` | 1 | re-flag inside the transaction, `completed ... modified 3`, census 0 | 0 | `cluster-run-20261112-063019.klog:84108`; `seq53-fix.out:63-64` |
+| seq53 fix | `b62d485` | 1 | re-flag inside the transaction, `completed ... modified 3`, census 0 | 0 | `cluster-run-20261112-063019.klog:84108-84111`; `seq53-fix.out:63-64` |
 
-All runs were on `h2kasan-7.3tls`, and each mode re-flags once. seq51's
+The builds `87a5162`, `baa2120` and `b62d485` are commits of the fleet
+clone `linux_hammer2-data/ctl/h1-fix`, not of this repository.
+`1428b54`'s source differs from `b62d485`'s by one comment, and its
+harness by the census reader's end of the interposed flush and a
+comment. All runs were on `h2kasan-7.3tls`, and each mode re-flags once. seq51's
 two arms read the same round 1, so they differ only in the re-flag's
-place. seq52's control failed its own scan (`:69492 sync_slaves error
-256`), so its census could not be told from that error. seq53's control
+place. seq52's control failed a copy in its own round 1 (`:69498
+acted 51178 failed 1`), so its census could not be told from that
+failure. seq53's control
 is the guard's reading on a clean scan: the build without the guard
 verified that pass (seq51), and the build with it fails it. Every arm
 also fails the four stop checks the forced sync moves (the stop lands
