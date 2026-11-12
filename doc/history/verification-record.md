@@ -24648,8 +24648,11 @@ the wrappers `p7-notes/seq37.sh` to `seq40.sh` list were run again at
 `efa09a6`, on `h2debug-7.3tls` with `KDIR` the 7.3 TLS tree, each from a
 frozen copy in a clean checkout (`linux_hammer2-data/ctl/h1`), and QEMU
 cores read 0 before and after each. `million-tree.sh` and
-`nix-closure.sh`, which also write, are not among them; they are read
-last, on the tree this step ends at.
+`nix-closure.sh`, which also write, are not among them, and this record
+holds no reading of either at this tree or after it. The reports of the
+runs in this section and the next two carry the hashes their trees had
+before two message-only replays; the tags `pre-h1-rewrite` and
+`pre-h1r2-rewrite` keep those, the trees unchanged.
 
 The crash matrix, both ports writing, five cells, two runs each: nine
 cells agree in both runs with every verdict ok, the torn cells reporting
@@ -24754,7 +24757,23 @@ Its third: "the marked set absent from the slave's media" in seq29. Its
 stops came 1001 updates past the mutation of 11000 wanted
 (`seq29-*-collapse-*.out:28`), before the pass reached the set, so
 `mark-old=0` read no copy rather than a lost one. `84ba99a` makes that
-reading could-not-run under `H2_STOP_ROUND=2`.
+reading could-not-run under `H2_STOP_ROUND=2`, and `9619c28` in every
+shape, since the stop loop also leaves early on a verdict change or its
+time bound. Of the 246 kept reports under `linux_hammer2-data/` that
+print the stop line, ten stop short of the depth, and they are five
+runs, each kept twice: seq29's four, under `H2_STOP_ROUND=2`
+(`p7-notes/seq29.sh:14`), and the 2026-11-04 convergence control, whose
+build copies nothing (`p7-notes/n10-nopass-expected.md`), stopped at 0
+(`fixtures/cluster-run-20261104-104337.log:23`). All five reports print
+the marked-set failure, each written by a harness older than either
+void (none of the five builds descends from `84ba99a`). Run again, the first
+void would read seq29's four as could-not-run, and `9619c28` adds the
+control's (`:41`), the one reading it moves from the first void's,
+beside the convergence checks that fail it. `70b28a8`
+gives `cluster-sync.sh --selftest` the void's cases: short of the depth,
+at it, past it, a value that is not a number and no stop line; a copy
+whose void never prints fails three, one whose void always prints fails
+two.
 
 `65c7c7c` counts every scrapped chain by type with the range of inode
 keys and prints the count once per teardown, unlimited, and both
@@ -24765,30 +24784,33 @@ with it:
 |---|---|---|---|---|---|
 | seq41 KASAN 1, 2 | `65c7c7c` | round 1 | | 0, 0 | `seq41-kasan-sync-{1,2}.out:36`, `:62` |
 | seq41 KASAN 3 | `65c7c7c` | round 2 | failed 1, by itself | 0 | `cluster-run-20261111-035342.klog:56851`, `:57878`, `:57892` |
-| seq42 forced, 2 runs | `7f65fea` | round 2 | failed 1, collapsed | 0, 0 | `seq42-head-{1,2}.out:35`, `:39`, `:65` |
-| seq42 forced, 2 runs | `7f65fea` less C3 | round 2 | failed 1, collapsed | 0, 0 | `seq42-noc3-{1,2}.out:35`, `:39`, `:65` |
+| seq42 forced, 2 runs | `994103c` | round 2 | failed 1, collapsed | 0, 0 | `seq42-head-{1,2}.out:35`, `:39`, `:65` |
+| seq42 forced, 2 runs | `994103c` less C3 | round 2 | failed 1, collapsed | 0, 0 | `seq42-noc3-{1,2}.out:35`, `:39`, `:65` |
 
 seq41's third run reached the shape seq23 and seq25 scrapped in, a first
 round that failed one by itself and a stop in the second, and scrapped
 nothing. No `src/` commit since C3's runs touches the sync thread, the
 flush, the chain code or the teardown (`02632c8`, `f1db080`, `248e9ef`,
 `aabc483`, `57abcb2`), so the scrap is intermittent in that shape, two
-runs of three, and not fixed. `H2_COLLAPSE_LATE=1` (`7f65fea`) forces a
+runs of three, and not fixed. `H2_COLLAPSE_LATE=1` (`994103c`) forces a
 first round that copies the marked set and fails, the collapse armed
 11011 and 11012 updates past the mutation, and the stop then lands in the
 second round with the set on the slave's media (`:49` of each); four runs
 on the two trees scrapped nothing, so the forced shape is not the
 scrap's cause, and the ownership question it was built for stays open on
 the natural shape. The tree less C3 (`ctl/h1-noc3`, the three commits
-reverted, `src/` otherwise `7f65fea`'s) fails S1 in both its runs
+reverted, `src/` otherwise `994103c`'s) fails S1 in both its runs
 (`seq42-noc3-{1,2}.out:18`), the defect C3 fixed, which is that tree's
-control. `09884c7` adds the module's count of modified chains to the
+control. `94c8e78` adds the module's count of modified chains to the
 completed line of each pass-end flush, so a run that scraps shows whether
 the count stood high after the last flush before its teardown.
 
 **The lone unmount.** seq42's first run failed "unmount right after a
-pass stops it at once" at 5960 ms (`seq42-head-1.out:8`), the first
-reading over 500 ms in the 113 kept reports that carry the check then. Its log shows the thread's last pass and flush
+pass stops it at once" at 5960 ms (`seq42-head-1.out:8`). Of the
+earlier runs' own reports, `fixtures/cluster-run-*.log` dated before
+it, 109 carry the check, from 2026-10-19 to 2026-11-11, and none reads
+over 500 ms, the highest 458 ms
+(`cluster-run-20261105-211957.log:7`). Its log shows the thread's last pass and flush
 complete 0.9 s before the teardown began and nothing between
 (`cluster-run-20261111-160813.klog:23-36`). A probe repeating that step
 300 times on the KASAN build, each unmount's kernel stack read at 1 s
@@ -24800,7 +24822,7 @@ in the generic sync's device cache flush, `blkdev_issue_flush()` under
 wait; the other three ended inside 1036 ms, before a read. The host's
 load average was 12 to 15, two Nix builds beside the guest. The 5960 ms
 run had no stack read, so its cause is not attributed; the probe's
-readings put a device flush of that length within reach on this host. `4945180`
+readings put a device flush of that length within reach on this host. `5702d1d`
 reads the stack in the harness: a slow unmount in the block layer's
 flush is could-not-run, and one in `hammer2_thr_wait()`, any other stack,
 or none fails; replayed over five readings
@@ -24814,7 +24836,7 @@ on `h2debug-7.3tls`. That build's `cluster-quorum.sh` exited 2 because
 the second guest, `artix-s6-h2b`, was still up after `cluster-wire.sh`
 and `cluster-dmsg.sh` and seq41's wrapper did not stop it; seq42's wrapper stops every other guest before each run, and it
 read 62 and 0 (`seq42-debug-quorum.out`). On `h2release-7.3tls` at
-`7f65fea` the seek readings the DEFER above `hammer2_seek_scanall()`
+`994103c` the seek readings the DEFER above `hammer2_seek_scanall()`
 holds to 50 ms: a single volume's dense SEEK_HOLE over 16 GiB 14.0 ms median
 of 20 (`seq42-rel-seektime.out:14`), two MASTERs' 32.0 ms with a
 writer beside them at 64.8 ms median (`seq42-rel-quorum-contend.out:16`,
@@ -24831,11 +24853,11 @@ here; on 2026-10-17 it was not run, "test requires delayed allocation
 buffered writes" (`xfstests-quick-2026-10-17.log:5070`), and the test
 admits a filesystem whose FIEMAP reports a dirty block as delalloc,
 which `e26bcdb` made the port do. `->getattr` read the count from
-data_count, which a flush moves. `acadc34` reports the larger of that
+data_count, which a flush moves. `4cded09` reports the larger of that
 and the bytes of folios tagged dirty or under writeback, each counted
 once; seq41's run at `65c7c7c` is its control.
 
-**seq45 at `acadc34`.** On `h2debug-7.3tls`, generic/614 alone executed
+**seq45 at `4cded09`.** On `h2debug-7.3tls`, generic/614 alone executed
 1 of 1 with no failure (`seq45-debug-614.out:15`), `test-enospc.sh` filled
 2G with 0 failures (`seq45-debug-enospc.out:434`), and the quick group
 executed 124 of 633, 13 expunged, with one failure, generic/568
@@ -24854,12 +24876,12 @@ into a fallocated range allocates. Its pass at `65c7c7c` (`seq41-debug-xfstests-
 no output kept for a pass) is read from the code at that tree, not from the
 run: `->getattr` then reported data_count alone, 0 for a block written and
 not yet flushed, so the test read 0 B on both sides and passed without
-asking its question. `acadc34` counts that block, which is what made the
+asking its question. `4cded09` counts that block, which is what made the
 test ask it. It is listed in `test/xfstests/hammer2.exclude` with the
 other tests of a preallocated range, the kind of entry the list keeps for
 what this format cannot store; `H2_XFSTESTS_EXCLUDE=none` runs it again.
 
-**seq46 at `acadc34`, `h2release-7.3tls`.** `throughput.sh`, one run, host
+**seq46 at `4cded09`, `h2release-7.3tls`.** `throughput.sh`, one run, host
 load 5.03 to 6.26 (`seq46-throughput.out:2`): a 512 MiB file written
 1045 MiB/s buffered and 563 MiB/s through to media by hammer2, 898 and
 253 by ext4, 674 and 665 by btrfs, syncfs 1.21, 0.81 and 1.67 s
@@ -24892,13 +24914,13 @@ indirect block unflagged and skipped it (`:62313`). It returned error 0;
 the pass's first round failed one copy and its second was interrupted
 (`:62320`, `:63349`), and the teardown scrapped 42280 chains the pass had
 copied. A pass whose flush skipped its pins could also verify the copy in
-memory, which the control below reads (seq51). `1428b54` runs the re-flag inside the pass-end flush's own
+memory, which the control below reads (seq51). `f353909` runs the re-flag inside the pass-end flush's own
 transaction, which `hammer2_trans_init()` admits one at a time per PFS
 (`hammer2_flush.c:102-104`).
 
 **The verdict guard.** The verify rounds compare the slave's chains in
 memory, so a flush that never descended to its pins let the pass verify
-an unwritten copy. `1428b54` releases the done list after the flush's
+an unwritten copy. `f353909` releases the done list after the flush's
 transaction ends and counts the kept chains still modified
 (`hammer2_sync_done_release()`, `hammer2_synchro.c:514`). A count above
 zero fails the pass with `EIO`, since the flush returns only the errors
@@ -24919,14 +24941,14 @@ a mounted PFS.
 |---|---|---|---|---|---|
 | seq51 control | `87a5162`, no guard | 2 | `completed ... error 00000000 modified 60423`, round 1 acted 60064 failed 0, verified in round 2 | 60582 | `cluster-run-20261112-022618.klog:83537`, `:83538`, `:83550`, `:83575` |
 | seq51 fix | `87a5162` | 1 | re-flag inside the transaction, `completed ... modified 3`, round 1 acted 60064 failed 0 | 0 | `cluster-run-20261112-024320.klog:83539`, `:83541`, `:83542`; `seq51-fix.out:63` |
-| seq52 control | `baa2120` | 2 | scan failed in round 1, census 15580 | 51663 | `cluster-run-20261112-032642.klog:69492`, `:69497`, `:69523` |
+| seq52 control | `baa2120` | 2 | scan failed in round 1, census 15580 | 51663 | `cluster-run-20261112-032642.klog:69497`, `:69498`, `:69523` |
 | seq52 fix | `baa2120` | 1 | census 0 | 0 | `seq52-fix.out:63-64` |
 | seq53 control | `b62d485` | 2 | `completed ... error 00000000 modified 60423`, census 20022, round 1 acted 60064 failed 0 error 1, unverified | 60582 | `cluster-run-20261112-061248.klog:83800-83803`, `:83827`; `seq53-ctl-1.out:63` |
 | seq53 fix | `b62d485` | 1 | re-flag inside the transaction, `completed ... modified 3`, census 0 | 0 | `cluster-run-20261112-063019.klog:84108-84111`; `seq53-fix.out:63-64` |
 
 The builds `87a5162`, `baa2120` and `b62d485` are commits of the fleet
 clone `linux_hammer2-data/ctl/h1-fix`, not of this repository.
-`1428b54`'s source differs from `b62d485`'s by one comment, and its
+`f353909`'s source differs from `b62d485`'s by one comment, and its
 harness by the census reader's end of the interposed flush and a
 comment. All runs were on `h2kasan-7.3tls`, and each mode re-flags once. seq51's
 two arms read the same round 1, so they differ only in the re-flag's
@@ -24953,10 +24975,15 @@ lines (`:62`, `:63`, `:75`). After seq53's KASAN runs the guest held 0
 KASAN or UBSAN reports, and after its lockdep runs `debug_locks` read 1
 with 0 warnings (`seq53.log`). Ten clean runs at a two-in-ten rate are
 what a fix predicts but do not prove it alone (0.8^10 is 0.11); the forced
-pairs are the proof.
+pairs are the proof. seq51's six natural runs at `87a5162` were cut
+short when that candidate was replaced by `baa2120`: its first run
+was rc 0, 63 checks, 0 failed, 0 chains scrapped
+(`seq51-nat-1.out:62`, `:74`), the sequence was stopped inside its
+second, whose report holds only its header and build lines
+(`seq51-nat-2.out:1-4`), and the other four did not run.
 
 **latency.sh, rerun.** seq46's latency run exited 2 when the wrapper left
-a guest up, and seq48 reran it at `acadc34` on `h2release-7.3tls`, rc 0
+a guest up, and seq48 reran it at `4cded09` on `h2release-7.3tls`, rc 0
 with 0 failures (`seq48-latency.out:55`). hammer2's `randwrite4k_fsync`
 median is 144 µs, against ext4's 3254 and btrfs's 2897 (`:23`, `:35`,
 `:47`). The comparison does not hold like for like: hammer2's `fsync`
