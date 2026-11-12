@@ -131,7 +131,8 @@ boot() {	# boot <guest> <ssh> [ext4 image] [btrfs image]; the images are attache
 		sleep 5; n=$((n + 1)); [ $n -gt 60 ] && { echo "  COULD-NOT-RUN  $1 did not answer ssh in 5 minutes, host load $(cut -d" " -f1-3 /proc/loadavg)"; return 1; }
 	done
 	# A guest whose lockdep an earlier report turned off counts no report.
-	[ "$(ssh -o BatchMode=yes "$2" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")" = 0 ] && {
+	# DragonFly's root shell is not sh and reads no 2>, so the file is tested.
+	[ "$(ssh -o BatchMode=yes "$2" "test -r /proc/lockdep_stats && awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats")" = 0 ] && {
 		echo "  COULD-NOT-RUN  lockdep is off on $1 since an earlier report; boot it again"; return 1; }
 	return 0
 }
