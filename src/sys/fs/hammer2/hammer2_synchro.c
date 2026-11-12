@@ -628,8 +628,8 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 		error = hammer2_flush(chain, HAMMER2_FLUSH_TOP |
 		    HAMMER2_FLUSH_ALL | HAMMER2_FLUSH_FSSYNC);
 		if (hammer2_debug & 0x8000)
-			kprintf("sync_flush: clindex %d completed flags %08x error %08x\n",
-			    thr->clindex, chain->flags, error);
+			kprintf("sync_flush: clindex %d completed flags %08x error %08x modified %d\n",
+			    thr->clindex, chain->flags, error, hammer2_count_chain_modified);
 		if (error) {
 			kprintf("sync_flush: clindex %d chain %p "
 			    "flush error %08x\n",
