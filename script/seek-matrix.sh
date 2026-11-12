@@ -99,6 +99,16 @@
 #                   puts a hole of the same size before the data and loops
 #                   SEEK_DATA at 0 instead, so each seek crosses the hole
 #                   into the data while the writes wait.
+#   H2_SEEK_WINDOW=1  test/hammer2-seek.c, the exerciser the enospc gate
+#                   runs, here on one mounted volume and on any kernel:
+#                   test-enospc.sh refuses a kernel without lockdep, its
+#                   own control, so this is how the release build asks
+#                   the written-back window. The module is built with
+#                   HAMMER2_LOCKDEBUG=1, so the media-only readings run
+#                   and the exerciser's note that no such module answers
+#                   fails the run. H2_SEEK_WINDOW=plain builds without it
+#                   and requires that note instead. The exerciser must
+#                   print a nonzero check count and no failure.
 #
 # H2_KO loads a module built elsewhere instead of building one. H2_REPEAT
 # repeats the race too (1 by default); the three cases ignore it, so it is
@@ -122,11 +132,17 @@ RACE=${H2_SEEK_RACE:-0}
 TIME=${H2_SEEK_TIME:-0}
 CONTEND=${H2_SEEK_CONTEND:-0}
 COLD=${H2_SEEK_COLD:-0}
-case "$RACE$TIME$CONTEND$COLD" in
-0000) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE, H2_SEEK_TIME, H2_SEEK_CONTEND or H2_SEEK_COLD" >&2; exit 2; } ;;
-1000|0100|0010|00gap0|0001) ;;
-*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE, H2_SEEK_TIME, H2_SEEK_CONTEND and H2_SEEK_COLD are 0 or 1 (H2_SEEK_CONTEND also gap), one at a time" >&2; exit 2 ;;
+WINDOW=${H2_SEEK_WINDOW:-0}
+case "$RACE$TIME$CONTEND$COLD$WINDOW" in
+00000) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_REPEAT needs H2_SEEK_RACE, H2_SEEK_TIME, H2_SEEK_CONTEND or H2_SEEK_COLD" >&2; exit 2; } ;;
+10000|01000|00100|00gap00|00010) ;;
+00001|0000plain) [ -z "${H2_REPEAT:-}" ] || { echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_WINDOW runs the exerciser once; H2_REPEAT is refused there" >&2; exit 2; } ;;
+*) echo "seek-matrix: COULD-NOT-RUN: H2_SEEK_RACE, H2_SEEK_TIME, H2_SEEK_CONTEND, H2_SEEK_COLD and H2_SEEK_WINDOW are 0 or 1 (H2_SEEK_CONTEND also gap, H2_SEEK_WINDOW also plain), one at a time" >&2; exit 2 ;;
 esac
+# The exerciser's note, as test-enospc.sh holds it; the selftest there
+# checks it against test/hammer2-seek.c, and the check below fails a
+# window run whose note no longer matches either way.
+H2_SEEK_NOTE='no HAMMER2_LOCKDEBUG module answers'
 REPEAT=${H2_REPEAT:-$( [ "$TIME$COLD" != 00 ] && echo 5 || { [ "$CONTEND" != 0 ] && echo 3 || echo 1; } )}
 RULE=${H2_SEEK_RULE_MS:-}
 DEEPRULE=${H2_SEEK_DEEP_RULE_US:-}
@@ -158,7 +174,7 @@ command -v virsh >/dev/null 2>&1 || { echo "seek-matrix: COULD-NOT-RUN: no virsh
 if [ -n "${H2_KO:-}" ]; then
 	[ -f "$H2_KO" ] || { echo "seek-matrix: COULD-NOT-RUN: no module at H2_KO=$H2_KO" >&2; exit 2; }
 	KO=$H2_KO
-elif [ "$RACE" = 1 ]; then
+elif [ "$RACE" = 1 ] || [ "$WINDOW" = 1 ]; then
 	HAMMER2_LOCKDEBUG=1 make KDIR="$KDIR" >/dev/null 2>&1 || { echo "seek-matrix: FAIL: the module does not build against $KDIR"; exit 1; }
 else
 	make KDIR="$KDIR" >/dev/null 2>&1 || { echo "seek-matrix: FAIL: the module does not build against $KDIR"; exit 1; }
@@ -167,7 +183,13 @@ fi
 echo "  module $KO sha256 $(sha256sum "$KO" | cut -c1-16) head $(git rev-parse --short HEAD) dirty $(git status --porcelain -- src script test | wc -l) seek-matrix.sh $(sha256sum "$0" | cut -c1-16) seekprobe.c $(sha256sum test/hammer2-seekprobe.c | cut -c1-16)"
 cc -static -O2 -o /tmp/h2seekprobe.$$ test/hammer2-seekprobe.c 2>/dev/null || {
 	echo "seek-matrix: COULD-NOT-RUN: the seek probe did not compile" >&2; exit 2; }
-trap 'rm -f /tmp/h2seekprobe.$$' EXIT
+trap 'rm -f /tmp/h2seekprobe.$$ /tmp/h2seekw.$$' EXIT
+if [ "$WINDOW" != 0 ]; then
+	command grep -qF "$H2_SEEK_NOTE" test/hammer2-seek.c || {
+		echo "seek-matrix: COULD-NOT-RUN: test/hammer2-seek.c no longer prints \"$H2_SEEK_NOTE\"" >&2; exit 2; }
+	cc -static -O2 -o /tmp/h2seekw.$$ test/hammer2-seek.c 2>/dev/null || {
+		echo "seek-matrix: COULD-NOT-RUN: the seek exerciser did not compile" >&2; exit 2; }
+fi
 
 guest_up() {
 	i=0
@@ -198,7 +220,8 @@ attach() {
 detach() { $VIRSH detach-disk "$GUEST" vdb --live >/dev/null 2>&1; $VIRSH detach-disk "$GUEST" vdb --config >/dev/null 2>&1; }
 detach
 attach || { echo "seek-matrix: COULD-NOT-RUN: could not attach $IMG" >&2; exit 2; }
-scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko" && scp -q /tmp/h2seekprobe.$$ "$GUEST_SSH:/tmp/h2seekprobe" || {
+scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko" && scp -q /tmp/h2seekprobe.$$ "$GUEST_SSH:/tmp/h2seekprobe" &&
+    { [ "$WINDOW" = 0 ] || scp -q /tmp/h2seekw.$$ "$GUEST_SSH:/tmp/h2seek"; } || {
 	detach; echo "seek-matrix: COULD-NOT-RUN: copy to the guest failed" >&2; exit 2; }
 
 # The two modes: one mounted volume, no stop, then the verdict and exit.
@@ -317,7 +340,12 @@ done
 contend_body='
 i=0; while [ $i -lt $REPEAT ]; do /tmp/h2seekprobe $CVERB /mnt/sm/c $NSEEK $DMB; i=$((i + 1)); done
 '
-if [ "$RACE$TIME$CONTEND$COLD" != 0000 ]; then
+window_body='
+echo "window kernel $(uname -r) lockdep $(zcat /proc/config.gz 2>/dev/null | grep -c "^CONFIG_PROVE_LOCKING=y") media_only $([ -e /sys/module/hammer2/parameters/seek_media_only ] && echo 1 || echo 0)"
+/tmp/h2seek /mnt/sm/.h2seek 2>&1 | sed -n /seek-/p
+rm -f /mnt/sm/.h2seek
+'
+if [ "$RACE$TIME$CONTEND$COLD$WINDOW" != 00000 ]; then
 	if [ "$COLD" = 1 ]; then
 		out=$(ssh "$GUEST_SSH" "$mode_open /tmp/h2seekprobe cold /mnt/sm/c ${DMB:-64}" 2>&1)
 		i=0
@@ -342,7 +370,7 @@ SETUP cold reattach failed"
 		done
 		out=$(printf '%s\n%s' "$out" "$(ssh "$GUEST_SSH" "$mode_close" 2>&1)")
 	else
-		if [ "$RACE" = 1 ]; then body=$race_body; elif [ "$TIME" = 1 ]; then body=$time_body; else body=$contend_body; fi
+		if [ "$RACE" = 1 ]; then body=$race_body; elif [ "$TIME" = 1 ]; then body=$time_body; elif [ "$WINDOW" != 0 ]; then body=$window_body; else body=$contend_body; fi
 		CVERB=contend; [ "$CONTEND" = gap ] && CVERB=contendgap
 		out=$(ssh "$GUEST_SSH" "REPEAT=$REPEAT; NSEEK=$NSEEK; DMB=$DMB; CVERB=$CVERB; $mode_open $body $mode_close" 2>&1)
 	fi
@@ -380,6 +408,29 @@ SETUP cold reattach failed"
 	# reads nothing; 0 is lockdep turned off by a report, and fails above.
 	bad=$(printf '%s\n' "$out" | command grep -c '^seekm-fail')
 	[ "$bad" -eq 0 ] || { echo "  FAIL  $bad seekm-fail line(s)"; fail=$((fail + 1)); }
+	if [ "$WINDOW" != 0 ]; then
+		sc=$(printf '%s\n' "$out" | sed -n 's/^seek-checks //p')
+		sf=$(printf '%s\n' "$out" | sed -n 's/^seek-failures //p')
+		if [ -z "$sc" ] || [ "$sc" -eq 0 ] 2>/dev/null; then
+			echo "  FAIL  the seek exerciser printed no check, so it proved nothing"; fail=$((fail + 1))
+		elif [ "${sf:-x}" != 0 ]; then
+			echo "  FAIL  the seek exerciser read ${sf:-no} failure(s) of $sc"; fail=$((fail + 1))
+			printf '%s\n' "$out" | sed -n 's/^seek-fail /        /p' | head -8
+		else
+			echo "  ok    seek $sc check(s) in the window mode, 0 failed"
+		fi
+		mo=$(printf '%s\n' "$out" | sed -n 's/^window kernel .* media_only \([01]\)$/\1/p')
+		noted=$(printf '%s\n' "$out" | command grep -c "^seek-note .*$H2_SEEK_NOTE")
+		if [ "$WINDOW" = 1 ]; then
+			[ "$mo" = 1 ] && [ "$noted" = 0 ]; check_rc=$?
+			[ $check_rc = 0 ] && echo "  ok    the media-only readings ran: seek_media_only present, no note" ||
+			    { echo "  FAIL  media-only readings: parameter ${mo:-unread}, note line(s) $noted, on a run built with HAMMER2_LOCKDEBUG"; fail=$((fail + 1)); }
+		else
+			[ "$mo" = 0 ] && [ "$noted" -ge 1 ]; check_rc=$?
+			[ $check_rc = 0 ] && echo "  ok    a plain module: no seek_media_only, the exerciser's note printed" ||
+			    { echo "  FAIL  plain module: parameter ${mo:-unread}, note line(s) $noted"; fail=$((fail + 1)); }
+		fi
+	fi
 	if [ "$RACE" = 1 ]; then
 		lines=$(printf '%s\n' "$out" | command grep '^seekm-race ')
 		n=$(printf '%s\n' "$lines" | command grep -c '^seekm-race ')
