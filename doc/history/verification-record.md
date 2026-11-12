@@ -22331,7 +22331,7 @@ written and requires the twin to hold more: at `e547227` on `h2debug-7.3tls`
 was not read on HAMMER2, where the margin is one compressed block.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
-(`hammer2_vnops.c:2285`), which still asks one bmap XOP per block and reads
+(`hammer2_vnops.c:2334`), which still asks one bmap XOP per block and reads
 `i_size` unlocked. Each of its XOPs is one lookup, not a scan restarted per
 block, and FIEMAP takes no lock that a writer waits on; it is a candidate for
 the same scan, not measured.
@@ -23944,7 +23944,7 @@ rerun, 9 checks and 0 failed (`seq21-enospc.out:410-411`); and
 analyzer over the four files C2 touched, 8 candidates, none on a line C2
 changed. Seven are dead stores at four sites (`hammer2_inode.c` 399, 1292
 and 1586, and `hammer2_os.h:1664`, reported once in each of the four
-files). The eighth, a garbage value compared at `hammer2_vnops.c:2187`,
+files). The eighth, a garbage value compared at `hammer2_vnops.c:2236`,
 `poff` in `hammer2_bmap()`, is new since the reading at `ca3ff80` and is
 not a defect: `hammer2_bmap_lbn()` sets `*poff` whenever its collect
 returns 0, and `hammer2_error_to_errno()` maps every nonzero error to a
@@ -23961,7 +23961,7 @@ in the tree of `d1ad8e1` (`p7-notes/instruments-20261109.log`, whose
 header names that commit's hash before two rewrites of messages; the tree
 is the same), W=1 read 0 warnings and smatch the same 59 over the same 22
 files, line numbers set aside. The analyzer in that log ran its default
-seven files, which share only `hammer2_vnops.c:2187` with C2's four and
+seven files, which share only `hammer2_vnops.c:2236` with C2's four and
 leave out `hammer2_admin.c`, the file `0bbeeb2` changed, so its equal
 count of 8 says nothing. Run again over C2's four files at `6c5d42f` (its
 hash before a rewrite of messages in the log's header), whose source
@@ -24408,7 +24408,7 @@ not pass" counts; the S4 run's Q2 lines read ok
 (`seq30-debug-quorum-s4.out:48-53`). No core (`seq30.log:5`). At
 `f1db080` (`p7-notes/s4-instruments-20261109.log`) W=1 read 0 warnings,
 `smatch` the same 59 lines as C3's source, and the analyzer over
-`hammer2_vnops.c` its two known candidates, `:2187` and the TLS reader's
+`hammer2_vnops.c` its two known candidates, `:2236` and the TLS reader's
 `hammer2_os.h:1664` above.
 
 **Open from round 16, read from the code and not driven.** A truncate
@@ -24598,7 +24598,7 @@ the window too. A module with `seek_depth_max`, which
 `HAMMER2_LOCKDEBUG` also adds, whose parameter cannot be set or cleared
 now fails rather than skipping, and a shape's SEEK_HOLE is accepted only
 at the two ends a filesystem gives. The page written into a hole takes a
-whole-block folio (`hammer2_write_begin()`, `hammer2_vnops.c:2545-2555`,
+whole-block folio (`hammer2_write_begin()`, `hammer2_vnops.c:2594-2604`,
 read from code, not counted in a run), so no shape drives
 `hammer2_strategy_fill()`, which completes a folio smaller than its
 block. seq36 at `57abcb2`, on `h2debug-7.3tls`: with `HAMMER2_LOCKDEBUG`

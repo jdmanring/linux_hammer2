@@ -2036,6 +2036,55 @@ hammer2_seek_tagged(struct address_space *mapping, loff_t from, loff_t to)
 }
 
 /*
+ * Linux: the bytes below i_size held by folios tagged dirty or under
+ * writeback, each folio counted once.  A file with no such folio costs
+ * two tag tests.
+ *
+ * ponytail: walks every tagged folio, so a stat beside a large dirty file
+ * costs one pass over its dirty folios; a per-inode delalloc counter kept
+ * by ->dirty_folio and writeback completion, as btrfs keeps one, if that
+ * stat shows in a profile.
+ */
+static u64
+hammer2_tagged_bytes(struct inode *inode)
+{
+	struct address_space *mapping = inode->i_mapping;
+	loff_t size = i_size_read(inode);
+	struct folio_batch fbatch;
+	struct folio *folio;
+	pgoff_t index, end;
+	u64 bytes = 0;
+	int tag, i;
+
+	if (size <= 0)
+		return (0);
+	end = (size - 1) >> PAGE_SHIFT;
+	for (tag = 0; tag < 2; ++tag) {
+		xa_mark_t mark = tag ? PAGECACHE_TAG_WRITEBACK :
+		    PAGECACHE_TAG_DIRTY;
+
+		if (!mapping_tagged(mapping, mark))
+			continue;
+		index = 0;
+		folio_batch_init(&fbatch);
+		while (filemap_get_folios_tag(mapping, &index, end, mark,
+		    &fbatch)) {
+			for (i = 0; i < folio_batch_count(&fbatch); ++i) {
+				folio = fbatch.folios[i];
+				/* a redirtied folio under writeback: once */
+				if (tag && folio_test_dirty(folio))
+					continue;
+				bytes += min_t(u64, folio_size(folio),
+				    size - folio_pos(folio));
+			}
+			folio_batch_release(&fbatch);
+			cond_resched();
+		}
+	}
+	return (bytes);
+}
+
+/*
  * Linux: the debug build's hold between a seek's or a map's page cache tag
  * read and its tree read (hammer2_debug_hold()), so a writeback can be
  * completed between the two.
@@ -3125,6 +3174,21 @@ hammer2_getattr(struct mnt_idmap *idmap, const struct path *path,
 	else
 		stat->blocks = hammer2_inode_data_count(ip) >> 9;
 	hammer2_inode_unlock(ip);
+
+	/*
+	 * Linux: data_count moves only when a flush writes the blocks, so a
+	 * file written into the page cache and not yet written back read 0
+	 * blocks, and tar and cp read a file of 0 blocks as all holes
+	 * (xfstests generic/614, which runs here since fiemap reports such
+	 * blocks as delalloc).  XFS and btrfs add their delayed allocation
+	 * to the count; the port allocates at writeback and keeps no such
+	 * counter, so the page cache's tagged folios stand in for it, and
+	 * the larger of the two is reported: a rewrite of allocated blocks
+	 * is not counted twice, and a file with dirty data never reads 0.
+	 */
+	if (!S_ISDIR(inode->i_mode))
+		stat->blocks = max_t(u64, stat->blocks,
+		    hammer2_tagged_bytes(inode) >> 9);
 
 	return (0);
 }
