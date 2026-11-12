@@ -357,9 +357,9 @@ if [ "${1:-}" = "--selftest" ]; then
 	# The report's branches, driven with literal values through the
 	# functions the report calls.
 	W=$t/w; mkdir "$W"
-	eval "$(command sed -n '/^val() {/p; /^memline() {/,/^}/p; /^keptabsent() {/,/^}/p' "$0")"
-	command -v memline >/dev/null && command -v keptabsent >/dev/null ||
-	    bad "the report's memline and keptabsent functions are not found"
+	eval "$(command sed -n '/^val() {/p; /^memline() {/,/^}/p; /^keptabsent() {/,/^}/p; /^markvoid() {/,/^}/p' "$0")"
+	command -v memline >/dev/null && command -v keptabsent >/dev/null && command -v markvoid >/dev/null ||
+	    bad "the report's memline, keptabsent and markvoid functions are not found"
 	fail=0; checks=0
 	check() { checks=$((checks + 1)); [ "$2" = 0 ] || fail=$((fail + 1)); }
 	for v in 5 0 missing x; do
@@ -381,6 +381,19 @@ if [ "${1:-}" = "--selftest" ]; then
 		3:0:*checks=1\ fail=0) ;;
 		3:2:*checks=1\ fail=1|3:missing:*checks=1\ fail=1) ;;
 		*) bad "keptabsent with $v gave: $l" ;;
+		esac
+	done
+	# The marked-set void: short of the depth, at it, past it, a value
+	# that is not a number, and no line at all. Only the two that reach
+	# the depth may print nothing.
+	for v in 1001:short 11000:at 11012:past x:short missing:short; do
+		: > "$W/out"
+		[ "${v%:*}" = missing ] || echo "interrupt-stop-copied ${v%:*} wanted 11000 after 3 s" > "$W/out"
+		l=$(markvoid)
+		case ${v#*:}:$l in
+		short:*"before the pass reached the marked set") ;;
+		at:|past:) ;;
+		*) bad "markvoid with ${v%:*} gave: ${l:-nothing}" ;;
 		esac
 	done
 	# The target pairing: two targets taken, one with its print and one
@@ -1972,6 +1985,19 @@ keptabsent() {
 		echo "  read  the kept-absent arm did not run: ${a:-none} line(s)"
 	fi
 }
+# The marked-set checks read what the interrupted pass wrote of the set,
+# which needs the pass to have reached it. The default stop depth is chosen
+# so it has, but the stop loop also leaves on a verdict change or its time
+# bound, and H2_STOP_ROUND=2 stops on round 1's verify line instead:
+# seq29's four runs stopped 1001 updates past the mutation of 11000 wanted,
+# before the set, where mark-old 0 reads no copy rather than a lost one
+# (2026-11-11). Short of the depth, in any shape, the reading is void, and
+# this prints why; a stop at or past the depth prints nothing.
+markvoid() {
+	mc=$(val interrupt-stop-copied | awk '{print $1}'); mw=$(val interrupt-stop-copied | awk '{print $3}')
+	[ "${mc:-0}" -ge "${mw:-1}" ] 2>/dev/null ||
+	    echo "the stop came ${mc:-no} update(s) past the mutation of ${mw:-no} wanted, before the pass reached the marked set"
+}
 if [ "$TREE" != 0 ]; then
 # The tree arm's reading is each changed pass's time against the cadence,
 # printed rather than checked: a pass past 5120 ms is the finding the arm
@@ -2203,17 +2229,7 @@ c=$(val interrupt-stop-copied | awk '{print $1}'); r=$(val interrupt-rounds); [ 
 ms=$(val interrupt-umount-ms); [ "${ms:-0}" -gt 0 ] 2>/dev/null; check "the device teardown waits for the pass to reach a stop point" $? "${ms:-0} ms"
 d=$(val interrupt-didbreak); [ "${d:-0}" -ge 1 ] 2>/dev/null; check "the thread reads the stop between deferrals" $? "${d:-none} didbreak"
 tb=$(val interrupt-threads-before); a=$(val interrupt-threads); [ "${tb:-0}" = 1 ] && [ "${a:-1}" = 0 ]; check "the device teardown stops the thread" $? "threads ${tb:-none} to ${a:-none}"
-# The marked-set checks read what the interrupted pass wrote of the set,
-# which needs the pass to have reached it. The default stop depth is chosen
-# so it has, but the stop loop also leaves on a verdict change or its time
-# bound, and H2_STOP_ROUND=2 stops on round 1's verify line instead:
-# seq29's four runs stopped 1001 updates past the mutation of 11000 wanted,
-# before the set, where mark-old 0 reads no copy rather than a lost one
-# (2026-11-11). Short of the depth, in any shape, the reading is void.
-mvoid=
-mc=$(val interrupt-stop-copied | awk '{print $1}'); mw=$(val interrupt-stop-copied | awk '{print $3}')
-[ "${mc:-0}" -ge "${mw:-1}" ] 2>/dev/null ||
-    mvoid="the stop came ${mc:-no} update(s) past the mutation of ${mw:-no} wanted, before the pass reached the marked set"
+mvoid=$(markvoid)	# empty unless the stop came short of the depth
 if [ "$H2SNAP" = 1 ]; then
 	a=$(val pass-src-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the source snapshot is a listed PFS on the master's device while the pass runs" $? "${a:-none} .h2sync-src listed"
 	a=$(val pass-tgt-listed); [ "${a:-0}" -ge 1 ] 2>/dev/null; check "the target snapshot is a listed PFS on the slave's device while the pass runs" $? "${a:-none} .h2sync-tgt listed"
