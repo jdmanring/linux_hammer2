@@ -1578,11 +1578,11 @@ module_param_named(seek_depth_max, hammer2_seek_depth_max, uint, 0644);
 static int hammer2_seek_fail_elm = -1;
 module_param_named(seek_fail_elm, hammer2_seek_fail_elm, int, 0644);
 /*
- * Linux: skips a data chain carrying a flag a flush clears, so the walk
- * answers from the parents' blockref arrays as the last flush left them,
- * less any block deleted since, whose blockref a delete takes out of the
- * array at once.  The control for test/hammer2-seek.c's written-back
- * probes, which must then answer that layout in the same run they pass in.
+ * Linux: skips a data chain carrying a flag a flush clears; a clean data
+ * chain leaves its parent's tree at its last drop, so outside a concurrent
+ * holder that is every resident data chain the walk meets.  The walk then
+ * answers from the blockref arrays the last flush left, less any block
+ * deleted since: test/hammer2-seek.c's written-back control.
  */
 static int hammer2_seek_media_only;
 module_param_named(seek_media_only, hammer2_seek_media_only, int, 0644);
