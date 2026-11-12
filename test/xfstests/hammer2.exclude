@@ -10,7 +10,10 @@
 #
 # A write of zeros is not stored, so a preallocated range is a hole, and
 # FIEMAP has no unwritten extent to report where the test expects one.
+# generic/568 asks that a write into a fallocated range not grow the
+# blocks stat reports; the range holds no block until it is written.
 generic/009
+generic/568
 generic/092
 generic/255
 generic/679
