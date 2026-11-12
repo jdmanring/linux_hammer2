@@ -19,13 +19,19 @@ a SLAVE on a second local device in step with its MASTER, measured by
 stale slave's block at the master's tid with different contents at
 1.0.93, now fills the block once and every element writes it, measured
 on both volumes; two MASTERs whose block is disputed heal it from a fully
-cached page or fail the write EIO through the quorum read. A stop that
-lands in the pass's second round leaves the snapshot's state of the
-files the pass had marked off the slave's media, read on the module
-before that change as on its own with the stop forced there; in two
-KASAN runs of its own module the slave's teardown also scrapped five
-inodes the pass had copied, which the resumed pass copied again, a
-reading the module before it has not made. Neither cause is read. The quorum a two-MASTER cluster is decided
+cached page or fail the write EIO through the quorum read. A stop forced
+into the pass's second round once the pass has copied the files it
+marked leaves their snapshot state on the slave's media, on the module
+before that change as on its own; an earlier reading of them lost was a
+stop that came before the pass reached them. A slave's teardown that
+scrapped thousands of inodes the pass had copied, in two runs of ten,
+was a mounted PFS's sync taking the flush transaction between the pass's
+re-flag of its kept inodes and its pass-end flush, which then skipped
+them and reported success; the re-flag now runs inside that flush's
+transaction, and a pass whose flush leaves a kept chain modified fails
+rather than verifying its copy in memory, measured by `cluster-sync.sh`
+under `H2_INTERFLUSH` with the old order as its control (the record's
+"The pass-end flush lost the copy"). The quorum a two-MASTER cluster is decided
 by is reached and read by `script/cluster-quorum.sh`, which builds the
 `pfs_nmasters` of 2 that makes the quorum bind; a master on another host
 is read through a remote element over the transport P5 and P6 closed,

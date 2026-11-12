@@ -24259,6 +24259,10 @@ diff, not driven. The scrap is open inside N10.6 until a run of the
 module before C3 reaches the natural shape or a run of C3's in the
 forced shape scraps.
 
+**Corrected 2026-11-11.** The scrap count, the second round's copy and
+seq29's marked set above are wrong; "The teardown scrap counted whole",
+2026-11-11, has each reading and what replaces it.
+
 ## N10.6 C3: one fill of a block for every element, 2026-11-09
 
 C3 (`hammer2_writepages()` fills a block smaller than its folio once,
@@ -24697,3 +24701,257 @@ seq40; the two `sync-*-fault.sh` exit 2 on any tree without fault
 injection and `nfsd-export.sh` on any without `CONFIG_NFSD`, so they run
 on the KASAN build and on an nfsd build respectively. `dfly-enospc.sh`
 fills a volume on DragonFly and reads no code of this port.
+
+## The teardown scrap counted whole, 2026-11-11
+
+**The section "A stop in the sync pass's second round" (2026-11-09) is
+wrong on three readings, corrected here.** Its scrap count, "10 chains
+scrapped" and "five inodes of the backlog with a data block each", was
+the print's burst. `hammer2_unmount_scrap()` printed one rate-limited line
+per chain, the harnesses counted those lines and added the ratelimit's
+"callbacks suppressed" total, and that total prints only on a later call
+at the same site, which a teardown never makes. Each of C3's two KASAN
+teardowns has exactly ten scrap lines
+(`cluster-run-20261109-035923.klog:57389-57398`,
+`132932.klog:57512-57521`); the "suppressed" lines in both logs are
+`__hammer2_dbg_held_chains`'s, another site. What was scrapped is read
+from what the resumed pass copied again. Its first round updated 14103
+and 15728 inodes (counted from `syncsnap: begin` at `:57400` to the
+round's verify line at `:98882`, and `:57523` to `:103906`), where the
+first round after a clean teardown updated 8649, 8956 and 8997
+(`cluster-run-20261109-131453.klog:83104`, `20261111-033840.klog:83324`,
+`20261111-160813.klog:83694`), and its flush reflagged 14102 and 15727
+paths (`035923.klog:98879`, `132932.klog:103903`) against 8648, 8955 and
+8996. The keys themselves say which: of the inode keys the resumed pass
+inserted, 5110 and 6774 the interrupted pass had inserted too, `0x6600`
+to `0x7cff` and `0x6280` to `0x7cff` (each log read from its
+interrupted pass's `syncsnap: begin` to the resume's), with three hashed
+directory keys besides. Those are the scrap, read by key; the teardown's
+own count was never printed. The run of lost keys starts where the
+interrupted pass's inserts change parent, `0x65ff` into `0x6500/8` and
+then `0x6600` into `0x6400/10` (`035923.klog:38239-38240`), and ends at
+`0x7cff`. The first round's keys from `0x7d00` on were not lost (`0x7d00`,
+`0x7d40` and `0x7d67` inserted once, by the first round), and that
+round ended on "scan parent `0000000000007d00/8` deleted" (`:56337`),
+the failure that sent the pass into its second round. The resumed
+pass copied them and the slave matched the master at the end, as that
+section says, so the loss is the interrupted pass's work and not data,
+and the stop that loses it is an unmount mid-pass.
+
+Its second error: "the second round re-copied 1002 items". The second
+round copied keys the first had not reached. In seq23's run the first
+round inserted 42096 chains (`035923.klog:3146-56372`), none of them at
+`0x7d84`, `0x8000` or `0x8154`; the second inserted 978 more, from
+`0x7d84` (`:56380`) to a scan capped at `0x8155` (`:57365`), and its pass
+end flushed them (`:57372-57373`). The scrapped inode keys sit in the
+first round's range: `0x6600` was inserted in the first round and not in
+the second, so the scrap holds chains the first round copied and its own
+flush reported complete with no error (`035923.klog:56372`).
+
+Its third: "the marked set absent from the slave's media" in seq29. Its
+stops came 1001 updates past the mutation of 11000 wanted
+(`seq29-*-collapse-*.out:28`), before the pass reached the set, so
+`mark-old=0` read no copy rather than a lost one. `84ba99a` makes that
+reading could-not-run under `H2_STOP_ROUND=2`.
+
+`65c7c7c` counts every scrapped chain by type with the range of inode
+keys and prints the count once per teardown, unlimited, and both
+cluster harnesses sum those summaries and fail on a run with none. Read
+with it:
+
+| run | tree | stop | first round | scrapped | cite |
+|---|---|---|---|---|---|
+| seq41 KASAN 1, 2 | `65c7c7c` | round 1 | | 0, 0 | `seq41-kasan-sync-{1,2}.out:36`, `:62` |
+| seq41 KASAN 3 | `65c7c7c` | round 2 | failed 1, by itself | 0 | `cluster-run-20261111-035342.klog:56851`, `:57878`, `:57892` |
+| seq42 forced, 2 runs | `7f65fea` | round 2 | failed 1, collapsed | 0, 0 | `seq42-head-{1,2}.out:35`, `:39`, `:65` |
+| seq42 forced, 2 runs | `7f65fea` less C3 | round 2 | failed 1, collapsed | 0, 0 | `seq42-noc3-{1,2}.out:35`, `:39`, `:65` |
+
+seq41's third run reached the shape seq23 and seq25 scrapped in, a first
+round that failed one by itself and a stop in the second, and scrapped
+nothing. No `src/` commit since C3's runs touches the sync thread, the
+flush, the chain code or the teardown (`02632c8`, `f1db080`, `248e9ef`,
+`aabc483`, `57abcb2`), so the scrap is intermittent in that shape, two
+runs of three, and not fixed. `H2_COLLAPSE_LATE=1` (`7f65fea`) forces a
+first round that copies the marked set and fails, the collapse armed
+11011 and 11012 updates past the mutation, and the stop then lands in the
+second round with the set on the slave's media (`:49` of each); four runs
+on the two trees scrapped nothing, so the forced shape is not the
+scrap's cause, and the ownership question it was built for stays open on
+the natural shape. The tree less C3 (`ctl/h1-noc3`, the three commits
+reverted, `src/` otherwise `7f65fea`'s) fails S1 in both its runs
+(`seq42-noc3-{1,2}.out:18`), the defect C3 fixed, which is that tree's
+control. `09884c7` adds the module's count of modified chains to the
+completed line of each pass-end flush, so a run that scraps shows whether
+the count stood high after the last flush before its teardown.
+
+**The lone unmount.** seq42's first run failed "unmount right after a
+pass stops it at once" at 5960 ms (`seq42-head-1.out:8`), the first
+reading over 500 ms in the 113 kept reports that carry the check (458 ms
+the next highest). Its log shows the thread's last pass and flush
+complete 0.9 s before the teardown began and nothing between
+(`cluster-run-20261111-160813.klog:23-36`). A probe repeating that step
+300 times on the KASAN build, each unmount's kernel stack read at 1 s
+(`p7-notes/lone-umount-probe.sh`, `seq43-lone.out`), read 12 of 300 past a
+second, 1009 to 6425 ms, and 0 KASAN or UBSAN reports. Each of the nine
+stacks read at 1 s, and the one read at 3 s in the 6425 ms unmount, sits
+in the generic sync's device cache flush, `blkdev_issue_flush()` under
+`hammer2_xop_inode_flush()`, with the sync thread asleep in its idle
+wait; the other three ended inside 1036 ms, before a read. The host's
+load average was 12 to 15, two Nix builds beside the guest. The 5960 ms
+run had no stack read, so its cause is not attributed; the probe's
+readings put a device flush of that length within reach on this host. `4945180`
+reads the stack in the harness: a slow unmount in the block layer's
+flush is could-not-run, and one in `hammer2_thr_wait()`, any other stack,
+or none fails; replayed over five readings
+(`p7-notes/lone-verdict-replay.sh`).
+
+**The rest of seq41 and seq42.** `sync-alloc-fault.sh` 10 checks and
+`sync-io-fault.sh` 8, both 0 failed, `cluster-quorum.sh` with the seek
+vote 62 and 0, and 0 KASAN or UBSAN reports on `h2kasan-7.3tls`
+(`seq41.log`); `cluster-wire.sh` 36 and 0 and `cluster-dmsg.sh` 87 and 0
+on `h2debug-7.3tls`. That build's `cluster-quorum.sh` exited 2 because
+the second guest, `artix-s6-h2b`, was still up after `cluster-wire.sh`
+and `cluster-dmsg.sh` and seq41's wrapper did not stop it; seq42's wrapper stops every other guest before each run, and it
+read 62 and 0 (`seq42-debug-quorum.out`). On `h2release-7.3tls` at
+`7f65fea` the seek readings the DEFER above `hammer2_seek_scanall()`
+holds to 50 ms: a single volume's dense SEEK_HOLE over 16 GiB 14.0 ms median
+of 20 (`seq42-rel-seektime.out:14`), two MASTERs' 32.0 ms with a
+writer beside them at 64.8 ms median (`seq42-rel-quorum-contend.out:16`,
+`:19-20`), and with one block split 32.5 ms, the writer 65.1 ms, and
+SEEK_HOLE failing EIO at the split block (`seq42-rel-quorum-split.out:23-26`).
+`test-enospc.sh` refuses the release build, which has no lockdep, by
+design.
+
+**generic/614.** xfstests' quick group on `h2debug-7.3tls` executed 124
+of 633 with one failure, generic/614: a file written through a mapping
+and unmapped reads 0 blocks from stat
+(`seq41-debug-xfstests-quick.out:4819-4829`, the summary its last line). It ran for the first time
+here; on 2026-10-17 it was not run, "test requires delayed allocation
+buffered writes" (`xfstests-quick-2026-10-17.log:5070`), and the test
+admits a filesystem whose FIEMAP reports a dirty block as delalloc,
+which `e26bcdb` made the port do. `->getattr` read the count from
+data_count, which a flush moves. `acadc34` reports the larger of that
+and the bytes of folios tagged dirty or under writeback, each counted
+once; seq41's run at `65c7c7c` is its control.
+
+**seq45 at `acadc34`.** On `h2debug-7.3tls`, generic/614 alone executed
+1 of 1 with no failure (`seq45-debug-614.out:15`), `test-enospc.sh` filled
+2G with 0 failures (`seq45-debug-enospc.out:434`), and the quick group
+executed 124 of 633, 13 expunged, with one failure, generic/568
+(`seq45-debug-quick.out:6329`). On `h2kasan-7.3tls` generic/614 executed
+1 of 1 and the seek group 8 of 8, none failed (`seq45-kasan-614.out:15`,
+`seq45-kasan-seek.out:78`), and the guest's log held 0 KASAN or UBSAN
+reports (`seq45.log:17`).
+
+**generic/568.** The test fallocates two bytes across a block boundary,
+writes them, and fails if the blocks stat reports grew. It read 0 B before
+the write and 65536 B after (`seq45-debug-quick.out:4403-4411`). The
+port's plain fallocate extends the size and reserves nothing, since the
+media does not hold a zero block (`hammer2_vnops.c:2264-2269`), so the
+range holds no block until the write, and on this format the first write
+into a fallocated range allocates. Its pass at `65c7c7c` (`seq41-debug-xfstests-quick.out:4403`,
+no output kept for a pass) is read from the code at that tree, not from the
+run: `->getattr` then reported data_count alone, 0 for a block written and
+not yet flushed, so the test read 0 B on both sides and passed without
+asking its question. `acadc34` counts that block, which is what made the
+test ask it. It is listed in `test/xfstests/hammer2.exclude` with the
+other tests of a preallocated range, the kind of entry the list keeps for
+what this format cannot store; `H2_XFSTESTS_EXCLUDE=none` runs it again.
+
+**seq46 at `acadc34`, `h2release-7.3tls`.** `throughput.sh`, one run, host
+load 5.03 to 6.26 (`seq46-throughput.out:2`): a 512 MiB file written
+1045 MiB/s buffered and 563 MiB/s through to media by hammer2, 898 and
+253 by ext4, 674 and 665 by btrfs, syncfs 1.21, 0.81 and 1.67 s
+(`:5-13`); read back with the source's hash after a remount and fsck
+clean with its negative control (`:23`, `:31-33`). The read rates (ext4
+17067 MiB/s, `:19`) are the host's cache and are not the port's. The
+allocation order read from the image: hammer2's file 7445 contiguous steps
+of 8192 blocks, 683 forward and 63 backward jumps, DragonFly's 1096, 3606
+and 3489 (`:42-43`). `:34-35` is an error from the DragonFly guest's shell,
+which reads no `2>` in the lockdep guard's remote command; the guard's
+verdict there was right, DragonFly having no lockdep, and the command now
+tests the file instead. `latency.sh` exited 2 because the wrapper left the
+first guest running (`seq46-latency.out`), which the script refuses; it is
+rerun in seq48.
+
+## The pass-end flush lost the copy, 2026-11-12
+
+**The cause of the teardown scrap.** The section above leaves the
+natural-shape scrap unattributed. A probe build (`ctl/h1-probe` at
+`0685209`, not in this tree) read it in its third KASAN run
+(`fixtures/cluster-run-20261112-013415.klog`). The pass re-flagged the
+path from each of its 11039 kept slave inodes to the volume root
+(`:62238`), and then a mounted PFS's sync, `umount`'s, took the flush
+transaction before the pass-end flush did (`:62240`). Its
+`FLUSH_INODE_STOP` descent cleared `ONFLUSH` from the indirect blocks
+above the kept inodes and stopped at them. When the pass-end flush ran,
+all 11039 were modified with no flush bit one level above each (`:62275`,
+`path-flagged 0`, `gap-at-level 0/11039/0`), and the flush saw the top
+indirect block unflagged and skipped it (`:62313`). It returned error 0,
+the pass verified its copy in memory, and the teardown scrapped 42280
+chains. `cd9ffaf` runs the re-flag inside the pass-end flush's own
+transaction, which `hammer2_trans_init()` admits one at a time per PFS
+(`hammer2_flush.c:102-104`).
+
+**The verdict guard.** The verify rounds compare the slave's chains in
+memory, so a flush that never descended to its pins let the pass verify
+an unwritten copy. `cd9ffaf` releases the done list after the flush's
+transaction ends and counts the kept chains still modified
+(`hammer2_sync_done_release()`, `hammer2_synchro.c:514`). A count above
+zero fails the pass with `EIO`, since the flush returns only the errors
+of writes it made (`hammer2_synchro.c:768`).
+
+**The control.** The debug build's `sync_interflush` parameter
+(`hammer2_vfsops.c:321`) interposes the mounted PFS's sync between the end
+of a pass that kept chains and its pass-end flush. Mode 2 re-flags first,
+in the old order, and is the control; `cluster-sync.sh` drives it as
+`H2_INTERFLUSH` with `H2_STOP_ROUND=2`. A first control was inert: the
+knob fired at the teardown's pass end, where `pmp->mp` is already NULL
+(`hammer2_vfsops.c:2899`) and `FLUSH_INODE_STOP` stops at no inode
+(`hammer2_flush.c:502`), so the interposed flush wrote the copy
+(`cluster-run-20261112-020513.klog:58855-58860`). The knob now waits for
+a mounted PFS.
+
+| run | build | mode | interposed pass | scrapped | reading |
+|---|---|---|---|---|---|
+| seq51 control | `87a5162`, no guard | 2 | `completed ... error 00000000 modified 60423`, round 1 acted 60064 failed 0, verified in round 2 | 60582 | `cluster-run-20261112-022618.klog:83537`, `:83538`, `:83550`, `:83575` |
+| seq51 fix | `87a5162` | 1 | re-flag inside the transaction, `completed ... modified 3`, round 1 acted 60064 failed 0 | 0 | `cluster-run-20261112-024320.klog:83539`, `:83541`, `:83542`; `seq51-fix.out:63` |
+| seq52 control | `baa2120` | 2 | scan failed in round 1, census 15580 | 51663 | `cluster-run-20261112-032642.klog:69492`, `:69497`, `:69523` |
+| seq52 fix | `baa2120` | 1 | census 0 | 0 | `seq52-fix.out:63-64` |
+| seq53 control | `b62d485` | 2 | `completed ... error 00000000 modified 60423`, census 20022, round 1 acted 60064 failed 0 error 1, unverified | 60582 | `cluster-run-20261112-061248.klog:83800-83803`, `:83827`; `seq53-ctl-1.out:63` |
+| seq53 fix | `b62d485` | 1 | re-flag inside the transaction, `completed ... modified 3`, census 0 | 0 | `cluster-run-20261112-063019.klog:84108`; `seq53-fix.out:63-64` |
+
+All runs were on `h2kasan-7.3tls`, and each mode re-flags once. seq51's
+two arms read the same round 1, so they differ only in the re-flag's
+place. seq52's control failed its own scan (`:69492 sync_slaves error
+256`), so its census could not be told from that error. seq53's control
+is the guard's reading on a clean scan: the build without the guard
+verified that pass (seq51), and the build with it fails it. Every arm
+also fails the four stop checks the forced sync moves (the stop lands
+after round 1 has copied everything), which do not read the scrap.
+
+The guard counts every deferred inode's chain, including one deferred
+only for a rescan. A pin that a frontend write replaced, detached or
+modified again after the flush also fails its pass. The next pass then
+takes a new snapshot and does the work again, so nothing in memory is
+repaired.
+
+**Natural shape.** Before the fix the shape scrapped in two of the ten
+runs from seq44 to seq48. At `baa2120` (`seq52-nat-1.out` to
+`seq52-nat-6.out`) and at `b62d485` (`seq53-kasan-nat-{1,2}.out` on
+`h2kasan-7.3tls`, `seq53-debug-nat-{1,2}.out` on `h2debug-7.3tls`), every
+run was rc 0 with 64 checks and 0 failed, 0 chains scrapped and 0 census
+lines (`:62`, `:63`, `:75`). After seq53's KASAN runs the guest held 0
+KASAN or UBSAN reports, and after its lockdep runs `debug_locks` read 1
+with 0 warnings (`seq53.log`). Ten clean runs at a two-in-ten rate are
+what a fix predicts but do not prove it alone (0.8^10 is 0.11); the forced
+pairs are the proof.
+
+**latency.sh, rerun.** seq46's latency run exited 2 when the wrapper left
+a guest up, and seq48 reran it at `acadc34` on `h2release-7.3tls`, rc 0
+with 0 failures (`seq48-latency.out:55`). hammer2's `randwrite4k_fsync`
+median is 144 µs, against ext4's 3254 and btrfs's 2897 (`:23`, `:35`,
+`:47`). The comparison does not hold like for like: hammer2's `fsync`
+issues no device cache flush, as recorded in `doc/SECURITY_MODEL.md`,
+while ext4's and btrfs's do. The DEFER on `hammer2_vfs_sync_devs()` asks
+whether the median reads above ext4's, and it does not.
