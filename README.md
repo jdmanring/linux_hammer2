@@ -264,7 +264,7 @@ POSIX sh over grep, sed and git, so they run anywhere:
         $ bash script/test-inventory.sh   # the lists that claim to cover src/ and test/
         $ bash script/test-citations.sh   # every file:line citation in doc/
         $ bash script/test-history.sh     # every changelog row's commit hash
-        $ bash script/test-provenance.sh  # every file under src/ has an origin row
+        $ bash script/test-provenance.sh  # every src/ file has an origin row; DESIGN's carried text
         $ bash script/test-absence.sh     # every "X() is not carried" resolves against src/
         $ bash script/test-doc-prose.sh   # vale over every tracked document
         $ bash script/test-report.sh      # a committed kernel report is a whole capture
@@ -274,7 +274,9 @@ POSIX sh over grep, sed and git, so they run anywhere:
 repository cannot answer alone: a row claiming a byte-for-byte carry is
 re-run with `cmp` against the origin clone, and where a row makes that
 claim and the clone is not on the machine it reports COULD-NOT-RUN
-rather than passing on a table that only agrees with itself.
+rather than passing on a table that only agrees with itself. It also
+checks that `doc/DESIGN.md`'s fenced `upstream` blocks are DragonFly's
+`DESIGN` byte for byte, by git blob, which needs no clone.
 
 One is neither. `script/test-vectors-contract.sh` freezes the output and
 the constant spelling of the two files in `test/` that a gate in another
@@ -325,6 +327,7 @@ including what each gate cannot catch.
 | [doc/CAPABILITIES_MATRIX.md](doc/CAPABILITIES_MATRIX.md) | the operator matrix: what each feature does and its limits |
 | [doc/USER_GUIDE.md](doc/USER_GUIDE.md) | formatting, mounting, snapshots, dedup, compression, sync |
 | [doc/README.roadmap.md](doc/README.roadmap.md) | the order, with the check that ends each step |
+| [doc/DESIGN.md](doc/DESIGN.md) | DragonFly's design document, carried whole, with where the port stands after each part |
 | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | the layering, the shim boundary, the object and locking model |
 | [doc/IO_MODEL.md](doc/IO_MODEL.md) | the DIO layer, and which 64 KiB assumptions are format and which are ours |
 | [doc/CCMS_DESIGN.md](doc/CCMS_DESIGN.md) | the P3 design note: what cache coherency was, and what completing it has to prove |

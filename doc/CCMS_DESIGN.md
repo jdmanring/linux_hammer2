@@ -574,8 +574,13 @@ stops at a design note of its own under the same rule.
 - Where the data state lives. The topology and attribute placements are
   the original's and are recorded above; the data half has no placement in
   any revision, and the chain is where a range state would go. The
-  design document says the lock carries a key range, which is consistent
-  with one CST per range, and does not place the structure.
+  `ccms_lock` in `hammer2_ccms.h` before `94491fa098` gives the lock a key
+  range, `key_beg` to `key_end`
+  (`doc/research/primary/hammer2_ccms.h.deleted:171-172`), which is
+  consistent with one CST per range; the carried header keeps `ccms_cst`
+  and no lock; neither version
+  of the design document mentions a key range on the lock, and neither
+  places the structure.
 - Whether the layer is built before the quorum protocol. The document
   names the cache layer as running *under* the quorum, and the quorum is
   P8, so the layer is a dependency of P8 and not of the transport alone.
@@ -598,6 +603,11 @@ stops at a design note of its own under the same rule.
 
 ## Provenance
 
+- **Version 6 of the same document (08-Dec-2018)**, DragonFly's
+  `sys/vfs/hammer2/DESIGN` at blob `5570027e`, carried whole with this
+  port's notes in `doc/DESIGN.md`. Where it differs from version 3 on a
+  point this note relies on, the note says so; on the cache sub-protocol, the
+  masters' cache state and the preemptive downgrade the two read the same.
 - **Matthew Dillon's HAMMER2 design document, 2015-04-03 (v3)**, on the
   DragonFly users list, read 2026-10-10 by `defuddle parse`:
   https://lists.dragonflybsd.org/pipermail/users/2015-April/448614.html

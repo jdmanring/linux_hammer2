@@ -23,6 +23,16 @@ hammer2.h.at-94491fa098-parent
     git show 94491fa098^:sys/vfs/hammer2/hammer2.h
     topo_cst in struct hammer2_inode, and the aliasing comment above it.
 
+../../DESIGN.md (doc/DESIGN.md, the upstream blocks)
+    DragonFly sys/vfs/hammer2/DESIGN, version 6 of 08-Dec-2018, git blob
+    5570027ee6f50edaa6da82c56b4cf54e920a6fc6 (git hash-object of the file
+    in the DragonFly clone; the forge mirror DragonFlyBSD/DragonFlyBSD
+    names a4cea70ee4, 2023-05-12, as its last commit, read 2026-11-12).
+    Carried whole in fenced blocks with the port's notes between them;
+    script/test-provenance.sh reassembles the blocks and checks the blob.
+    The file carries no notice of its own; the repository's COPYRIGHT
+    covers it.
+
 DILLON_HAMMER2_DESIGN_2015.md
     defuddle parse https://lists.dragonflybsd.org/pipermail/users/2015-April/448614.html --md
     Matthew Dillon's HAMMER2 design document, 2015-04-03 (v3). The

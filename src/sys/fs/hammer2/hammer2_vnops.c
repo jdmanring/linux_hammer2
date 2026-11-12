@@ -2261,7 +2261,7 @@ hammer2_bmap(struct address_space *mapping, sector_t lbn)
  *                          distinguished from a punch afterwards.
  *   KEEP_SIZE              leave i_size alone, which is what a punch always
  *                          does and what a plain allocate does not.
- *   plain allocate         zero the range and extend i_size to cover it.
+ *   plain allocate         extend i_size to cover the range; its bytes stay.
  *
  * Preallocation in the sense ext4 means it, blocks reserved and readable as
  * zeros, is what this cannot provide: the media does not hold a zero block,
@@ -2857,10 +2857,10 @@ hammer2_writepages(struct address_space *mapping,
 	 * alone, and the flush stops at an inode it does not find there
 	 * (HAMMER2_FLUSH_INODE_STOP), so an inode whose blocks the strategy
 	 * has just written or deleted is queued here, after the writes, as
-	 * write_iter queues after its write.  Upstream needs no such line:
-	 * its sync scans every vnode for dirty buffers and requeues the
-	 * inode behind them (hammer2_vfs_sync_pmp(), the vclrisdirty()
-	 * branch).  Here a folio dirtied through a mapping, or by the zero
+	 * write_iter queues after its write.  Upstream has no such line;
+	 * which of DragonFly's paths queues a mapped write's inode there
+	 * is not read here, and the line is the measured repair below.
+	 * Here a folio dirtied through a mapping, or by the zero
 	 * range of fallocate(2), reached the strategy with its inode on no
 	 * queue, and sync(2) and unmount both left the new blocks
 	 * unreferenced: a mapped write to a synced file read back as the old

@@ -156,6 +156,10 @@ is imported, and the script says so in a DEFER.
 5. Attribute Srinivas and Broukhis wherever the derived-from lines say so.
 6. The clustering files the ports drop (`ccms`, `iocom`, `msgops`,
    `synchro`) are BSD-3 like the rest and are not imported for H1 to H6.
+7. A document carried from the origin tree is covered as the sources are:
+   `doc/DESIGN.md` carries DragonFly's `sys/vfs/hammer2/DESIGN`, which has
+   no notice of its own, under the repository's `COPYRIGHT`, and
+   `doc/research/primary/PROVENANCE.txt` records where it came from.
 
 ## Open
 

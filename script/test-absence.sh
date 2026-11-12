@@ -30,8 +30,9 @@
 # whatever else is true of it, and saying so reads to anyone outside this
 # repository as saying the code is absent.
 #
-# Population. doc/README*.md, doc/ARCHITECTURE.md, doc/IO_MODEL.md and the
-# module sources. CHANGELOG.md is excluded ON PURPOSE: it is a dated
+# Population. Every doc/README*.md, doc/ARCHITECTURE.md, doc/IO_MODEL.md,
+# doc/DESIGN.md, README.md and the module sources; the run prints the
+# file count. CHANGELOG.md is excluded ON PURPOSE: it is a dated
 # append-only record, so its rows are claims about the day they were written
 # and cannot go stale. doc/research/ and doc/upstream/ are excluded for the
 # same reason, being imported deliverables and filing drafts against other
@@ -96,7 +97,7 @@ fail=0
 # phrase that started this gate's existence, "Nothing mounts yet" in
 # an instructions file, broke across two lines and survived a hand sweep that
 # matched it nowhere.
-files=$(ls doc/README*.md doc/ARCHITECTURE.md doc/IO_MODEL.md README.md 2>/dev/null)
+files=$(ls doc/README*.md doc/ARCHITECTURE.md doc/IO_MODEL.md doc/DESIGN.md README.md 2>/dev/null)
 files="$files $(find src -name '*.c' -o -name '*.h' 2>/dev/null)"
 
 nfile=0

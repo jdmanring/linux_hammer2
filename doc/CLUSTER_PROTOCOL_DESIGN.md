@@ -17,7 +17,10 @@ inside the delegated work and said to be, and nothing is parked.
 
 Read against the DragonFly clone at `250a8b4` with `lib/libdmsg` and
 `sbin/hammer2` in its sparse checkout, Dillon's 2015 design document in
-`doc/research/primary/DILLON_HAMMER2_DESIGN_2015.md`, the handoff's sixth
+`doc/research/primary/DILLON_HAMMER2_DESIGN_2015.md` (version 3; version
+6 of 2018, carried with the port's notes in `doc/DESIGN.md`, is the
+version that names `update_tid`, the field this note takes as the
+format's cluster field), the handoff's sixth
 work package and security model under `proposals/hammer2-completion-handoff/`
 (`HAMMER2_AGENT_HANDOFF.md`, sections 10 and 19), its cluster state model
 (`HAMMER2_CLUSTER_STATE_MODEL.md`, invariants S1 to S10 and L1 to L4), the

@@ -10,6 +10,7 @@ Which file answers which question.
 | What are the milestones, and where is the tree against them? | `README.roadmap.md` |
 | How is each gate run, what does it need, what does a fleet script measure? | `README.testing.md` |
 | Why was a port decision taken the way it was? | `README.porting.md` |
+| What did Dillon design, and where does this port stand against each part of it? | `DESIGN.md` |
 | How is the DragonFly source carried, and where is the shim boundary? | `ARCHITECTURE.md` |
 | What does the DIO layer do on Linux, and which sizes are the format's? | `IO_MODEL.md` |
 | What was the cache coherency protocol, and what would completing it have to prove? | `CCMS_DESIGN.md` |

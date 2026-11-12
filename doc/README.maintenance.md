@@ -16,7 +16,8 @@ came from, the commit of that tree it was taken at, its license, and
 whether the carry is `identical`, `derived` or `ours`.
 `script/test-provenance.sh` reads that file on every push and every CI
 run, asserts that every file has a row, and compares each `identical` row
-byte for byte against the origin clone when the clone is present. A
+byte for byte against the origin clone when the clone is present; it also
+checks `doc/DESIGN.md`'s carried upstream text against DragonFly's blob. A
 carried file that drifts from its origin without its row being changed
 fails the gate; a row changed to `derived` has to say what the port
 edited, and the `XXX` marks in the file itself are the second record of

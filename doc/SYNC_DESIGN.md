@@ -116,7 +116,8 @@ own `/* XXX doesn't work with real cluster */` (`:591`).
 A cluster is the set of PFS roots sharing a `pfs_clid`, wherever their
 media is (design document lines 525-533): mounting any one of them
 integrates every entry under that media's super-root, and "ALL CLUSTER
-ELEMENTS ARE TREATED ACCORDING TO TYPE NO MATTER WHICH ONE YOU MOUNT". The
+ELEMENTS ARE TREATED ACCORDING TO TYPE NO MATTER WHICH ONE YOU MOUNT", a
+sentence version 6 of the document drops (`doc/DESIGN.md`, "Clustering"). The
 types are DUMMY, CACHE, SLAVE, MASTER, SOFT_SLAVE and SOFT_MASTER (lines
 546-559), with SNAPSHOT and AUTOSNAP as SLAVE sub-types, and any copy can
 become its own MASTER by taking a new cluster id (lines 561-567). The four
@@ -144,11 +145,18 @@ any remaining vnodes over to the updated copy", typically every 30 to 60
 seconds. A MASTER that fell out of the quorum is synchronized by the same
 mechanic, with passes concurrent with modifying operations and a final
 pass with quorum operations blocked. Synchronization is logical and
-incremental, driven by `modify_tid` (lines 327-348): a sub-tree whose root
+incremental, driven in version 3 by `modify_tid` (lines 327-348): a sub-tree whose root
 `modify_tid` matches is skipped, an out-of-sync node is updated bottom-up,
 the pass can be interrupted and restarted at any time, and media flushes
 can and must occur while it runs. The carried thread has every one of
 those four properties on local elements; `cluster-sync.sh` measured them.
+Version 6 (2018) gives the skip to a third field, `update_tid`, set
+bottom-up by the synchronizer, and says a flush no longer propagates
+`modify_tid` upward;
+neither tree's code sets or reads `update_tid`, the carried thread skips by
+`modify_tid` as version 3 says, and upstream's own flush still raises a
+parent's `modify_tid` to its child's (`doc/DESIGN.md`, "MIRROR_TID,
+MODIFY_TID, UPDATE_TID").
 
 ### The network block device
 
@@ -1429,6 +1437,10 @@ counter.
 
 ## Provenance
 
+- **Version 6 of the same document (08-Dec-2018)**, DragonFly's
+  `sys/vfs/hammer2/DESIGN` at blob `5570027e`, carried whole with this
+  port's notes in `doc/DESIGN.md`. Where it differs from version 3 on a
+  point this note relies on, the note says so at that point.
 - **Matthew Dillon's HAMMER2 design document, 2015-04-03 (v3)**, the
   local copy `doc/research/primary/DILLON_HAMMER2_DESIGN_2015.md`, captured
   2026-10-10 as `doc/research/primary/PROVENANCE.txt` records. Line
