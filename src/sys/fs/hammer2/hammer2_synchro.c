@@ -105,7 +105,9 @@ typedef struct hammer2_deferred_list {
 	 * modified chains left after the cluster unmount's sync, the flush
 	 * complete in 15 ms with error 0, 22201 chains scrapped unflushed at
 	 * the device teardown and the slave 16000 inodes short.  The path
-	 * above each kept chain is re-flagged before the flush.
+	 * above each kept chain is re-flagged inside the pass-end flush's
+	 * transaction, so no sync of this PFS runs between the two, and a
+	 * kept chain the flush leaves modified fails the pass.
 	 */
 	hammer2_deferred_ip_t	*done;
 	/*
@@ -465,12 +467,51 @@ static void hammer2_sync_setflush(hammer2_chain_t *);
 
 /*
  * XXX Linux: re-flag the path from each kept slave inode chain to the volume
- * root and release the done list; run before the pass-end flush.  The chain
- * is locked so its parent pointer is stable for the walk, as the arms hold
- * theirs.
+ * root; run inside the pass-end flush's transaction.  The chain is locked so
+ * its parent pointer is stable for the walk, as the arms hold theirs.  The
+ * done list is left for hammer2_sync_done_release() after the flush.
  */
 static void
 hammer2_sync_reflag(hammer2_deferred_list_t *list)
+{
+	hammer2_deferred_ip_t *defer;
+	int n = 0;
+
+	for (defer = list->done; defer != NULL; defer = defer->next) {
+		if (defer->pin) {
+			hammer2_chain_lock(defer->pin, HAMMER2_RESOLVE_NEVER);
+			hammer2_sync_setflush(defer->pin);
+			hammer2_chain_unlock(defer->pin);
+			++n;
+		}
+	}
+	if (n && (hammer2_debug & 0x8000))
+		kprintf("sync_flush: reflagged %d inode path(s)\n", n);
+}
+
+/*
+ * XXX Linux: release the done list after the pass-end flush, outside its
+ * transaction, and count the kept chains still modified: every deferred
+ * inode's, one deferred only for a rescan included.  The verify rounds
+ * read the slave's chains in memory, not its media, and the flush returns
+ * only the errors of writes it made, so a flush that never descended to
+ * its pins returns success: with the re-flag before an interposed sync,
+ * the flush reported error 0 with 60423 chains modified, the next round
+ * verified, and the teardown scrapped 60582
+ * (cluster-run-20261112-022618.klog:83537-83575).  A kept chain still
+ * modified fails the flush instead, while each pin is attached under the
+ * element root the flush descends from.  A pin a frontend write replaced
+ * or detached, or modified again after the flush (normal transactions do
+ * not interlock with ISFLUSH), counts too and fails a pass that wrote its
+ * copy; the next pass takes a new snapshot and does the work again, so a
+ * frontend rewriting the same inodes keeps every pass failing.  The drops
+ * follow the transaction, so a drop's flush is not the one reported: a
+ * pin's last drop with no parent flushes the chain TOP|ALL with no
+ * transaction when it has children, and clears MODIFIED unwritten when it
+ * has none (hammer2_chain_lastdrop()).
+ */
+static int
+hammer2_sync_done_release(hammer2_deferred_list_t *list)
 {
 	hammer2_deferred_ip_t *defer;
 	int n = 0;
@@ -479,14 +520,13 @@ hammer2_sync_reflag(hammer2_deferred_list_t *list)
 		list->done = defer->next;
 		if (defer->pin) {
 			hammer2_chain_lock(defer->pin, HAMMER2_RESOLVE_NEVER);
-			hammer2_sync_setflush(defer->pin);
+			if (defer->pin->flags & HAMMER2_CHAIN_MODIFIED)
+				++n;
 			hammer2_chain_unlock(defer->pin);
-			++n;
 		}
 		hammer2_sync_defer_free(defer);
 	}
-	if (n && (hammer2_debug & 0x8000))
-		kprintf("sync_flush: reflagged %d inode path(s)\n", n);
+	return (n);
 }
 
 /****************************************************************************
@@ -595,14 +635,83 @@ hammer2_sync_setflush(hammer2_chain_t *chain)
  * a per-pass count of actions and stamps, read here, proved to cover every
  * mutation the pass can make.
  */
+#if defined(HAMMER2_LOCKDEBUG)
+/*
+ * XXX Linux: the debug build's knob sync_interflush, set to 1 or 2, runs
+ * the flush a mounted PFS's sync runs on the root, FLUSH_INODE_STOP in a
+ * flush transaction of its own, after a pass that kept chains has finished
+ * its scan and before the pass-end flush's transaction, where an unmount's
+ * sync landed when the re-flag ran outside it.  2 runs the re-flag first,
+ * as it ran then and in place of the flush's own, and is the control: its
+ * pass-end flush must leave the kept chains modified.  The knob waits for
+ * a pass that kept chains while the PFS is mounted, since
+ * FLUSH_INODE_STOP stops at an inode only under a
+ * mount (hammer2_flush_core()) and an unmount clears pmp->mp before the
+ * teardown's last pass ends, and clears itself once spent.
+ */
 static int
-hammer2_sync_flush(hammer2_thread_t *thr)
+hammer2_sync_interflush_run(hammer2_thread_t *thr,
+    hammer2_deferred_list_t *list)
+{
+	hammer2_pfs_t *pmp = thr->pmp;
+	hammer2_chain_t *chain;
+	int mode = hammer2_sync_interflush;
+	int error = 0;
+
+	if (mode != 1 && mode != 2)
+		return (0);
+	if (list->done == NULL || pmp->mp == NULL)
+		return (0);
+	WRITE_ONCE(hammer2_sync_interflush, 0);
+	if (mode == 2)
+		hammer2_sync_reflag(list);
+	hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
+	hammer2_inode_lock(pmp->iroot, HAMMER2_RESOLVE_SHARED);
+	chain = hammer2_inode_chain(pmp->iroot, thr->clindex,
+	    HAMMER2_RESOLVE_ALWAYS);
+	hammer2_inode_unlock(pmp->iroot);
+	if (chain) {
+		error = hammer2_flush(chain, HAMMER2_FLUSH_TOP |
+		    HAMMER2_FLUSH_INODE_STOP | HAMMER2_FLUSH_FSSYNC);
+		hammer2_chain_unlock(chain);
+		hammer2_chain_drop(chain);
+	}
+	hammer2_trans_done(pmp, HAMMER2_TRANS_ISFLUSH);
+	kprintf("sync_interflush: clindex %d mode %d chain %d error %08x\n",
+	    thr->clindex, mode, chain != NULL, error);
+	return (mode == 2);
+}
+#endif
+
+static int
+hammer2_sync_flush(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 {
 	hammer2_pfs_t *pmp = thr->pmp;
 	hammer2_chain_t *chain;
 	int error = 0;
+	int n, reflagged = 0;
 
+#if defined(HAMMER2_LOCKDEBUG)
+	reflagged = hammer2_sync_interflush_run(thr, list);
+#endif
+	/*
+	 * XXX Linux: the re-flag runs inside the transaction.  Outside it an
+	 * unmount's sync took the flush transaction between the re-flag and
+	 * this one, cleared ONFLUSH from the indirect blocks on its way down
+	 * to the kept inodes it stops at, and this flush then skipped the
+	 * top indirect block: 11039 kept inode chains of 11039 left modified
+	 * with the path's first gap one level above each
+	 * (cluster-run-20261112-013415.klog:62238-62313), 42280 chains
+	 * scrapped at the teardown (:63379).  hammer2_trans_init() admits
+	 * one flush transaction per PFS at a time, so no flush of this PFS
+	 * runs between the two.  A flush through another PFS of the device,
+	 * the super-root's or the volume's, reaches this element only once
+	 * pmp->mp is cleared, and then writes past the inodes rather than
+	 * stopping at them.
+	 */
 	hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
+	if (!reflagged)		/* the knob's control re-flagged before */
+		hammer2_sync_reflag(list);	/* XXX Linux: see hammer2_deferred_list.done */
 	hammer2_inode_lock(pmp->iroot, HAMMER2_RESOLVE_SHARED);
 	chain = hammer2_inode_chain(pmp->iroot, thr->clindex,
 	    HAMMER2_RESOLVE_ALWAYS);
@@ -656,6 +765,13 @@ hammer2_sync_flush(hammer2_thread_t *thr)
 		    thr->clindex);
 	}
 	hammer2_trans_done(pmp, HAMMER2_TRANS_ISFLUSH);
+	n = hammer2_sync_done_release(list);
+	if (n) {
+		kprintf("sync_flush: clindex %d %d kept chain(s) left modified\n",
+		    thr->clindex, n);
+		if (error == 0)
+			error = HAMMER2_ERROR_EIO;
+	}
 
 	return (error);
 }
@@ -878,8 +994,7 @@ next_key:	/* XXX Linux: 1b */
 	 * same path as a scan error, which the loop above treats as a
 	 * pass to retry rather than one that succeeded.
 	 */
-	hammer2_sync_reflag(list);	/* XXX Linux: see hammer2_deferred_list.done */
-	ferror = hammer2_sync_flush(thr);
+	ferror = hammer2_sync_flush(thr, list);
 	if (ferror && error == 0)
 		error = ferror;
 

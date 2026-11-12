@@ -1319,6 +1319,7 @@ extern int hammer2_fail_alloc_count;	/* Linux */
 extern int hammer2_sync_force_rescan;	/* Linux */
 extern int hammer2_sync_fail_stamp;	/* Linux */
 extern int hammer2_sync_collapse_parent;	/* Linux */
+extern int hammer2_sync_interflush;	/* Linux */
 extern int hammer2_sync_assert_cn;	/* Linux */
 extern int hammer2_sync_narrow_alter;	/* Linux */
 extern unsigned int hammer2_xop_reruns;	/* Linux */

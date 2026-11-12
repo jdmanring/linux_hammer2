@@ -188,6 +188,8 @@ if [ "${1:-}" = "--selftest" ]; then
 	sample 'f' '[   74.858182] sync_slaves pfs CL clindex 0'
 	sample 'f' '[   74.858321] sync_slaves error 0 defer 0000000000000000'
 	sample 'f' '[  311.165932] syncsnap: collapse of 0000000000005200/9 on demand at 1'
+	sample 'f' '[  795.434272] sync_interflush: clindex 1 mode 2 chain 1 error 00000000'
+	sample 'f' '[  795.653465] sync_flush: clindex 1 15580 kept chain(s) left modified'
 	sample 'f' '[   80.080920] syncsnap: begin clindex 0'
 	sample 'f' '[   23.697866] syncsnap: stale CL.h2sync-src deleted'
 	sample 'f|taken' '[   80.134010] syncsnap: target CL.h2sync-tgt taken'
@@ -300,6 +302,8 @@ if [ "${1:-}" = "--selftest" ]; then
 	pat a 'syncsnap: narrowed clindex' 1
 	pat a 'syncsnap: (verified|newer|unverified|interrupted|detached) clindex' 5
 	pat a 'syncsnap: end clindex' 1
+	pat a 'sync_interflush: clindex' 1
+	pat a 'kept chain.s. left modified' 1
 	pat a 'syncsnap: idle clindex' 1
 	pat a 'syncsnap: idlestamp' 1
 	pat a 'syncsnap: kept absent ' 1
@@ -568,6 +572,21 @@ COLLAPSE=${H2_COLLAPSE:-0}
 # after a first that copied the set, the shape whose teardown scrapped the
 # copy in two KASAN runs on 2026-11-09, without waiting on timing.
 COLLAPSE_LATE=${H2_COLLAPSE_LATE:-0}
+# H2_INTERFLUSH=1 or 2, in the default shape with the knob build and
+# H2_STOP_ROUND=2, runs the flush a mounted PFS's sync runs on its root
+# between the end of phase 4's round 1, which kept chains, and that round's
+# own flush, where an unmount's sync landed in the KASAN run that scrapped
+# 42280 chains on 2026-11-12. The stop round keeps the cluster mounted
+# until round 1 has ended: the knob waits for a mounted PFS, and a pass
+# ending in the teardown has none, so the stop in round 1 left it unspent
+# (2026-11-12). 1 re-flags the kept chains' paths inside the pass-end
+# flush's transaction, as the module does, and must scrap nothing; 2
+# re-flags them before the interposed flush, as the module did, in place
+# of its re-flag inside the transaction, and is the control: its pass-end
+# flush must leave the copy modified and its teardown scrap it. Either way
+# the knob must be spent, and it needs H2_DEBUG with 0x8000, whose
+# completed line bounds the pass the census is read from.
+INTERFLUSH=${H2_INTERFLUSH:-0}
 # The module's debug mask. 0x8000 prints a pass's bracket and an inode's
 # marking; 0x0001 adds the carried prints in hammer2_sync_insert(),
 # _replace() and _destroy(), one line per chain the thread writes, which
@@ -634,6 +653,13 @@ case $COLLAPSE_LATE in 0) ;; 1) [ "$COLLAPSE" != 0 ] || {
 	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE_LATE=1 needs H2_COLLAPSE=1 or 2" >&2; exit 2; } ;; *)
 	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE_LATE is 0 or 1" >&2; exit 2 ;;
 esac
+case $INTERFLUSH in 0|1|2) ;; *)
+	echo "cluster: COULD-NOT-RUN: H2_INTERFLUSH is 0, 1 or 2" >&2; exit 2 ;;
+esac
+if [ "$INTERFLUSH" != 0 ] && { [ "$TREE" != 0 ] || [ "$STOP_ROUND" != 2 ] || [ $(( H2DEBUG & 0x8000 )) = 0 ] || { [ "$LOCKDEBUG" != 1 ] && [ -z "${H2_KO:-}" ]; }; }; then
+	echo "cluster: COULD-NOT-RUN: H2_INTERFLUSH needs the default shape (H2_PASS_TREE unset), H2_STOP_ROUND=2, H2_DEBUG with 0x8000, and H2_LOCKDEBUG=1 or an H2_KO built with it" >&2
+	exit 2
+fi
 if [ "$COLLAPSE" != 0 ] && { [ "$TREE" != 0 ] || { [ "$LOCKDEBUG" != 1 ] && [ -z "${H2_KO:-}" ]; }; }; then
 	echo "cluster: COULD-NOT-RUN: H2_COLLAPSE needs the default shape, not H2_PASS_TREE, and H2_LOCKDEBUG=1 (or an H2_KO built with it)" >&2
 	exit 2
@@ -875,6 +901,20 @@ finish() {
 	# with no summary line read nothing and cannot pass as zero.
 	echo "scrapped $(grep -o 'unmount scrapped [0-9]* chain' $K | awk '{s += $3} END {print s + 0}')"
 	echo "scrap-summaries $(grep -c 'unmount scrapped [0-9]* chain' $K)"
+	echo "kept-left-modified $(klog 'kept chain.s. left modified')"
+	# The census of the pass the knob interposed in: the first
+	# completed line of its clindex after the sync_interflush line ends
+	# that pass's flush (or its "no element chain" line, when it had none
+	# to flush), and the next sync_flush line of that clindex is
+	# its census or the next pass's start. The knob spends only on a pass
+	# that kept chains, so a 0 here is a census over a non-empty set.
+	echo "interflush-left $(awk '
+		c == "" && /sync_interflush: clindex/ {
+			for (i = 1; i < NF; i++) if ($i == "clindex") c = $(i + 1); next }
+		c == "" || !index($0, "sync_flush: clindex " c " ") { next }
+		!seen { if ($0 ~ / completed / || index($0, " no element chain")) seen = 1; next }
+		{ if ($0 ~ /kept chain.s. left modified/) { for (i = 1; i < NF; i++) if ($i == "clindex") v = $(i + 2) } else v = 0; exit }
+		END { if (v != "") print v; else if (seen) print 0 }' $K)"
 	# The guest's virtual GPU times out waiting for a vblank under a heavy
 	# write (drm_vblank.c and drm_atomic_helper.c WARNINGs, two in one run on
 	# 2026-10-18), which is the guest's and not the port's. Those lines name
@@ -1544,6 +1584,12 @@ if [ "$H2_COLLAPSE" != 0 ]; then
 		echo "cluster: COULD-NOT-RUN: no sync_collapse_parent knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
 	[ "$H2_COLLAPSE_LATE" = 1 ] || echo "$H2_COLLAPSE" > /sys/module/hammer2/parameters/sync_collapse_parent
 fi
+if [ "$H2_INTERFLUSH" != 0 ]; then
+	[ -e /sys/module/hammer2/parameters/sync_interflush ] || {
+		echo "cluster: COULD-NOT-RUN: no sync_interflush knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
+	if0=$(klog 'sync_interflush: clindex')
+	echo "$H2_INTERFLUSH" > /sys/module/hammer2/parameters/sync_interflush
+fi
 mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
 echo "backlog-threads-up $(ps -eo comm | grep -c '^h2nod-CL')"
 # The copy has begun once its update lines pass the baseline by more than a
@@ -1636,6 +1682,7 @@ while [ $(( ($(date +%s) - t0) * 1000 )) -lt "${H2_STOP_DEPTH_MS:-240000}" ]; do
 done
 echo "interrupt-stop-copied $(( $(copied) - u1 )) wanted $STOP_DEPTH after $(( $(date +%s) - t0 )) s"
 [ "$H2_COLLAPSE_LATE" = 1 ] && echo "collapse-late-armed-at ${armed_at:-never}"
+[ "$H2_INTERFLUSH" != 0 ] && echo "interflush $(cat /sys/module/hammer2/parameters/sync_interflush) $(( $(klog 'sync_interflush: clindex') - if0 ))"
 echo "interrupt-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
 timeout 60 umount /mnt/h2c
@@ -1766,7 +1813,7 @@ fingerprint() {	# image
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
 scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
-GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_STOP_ROUND=$STOP_ROUND H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE H2_COLLAPSE_LATE=$COLLAPSE_LATE TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
+GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_STOP_ROUND=$STOP_ROUND H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE H2_COLLAPSE_LATE=$COLLAPSE_LATE H2_INTERFLUSH=$INTERFLUSH TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
 	# destroyed under it (a power cut, so the session ends with it), both
@@ -2272,6 +2319,24 @@ fi
 e=$(val resume-errors); [ "${e:-1}" = 0 ]; check "no pass reports an error across the interruption" $? "${e:-none}"
 fi
 echo "  raw   space start=$(val space-start) end=$(val space-end) after-bulkfree=$(val space-after-bulkfree) bulkfree-rc=$(val space-bulkfree-rc-1)/$(val space-bulkfree-rc-2) free blocks of the master's device, snapshot passes $(val snap-passes)"
+if [ "$INTERFLUSH" != 0 ]; then
+	# Read before the guest's unmount of the cluster, so a spend after
+	# the resume cannot pass it.
+	ikn=$(val interflush | awk '{print $1}'); iln=$(val interflush | awk '{print $2}')
+	[ "${ikn:-x}" = 0 ] && [ "${iln:-0}" -ge 1 ] 2>/dev/null; check "the interposed flush runs, mode $INTERFLUSH" $? "knob left ${ikn:-none}, ${iln:-no} sync_interflush line(s)"
+fi
+# A pass-end flush that leaves a kept chain modified fails its pass rather
+# than letting the pass verify the copy in memory; only the control's
+# order leaves one. Under the knob the census read is the interposed
+# pass's own, over the chains it kept.
+m=$(val kept-left-modified); b=$(val interflush-left)
+if [ "$INTERFLUSH" = 2 ]; then
+	[ "${b:-0}" -ge 1 ] 2>/dev/null; check "the pass-end flush fails the pass that left its copy unwritten" $? "${b:-no census} chain(s) in the interposed pass, ${m:-no} line(s) in the run"
+elif [ "$INTERFLUSH" = 1 ]; then
+	[ "${b:-1}" = 0 ] && [ "${m:-1}" = 0 ]; check "no pass-end flush leaves a kept chain modified, the interposed pass's included" $? "${b:-no census} chain(s) in the interposed pass, ${m:-no reading} line(s) in the run"
+else
+	[ "${m:-1}" = 0 ]; check "no pass-end flush leaves a kept chain modified" $? "${m:-no reading} line(s)"
+fi
 s=$(val scrapped); n=$(val scrap-summaries); [ "${s:-1}" = 0 ] && [ "${n:-0}" -ge 1 ] 2>/dev/null; check "nothing the thread copied is scrapped unwritten" $? "${s:-none} chains scrapped, ${n:-no} teardown summaries"
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
 if [ "$want_asan" = y ]; then

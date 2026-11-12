@@ -313,6 +313,13 @@ module_param_named(sync_narrow_alter, hammer2_sync_narrow_alter, int, 0644);
  */
 int hammer2_sync_collapse_parent;
 module_param_named(sync_collapse_parent, hammer2_sync_collapse_parent, int, 0644);
+/*
+ * XXX Linux: 1 or 2 runs a mounted PFS's root sync flush between a pass's
+ * scan and its pass-end flush, the re-flag after it (1) or before it (2,
+ * the control), and clears itself once spent.  Debug build only.
+ */
+int hammer2_sync_interflush;
+module_param_named(sync_interflush, hammer2_sync_interflush, int, 0644);
 #endif
 
 /*

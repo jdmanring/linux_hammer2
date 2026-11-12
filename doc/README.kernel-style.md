@@ -427,6 +427,15 @@ release form of the debug build's fill counter, `HAMMER2_FILL_COUNT(v)`,
 expands to `((void)0)` and leaves its argument unused, since the counter
 exists only in the debug build. No category is new.
 
+1,677 to 1,677, one hit each way, when the pass-end flush moved its
+re-flag inside its own transaction: the debug build's
+`hammer2_sync_interflush_run()` adds the BSD continuation indent on its
+second parameter line, and `hammer2_sync_flush()`'s closing `return
+(error);`, unchanged, stops being reported once the done-list census's
+`if` block sits above it where `hammer2_trans_done()` sat; both read by
+running the recorded checker on the file at HEAD and in the tree. No
+category is new and nothing was fixed rather than baselined.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

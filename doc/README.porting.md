@@ -1519,7 +1519,18 @@ cut the path to every subtree copied before it, and the first copy long
 enough to meet one lost 22201 chains at the device teardown with the
 flush reporting completion in 15 ms. Every deferral the pass finishes
 is kept with its slave inode chain referenced until the pass-end flush,
-which re-flags the path from each to the volume root first.
+which re-flags the path from each to the volume root first, inside its
+own flush transaction. Run before the transaction, the re-flag was
+erased by the cluster unmount's sync, which took the transaction between
+the two: 11039 kept inodes of 11039 were left modified, the first
+unflagged block one level above each, and 42280 chains were scrapped at
+the teardown (2026-11-12). `hammer2_trans_init()` admits one flush
+transaction per PFS at a time, so nothing runs between them now; the
+debug build's `sync_interflush` puts a sync there, and with the re-flag
+moved back before it is the control. That control also showed the pass's
+verify rounds verifying a copy still unwritten, since they compare the
+slave's chains in memory, so a kept chain the pass-end flush leaves
+modified now fails the pass.
 
 **The target.** Before the first pass after a verified one the slave
 element is snapshotted on its own device; the target is deleted when a
