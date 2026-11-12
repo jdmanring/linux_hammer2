@@ -490,6 +490,8 @@ SETUP cold reattach failed"
 		fi
 		echo "  wbrace: $(printf '%s\n' "$wb" | awk '{print $2"="$4}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
 		echo "  race: $(printf '%s\n' "$lines" | awk '{print $9}' | sort | uniq -c | tr -s ' ' | tr '\n' ';') answers $(printf '%s\n' "$lines" | awk '{print $3}' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+	elif [ "$WINDOW" != 0 ]; then
+		:	# the exerciser's checks and the module's parameter, read above
 	elif [ "$CONTEND" != 0 ]; then
 		for ph in alone seeking; do
 			c=$(printf '%s\n' "$out" | command grep -c "^seekm-contend $ph ")
@@ -573,7 +575,7 @@ SETUP cold reattach failed"
 	fi
 	[ "$fsck_rc" -eq 0 ] && echo "  ok    fsck_hammer2 clean" || {
 		echo "  FAIL  fsck_hammer2 exit $fsck_rc"; fail=$((fail + 1)); }
-	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || { [ "$TIME" = 1 ] && echo time || { [ "$COLD" = 1 ] && echo cold || echo contend; }; }), $REPEAT repeat(s), $fail failure(s)"
+	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || { [ "$TIME" = 1 ] && echo time || { [ "$COLD" = 1 ] && echo cold || { [ "$WINDOW" != 0 ] && echo "window $WINDOW" || echo contend; }; }; }), $REPEAT repeat(s), $fail failure(s)"
 	rm -f "$IMG"
 	[ "$fail" -eq 0 ]
 	exit
