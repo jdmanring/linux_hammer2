@@ -1176,8 +1176,20 @@ sleep 12
 echo "lone-passes $(passes LONE)"
 c=$(passes LONE); n=0
 while [ "$(passes LONE)" = "$c" ] && [ $n -lt 80 ]; do sleep 0.1; n=$((n + 1)); done
-t0=$(date +%s%N); umount /mnt/h2m; t1=$(date +%s%N)
+# The unmount's kernel stack, read once it has run a second, says where a
+# slow one waited: a stop the thread never woke for waits in
+# hammer2_thr_wait(), and a device slow to flush its cache waits in the
+# block layer (p7-notes/seq43-lone.out: 1683 ms in blkdev_issue_flush()
+# with the thread idle in its sleep).
+t0=$(date +%s%N); umount /mnt/h2m & up=$!; ls=
+while kill -0 $up 2>/dev/null; do
+	[ -z "$ls" ] && [ $(( ($(date +%s%N) - t0) / 1000000 )) -ge 1000 ] &&
+	    ls=$(awk '{print $2}' /proc/$up/stack 2>/dev/null | tr '\n' ' ')
+	sleep 0.02
+done
+t1=$(date +%s%N); wait $up
 echo "lone-umount-ms $(( (t1 - t0) / 1000000 ))"
+echo "lone-umount-stack ${ls:-none}"
 echo "lone-threads-after $(ps -eo comm | grep -c '^h2nod-LONE')"
 # The remount starts LONE's thread again, and pfs-delete stops it through
 # hammer2_pfsdealloc(); the PFS goes so the two volumes differ only by CL.
@@ -2017,7 +2029,16 @@ else
 t=$(val lone-thread)
 case "$t" in I*|S*) r=0 ;; *) r=1 ;; esac; check "lone SLAVE's thread exists and sleeps idle" $r "state '${t:-none}'"
 p=$(val lone-passes); [ "${p:-0}" -ge 2 ] 2>/dev/null; check "it passes every five seconds" $? "${p:-0} passes in 12 s"
-ms=$(val lone-umount-ms); [ "${ms:-99999}" -lt 1000 ] 2>/dev/null; check "unmount right after a pass stops it at once" $? "${ms:-none} ms; a lost wakeup costs about 5000"
+ms=$(val lone-umount-ms); st=$(val lone-umount-stack)
+# A slow unmount whose stack at 1 s is the device's cache flush, and not a
+# wait on the thread, read the device and not the stop; any other stack,
+# or none, fails.
+if [ "${ms:-0}" -ge 1000 ] 2>/dev/null && case "$st" in
+    *hammer2_thr_wait*) false ;; *blkdev_issue_flush*|*submit_bio_wait*) true ;; *) false ;; esac; then
+	cnr="${cnr:+$cnr; }the lone unmount waited ${ms} ms on the device's flush ($st), so it read nothing about the thread's stop"
+else
+	[ "${ms:-99999}" -lt 1000 ] 2>/dev/null; check "unmount right after a pass stops it at once" $? "${ms:-none} ms; a lost wakeup costs about 5000$([ "${ms:-0}" -ge 1000 ] 2>/dev/null && echo "; stack at 1 s: ${st:-none}")"
+fi
 a=$(val lone-threads-after); [ "${a:-1}" = 0 ]; check "no thread is left" $? "${a:-none}"
 a=$(val lone-thread-remount); [ "${a:-0}" = 1 ]; check "a remount starts the thread again" $? "${a:-none}"
 a=$(val lone-delete-rc); [ "${a:-1}" = 0 ]; check "pfs-delete removes the SLAVE" $? "exit ${a:-none}"
