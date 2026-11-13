@@ -6,9 +6,17 @@ The driver mounts DragonFly-written HAMMER2 media read-write on Linux
 DragonFly itself. The tree is at 1.0.98 in `CHANGELOG.md`; the newest tag is
 `v1.0.4`, which is the last release rather than the tree's version. The
 release shape holds: eighteen gates invoked from a `git
-archive`, fourteen run and pass, and the four that report could-not-run do
-so for the reasons a tarball has: two need a guest, and two read `git`
-history, which an archive does not carry. The staged filings under
+archive`, thirteen run and pass, and the five that report could-not-run
+do so for the reasons a tarball has. Two need a guest and a kernel tree
+at the floor. Three read `git`, which an archive does not carry: two
+read its history, and `test-citations.sh` stops at its first read, which
+asks for the script at `HEAD`, its prose half listing the documents it
+reads with `git ls-files` and its rot check dating every carried line
+with `git blame`. That tally is a reading and not a gate's output, since
+no gate runs the gates from an archive. It is the run of 2026-11-14 on
+this tree, taken because the sentence had read fourteen and four since
+1.0.66, when the prose half made the citations gate stop in an archive
+where it had passed in one. The staged filings under
 `doc/upstream/` are the maintainer's to file, with their state recorded
 beside each; the throughput reading is taken,
 and the write path's one invariant that no check code can see is now
@@ -258,13 +266,27 @@ or `KDIR` points at one. That is could-not-run, not a pass.
   repository could have said, so that table records a contract with a
   consumer this tree does not reference.
 
-- `script/test-citations.sh`: every `file:line` citation in a `doc/` table
-  resolves, and where the row names a symbol, that symbol is on the line. The
-  64 KiB inventory is thirteen such rows and nothing had ever read them. A
-  line number rots on the next edit while still looking like a citation, and
-  the 0.2 import edits exactly those files. It compares against the source
+- `script/test-citations.sh`: every `file:line` citation in a table of
+  `doc/*.md` or `doc/history/*.md` resolves, and where the row names a
+  symbol, that symbol is on the line. The 64 KiB inventory is thirteen
+  such rows and nothing had ever read them. A line number rots on the
+  next edit while still looking like a citation, and the 0.2 import
+  edits exactly those files. It compares against the source
   line, never a stored baseline, and a row naming no symbol is reported as
-  unanchored rather than dropped.
+  unanchored rather than dropped. A citation in the running prose of a
+  living document is read as well, since 1.0.66: it must name a file of
+  this port and a line of it that is not blank, a closing brace or a
+  comment close, and it fails where its line has moved, been deleted, or
+  been rewritten into a region whose shape changed, since the commit
+  that wrote it; a line rewritten in its own place is a note to re-read
+  the sentence, not a failure. A row naming a function beside its line
+  is read for whether the line is inside that function, and a commit
+  that changes a line of `doc/history/` in a line citation alone fails.
+  Over the history to `183ee6e` that last check read 130 such lines in
+  16 commits, eight of which had renumbered the dated record to follow
+  the tree; 101 lines
+  were put back, and the verification record's entry of that date has the
+  count by commit.
 
 That the gates pass means the shim is valid C in both knob positions, and
 that `hammer2.h` and `hammer2_io.c` type-check against the real kernel

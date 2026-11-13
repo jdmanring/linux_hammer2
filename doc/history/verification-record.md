@@ -3,12 +3,19 @@ Verification record
 
 The measurements behind `doc/README.status.md`, in the order they were
 taken, from the first build to the last closure run. Each section names
-the instrument that produced its reading and the date it was taken, and
-the `file:line` citations in its tables are checked against the source
-by `script/test-citations.sh` on every run. A sentence here is a dated
-observation: it says what was true at the commit it names and is not
-rewritten when the tree moves, so a floor described as unwritten in one
-section is written in a later one. The current state is the status
+the instrument that produced its reading and the date it was taken. A
+row of its tables that names a function beside a line is read by
+`script/test-citations.sh` on every run for whether the line is inside
+that function, at the commit its region pins or in the tree where none
+does. The record has no row holding a citation alone in its first cell,
+the other shape that script resolves, so no other citation in it is
+resolved against the source by a gate; a commit after the one that check
+arrived in, or a working tree, that changes a line of it in nothing but
+the digits of a citation fails the same script, but for the misses
+`doc/README.testing.md` states. A sentence here is a dated observation:
+it says what was true at the commit it names and is not rewritten when
+the tree moves, so a floor described as unwritten in one section is
+written in a later one. The current state is the status
 file's, and `CHANGELOG.md` is the enumeration.
 
 ## The build
@@ -5167,7 +5174,7 @@ the file that declares it.
 | `folio_changed`, `debug_hpanic`, `fail_alloc_after` | several | the counters and the fault injections |
 
 `hammer2_cluster_write` is declared at `hammer2_vfsops.c:81`, exported at
-`hammer2.h:1001`, and registered at `hammer2_vfsops.c:159` with mode 0644,
+`hammer2.h:959`, and registered at `hammer2_vfsops.c:159` with mode 0644,
 so it is settable at runtime, and no code reads it. The intent was
 DragonFly's `cluster_write(bp, peof, psize, hce)`, which sets
 `B_CLUSTEROK` and asks the buffer layer to write the cluster as well as
@@ -6419,6 +6426,8 @@ Each candidate was checked against DragonFly's tree,
 smatch read as a NULL test and the line it read as the dereference in the
 upstream file, with whitespace ignored.
 
+<!-- citations at ab88d17 -->
+
 | candidate | both lines upstream | disposition |
 |---|---|---|
 | `hammer2_freemap.c:936` `hammer2_freemap_adjust()` | yes | carried |
@@ -6428,10 +6437,12 @@ upstream file, with whitespace ignored.
 | `hammer2_flush.c:858` `hammer2_flush_core()` | yes | carried |
 | `hammer2_flush.c:1058` `hammer2_flush_recurse()` | yes | carried |
 | `hammer2_inode.c:451` `hammer2_inode_chain_and_parent()` | yes | carried |
-| `hammer2_vfsops.c:423` `hammer2_pfsalloc()` | yes | carried |
-| `hammer2_synchro.c:541` `hammer2_sync_slaves()` | yes | carried |
+| `hammer2_vfsops.c:400` `hammer2_pfsalloc()` | yes | carried |
+| `hammer2_synchro.c:501` `hammer2_sync_slaves()` | yes | carried |
 | `hammer2_cluster.c:201` `hammer2_cluster_check()` | no | port text, upstream's logic |
-| `hammer2_synchro.c:944`, `:1090`, `:1147` | yes | carried, layout only |
+| `hammer2_synchro.c:828`, `:975`, `:1032` | yes | carried, layout only |
+
+<!-- citations end -->
 
 The `hammer2_cluster.c` row is the one place the text differs, and it
 differs only in spelling. Upstream writes `cluster->pmp->pfs_types[i]`.
@@ -7251,7 +7262,7 @@ not closed, and this records why rather than what was hoped.
   open, unmount the slave, remount it, and require the copy to finish. The
   pass brackets itself in the log, `sync_slaves pfs CL` opening it and
   `sync_slaves error` closing it, and the stop is read at
-  `hammer2_synchro.c:279`, the one call of `hammer2_thr_break()`, between
+  `hammer2_synchro.c:277`, the one call of `hammer2_thr_break()`, between
   deferred directories.
 - A pass's length grows with the largest directory it walks. Measured on
   the KASAN guest by timing the bracket: 37 ms over an empty PFS, 40 ms at
@@ -7307,7 +7318,7 @@ forever.
   of a consistent slave; the fingerprint comparison in `cluster-sync.sh`
   is what fails on it.
   The thread's decision (`want_update = chain->bref.modify_tid != sync_tid`,
-  `hammer2_synchro.c:540`) is correct for the state it reads. The state
+  `hammer2_synchro.c:500`) is correct for the state it reads. The state
   is wrong, and no later pass can see the gap, because the gate compares
   the root's tid and nothing below it.
 - The thread's own log agrees with the media and not with the phase's
@@ -7323,7 +7334,7 @@ forever.
 - Two hypotheses were checked against the source and eliminated before
   being recorded. The `ENOENT` arm of the marking guard does not mark
   with deferrals outstanding: `needrescan` forces `HAMMER2_ERROR_EAGAIN`
-  first (`hammer2_synchro.c:865`), so a scan that deferred content never
+  first (`hammer2_synchro.c:749`), so a scan that deferred content never
   stamps. And the isroot arm of `hammer2_sync_replace()` copies the
   limited field set upstream copies and nothing else, matching
   `sys/vfs/hammer2/hammer2_synchro.c` field for field, so the type change
@@ -7654,7 +7665,7 @@ and the line above the trace names the workqueue:
 `Workqueue: events hammer2_sync_work`. `hammer2_pfsfree_scan` is not in
 the log at all, so the teardown the frames were attributed to is not on
 this path. What the shape is instead is this port's own syncer,
-`hammer2_sync_work` at `hammer2_vfsops.c:2124`, a delayed work that
+`hammer2_sync_work` at `hammer2_vfsops.c:2101`, a delayed work that
 reschedules itself every `HAMMER2_SYNC_INTERVAL` and calls
 `sync_filesystem()` from a workqueue thread. The flush that faults runs
 22 s after an unmount that left 2602 modified chains, on a workqueue
@@ -7734,11 +7745,11 @@ reading for a correct unmount, and the corrupting log's non-zero
 counts are still unexplained.
 
 `hammer2_unmount_scrap` is the port's own code at
-`hammer2_vfsops.c:2543-2553`, run at device teardown on the VOLUME and
+`hammer2_vfsops.c:2520-2530`, run at device teardown on the VOLUME and
 FREEMAP chains; the semantic index puts its only caller at
 `hammer2_unmount_helper`, and the graph puts
 `hammer2_pfsfree_scan -> hammer2_vfs_sync_pmp` at
-`hammer2_vfsops.c:694`, so the teardown does flush through the sync
+`hammer2_vfsops.c:671`, so the teardown does flush through the sync
 path. The scrap reports a failed flush rather than causing one.
 
 Not established: what stops those flushes completing, whether the
@@ -7952,7 +7963,7 @@ two same-keybits indirect chains held at `sync_insert` ENTRY. The report's
 own frames settle where they are: it names `hammer2_sync_insert+0x5dd`,
 while this entry print is at `+0x4f0`, so the second indirect core is
 acquired LATER in the same function, inside the `hammer2_chain_create()`
-descent at `hammer2_synchro.c:995`, and is not on the stack when the
+descent at `hammer2_synchro.c:879`, and is not on the stack when the
 function is entered. Measuring at entry was the wrong place to catch it.
 
 That also explains why the comparison was silent rather than negative: it
@@ -7967,7 +7978,7 @@ reading.
 
 RESOLVED, and the lock report is APPARATUS rather than a defect. The
 `+0x5dd` frame resolves on the host, no guest needed, to
-`hammer2_sync_setflush` at `hammer2_synchro.c:123`, reached from
+`hammer2_sync_setflush` at `hammer2_synchro.c:121`, reached from
 `hammer2_sync_insert()` at `synchro.c:935`. That walk takes a chain's
 parent's core lock while the caller still holds the chain's, i.e. child
 then parent. `hammer2_spin_t` is not a Linux spinlock: it is this port's
@@ -8635,7 +8646,7 @@ print at the insert and at the unset rather than a reading of the caller.
 This section said the inode-dependency index, `inum % 32`, made the wait a
 BUCKET wait, and that unrelated inodes sharing a bucket blocked each other.
 That is false and is corrected here. `xop_testset_ipdep()` tests
-`iptmp == ip` -- POINTER equality (`hammer2_admin.c:255`, and the same test
+`iptmp == ip` -- POINTER equality (`hammer2_admin.c:254`, and the same test
 at 271 in the unset) -- so two different inodes that hash to one bucket
 both go on the list and neither waits. The index selects which LOCK guards
 the list, which is all a hash bucket is for. The same test is in the
@@ -8651,7 +8662,7 @@ in that state, so the dependency it waits on is one it took itself.
 
 The unset side is reached only on the LAST retire. `hammer2_xop_retire()`
 returns early unless the mask it is retiring completes the XOP
-(`hammer2_admin.c:490`):
+(`hammer2_admin.c:489`):
 
     omask = atomic_fetchadd_32(&xop->run_mask, -mask);
     if ((omask & HAMMER2_XOPMASK_ALLDONE) != mask)
@@ -8782,7 +8793,7 @@ and the whole population of tasks holding a hammer2 frame is that one
 `umount`. So the unmount waits for a thread-state bit that no live thread
 will set.
 
-`hammer2_thr_wait()` (`hammer2_admin.c:871`) is the wait:
+`hammer2_thr_wait()` (`hammer2_admin.c:870`) is the wait:
 
     for (;;) {
             oflags = thr->flags;
@@ -8821,13 +8832,13 @@ Three prints were added in one build, because runs here cost twenty
 minutes and the previous three runs each answered one question that the
 next run then invalidated:
 
-- `hammer2_thr_wait()` (`hammer2_admin.c:871`) prints the requested
+- `hammer2_thr_wait()` (`hammer2_admin.c:870`) prints the requested
   `flags` and `thr->td` at entry and once per return of the sleep, whose
   timeout is `hz*60`.
 - `hammer2_inode_chain_and_parent()` (`hammer2_inode.c:451`) prints the
   inode, the cluster index and `nchains` when the selected element has no
   chain, and returns NULL with `*parentp` NULL rather than dereferencing.
-- `hammer2_sync_slaves()` (`hammer2_synchro.c:540` and `:936`) no longer
+- `hammer2_sync_slaves()` (`hammer2_synchro.c:500` and `:820`) no longer
   reads `chain->bref.modify_tid` before testing `chain`, and skips a pass
   whose parent is NULL instead of asserting.
 
@@ -8944,10 +8955,10 @@ Why the thread stopped answering, from the same log: an oops at t=3403 in
 `hammer2_chain_lookup+0x15b`, reached `hammer2_sync_slaves+0x3f0` <-
 `hammer2_primary_sync_thread`. `RBP` is 0 and the faulted range is
 `0x28-0x2f`, so the operand is a NULL chain's field. The line is
-`hammer2_sync_slaves()` at `hammer2_synchro.c:596`, which reads
+`hammer2_sync_slaves()` at `hammer2_synchro.c:556`, which reads
 `parent = hammer2_inode_chain(ip, idx, ...)` and then passes that parent,
 NULL when the element is absent, to `hammer2_chain_lookup()` at
-`hammer2_synchro.c:600`. A fault inside the sync kthread never sets FROZEN
+`hammer2_synchro.c:560`. A fault inside the sync kthread never sets FROZEN
 or STOPPED, so the fault and the hang are one event: the previous entry
 recorded that as a candidate, and this run is the run that sets the fault
 and hangs in the same breath.
@@ -9101,7 +9112,7 @@ previous three fixes were trying to reach without:
     hammer2_sync_slaves
     hammer2_primary_sync_thread
 
-`hammer2_sync_insert()` at `hammer2_synchro.c:1083` is the caller. It creates
+`hammer2_sync_insert()` at `hammer2_synchro.c:968` is the caller. It creates
 a missing chain with the FOCUS's key and radix:
 
     error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
@@ -9219,7 +9230,7 @@ Where it came from is one line in `hammer2_chain_create_indirect()`:
     int maxloops = 300000, keybits = create_bits;
 
 `keybits` is seeded from `create_bits` and is never checked against the
-parent. The caller is `hammer2_sync_insert()` at `hammer2_synchro.c:1083`,
+parent. The caller is `hammer2_sync_insert()` at `hammer2_synchro.c:968`,
 which passes the FOCUS's radix as `create_bits`:
 
     error = hammer2_chain_create(parentp, &chain, NULL, thr->pmp,
@@ -9768,7 +9779,7 @@ spins on a key range 256 keys wide out of the whole tree.
 
 The loop that hides this has no progress guard. `hammer2_sync_slaves()` returns
 EAGAIN when it defers an inode, the caller re-runs the scan, and the drain loop
-at `hammer2_synchro.c:297` removes a deferral only when it is still the list
+at `hammer2_synchro.c:295` removes a deferral only when it is still the list
 head, so each iteration defers the next inode and leaves the previous entry in
 place. The deferral count never reaches the 1000 that would break the scan:
 119 deferral events against a threshold of 1000. Upstream's loop is line-for-
@@ -9965,7 +9976,7 @@ The run's own evidence:
 The pass's own `START_SCAN` is 222 s before the hung-task report, the guest load
 never falls below 4, and the unmount never returns: `umount /mnt/h2c` reports
 "target is busy" on every attempt, and only a guest restart clears it. This is
-the "worst case" the NULL-chain note at `hammer2_synchro.c:749` describes as
+the "worst case" the NULL-chain note at `hammer2_synchro.c:640` describes as
 worse than a copy that does not converge.
 
 Two consequences:
@@ -9984,7 +9995,7 @@ Two consequences:
 2. A fix for the sweep path has to move both cursors. The candidate, not yet
    tested, is the guard with `advance_local = 1` and `advance_xop = 1`, plus a
    restart of the XOP scan from the local scan's key on that path. The scan's
-   position is `xop->key_beg` (`hammer2_synchro.c:785`, set to
+   position is `xop->key_beg` (`hammer2_synchro.c:669`, set to
    `HAMMER2_KEY_MIN` at start), not `collect_key`, which only tells the
    collector which FIFO entries are behind; so the restart is a retire and a
    fresh start with `key_beg = chain->bref.key`. That is what returns a focus for
@@ -10443,7 +10454,7 @@ two cases completely, from the run with both repairs:
     sync_slaves error 0     50 times   (the passes outside the cycles)
     sync_slaves error 256  217 times   (EAGAIN, each with a defer pointer)
 
-`HAMMER2_ERROR_EAGAIN` is set at `hammer2_synchro.c:954` whenever a pass defers
+`HAMMER2_ERROR_EAGAIN` is set at `hammer2_synchro.c:838` whenever a pass defers
 a child inode, and the caller answers EAGAIN by re-entering the drain loop,
 which calls `hammer2_sync_slaves()` on the PFS root again. The root scan
 starts at `HAMMER2_KEY_MIN`, so it restarts the CL directory from key 0 every
@@ -11619,7 +11630,7 @@ The backlog is written with the slave **unmounted**, so the thread must carry
 it on the remount, and the phase sizes that backlog (`NBIG2` = 20000) to make
 a pass long enough to interrupt. The measured `syncthr: update inode` count is
 2 across the whole interruption window, and the print at
-`hammer2_synchro.c:1059` is gated on `hammer2_debug & 0x8000` **and on `focus`
+`hammer2_synchro.c:944` is gated on `hammer2_debug & 0x8000` **and on `focus`
 being non-NULL**, so it counts focus inodes rather than every chain the thread
 copies. The count is a probe limit, not a copy count, and the same limit is
 why `write-destroys` reads 0 without the 0x0001 bit.
@@ -11765,7 +11776,7 @@ is created from:
                 bcmp(&pmp->pfs_clid, &ripdata->meta.pfs_clid,
                 sizeof(pmp->pfs_clid)) == 0)
                     break;
-    }                                       (hammer2_vfsops.c:324-336)
+    }                                       (hammer2_vfsops.c:301-313)
 
 The master's CL is created first, at the `/mnt/h2c` mount (`/dev/vdb@CL`), and
 gets a cluster id. The slave's CL is created with `-u "$clid"` -- the same id --
@@ -11798,7 +11809,7 @@ overlap, and the remount stays 0.2 ms.
 
 What a working phase 4 needs is a stop that reaches the thread's own pmp. The
 thread reads those flags at two points in its body -- the top-of-loop test at
-`hammer2_synchro.c:272` and the `hammer2_thr_break()` call at `:354`, between
+`hammer2_synchro.c:270` and the `hammer2_thr_break()` call at `:352`, between
 deferred directories -- and the setters are `hammer2_pfsfree_scan()` (device
 teardown), `hammer2_thr_freeze*()` (the remaster and freeze paths), and
 `pfs-delete`. Unmounting the slave's ROOT sets
@@ -11961,9 +11972,9 @@ the harness uses, and state before the run what a zero would mean.
 Two readings from the same probe, and both are structural.
 
 **The two log lines are not a bracket.** `sync_slaves pfs CL` is printed once
-per pass, at the top of the outer loop (`hammer2_synchro.c:326`).
+per pass, at the top of the outer loop (`hammer2_synchro.c:324`).
 `sync_slaves error` is printed INSIDE the inner `for (;;)` loop
-(`hammer2_synchro.c:337`), which iterates while the scan returns
+(`hammer2_synchro.c:335`), which iterates while the scan returns
 `HAMMER2_ERROR_EAGAIN`. So one pass emits one open and MANY closes, and a
 count of the two is not a bracket at all:
 
@@ -12028,8 +12039,8 @@ scan to finish: what the interruption costs is the rest of the pass it landed
 in, and the window is the pass's own length" -- which the probe confirmed
 rather than discovered. The
 thread reads `HAMMER2_THREAD_STOP`/`FREEZE` at two points only: the top of the
-outer loop (`hammer2_synchro.c:272`) and, via `hammer2_thr_break()`, between
-deferred directories (`:354`). Neither is inside `hammer2_sync_slaves()`, so a
+outer loop (`hammer2_synchro.c:270`) and, via `hammer2_thr_break()`, between
+deferred directories (`:352`). Neither is inside `hammer2_sync_slaves()`, so a
 stop arriving during a scan is seen when that scan **finishes**, and the pass
 that was running completes.
 
@@ -13020,7 +13031,7 @@ again. The list above is the 2026-10-13 edition and is superseded by this one.
    a run that failed**, so the arm is untested rather than refuted; do not
    record it as either.
 10. **The `xop->collect_key` re-seed** as the sweep-path fix. The scan's position
-    is `xop->key_beg` (`hammer2_synchro.c:785`), not `collect_key`, which only
+    is `xop->key_beg` (`hammer2_synchro.c:669`), not `collect_key`, which only
     tells the collector which FIFO entries are behind.
 
 ### Test-harness defects, which read as subject failures
@@ -13087,8 +13098,8 @@ The 2026-10-13 entry above reached this from totals and it is confirmed here fro
 the failing run's own log, `cluster-run-20261014-171347.klog`, by a discriminator
 inside the source rather than a count.
 
-`sync_slaves pfs CL` prints at `hammer2_synchro.c:339`, before the `want_update`
-test. `START_SCAN` prints at `:819`, after the early return at `:788`. A pass that
+`sync_slaves pfs CL` prints at `hammer2_synchro.c:337`, before the `want_update`
+test. `START_SCAN` prints at `:703`, after the early return at `:672`. A pass that
 returns at `want_update == 0` therefore shows the first line and not the second,
 and the two counts separate "passing" from "scanning" with no arithmetic.
 
@@ -13777,7 +13788,7 @@ mechanisms the day argued over. From `cluster-run-20261015-043115.klog`:
     ...
 
 **`localp` is NULL on every turn.** `hammer2_inode_chain(ip, idx, ...)` at
-`hammer2_synchro.c:807` returns NULL for the SLAVE's own element, so the local scan
+`hammer2_synchro.c:691` returns NULL for the SLAVE's own element, so the local scan
 is empty for the whole pass: `chain` is NULL every iteration, the loop takes its
 `chain == NULL` insert arm on every key, and the master's focus walks 0x400, 0x401,
 0x402 upward while the pass inserts against a NULL parent.
@@ -13871,7 +13882,7 @@ harness output of every run.
 **The counter that separates the two classes is `scrapped`, and it separates
 perfectly.** `hammer2_unmount_scrap()` prints one `scrapping unflushed` line per
 chain parked with `UPDATE` or `MODIFIED` after the final unmount sync
-(`hammer2_vfsops.c:858`), and the harness has read it as
+(`hammer2_vfsops.c:835`), and the harness has read it as
 `nothing the thread copied is scrapped unwritten` on every run. Across the 40 runs
 whose harness logs are on this machine:
 
@@ -13908,7 +13919,7 @@ write.
 **The destroy is not the cause and it is upstream's intended delete.** All 31
 destroys in the 12 runs that printed them carry `destroy focus 0000000000000000/-1`,
 which is the state the sweep arm sets (`focus = NULL; n = -1`,
-`hammer2_synchro.c:857-858`) falling into the shared `n < 0` arm. Zero destroys in
+`hammer2_synchro.c:741-742`) falling into the shared `n < 0` arm. Zero destroys in
 any kept log carry a non-NULL focus, so the compare arm has never produced one.
 The sweep is reached when the element's own scan ends early while the local scan
 still has chains (`chain && merror == ENOENT`), and a converged run performs it
@@ -13931,7 +13942,7 @@ so `hammer2_sync_flush()` takes its `not flagged` branch and never calls
 the root's word is cleared by the descending flush on the way down. The copies stay
 in memory, the unmount scraps them, and the next mount reads a slave that is short
 by exactly those keys. This is the defect the helper's own comment at
-`hammer2_synchro.c:136` calls "a different defect" and leaves.
+`hammer2_synchro.c:134` calls "a different defect" and leaves.
 
 **Three instruments were wrong, and one of them was mine.** The `sweep` counter on
 the `filekeys` line is a local of `hammer2_sync_slaves()` reset per call, so the
@@ -14088,7 +14099,7 @@ An eighth reading defect, and it was nearly published. Attempt 3's destroying
 pass printed both `n<0 4` and three `destroy focus .../-1` lines, and the two were
 about to be read as one population with a missing print. They are different
 populations: `h2dbg_file_nlt` is incremented only when the turn's key is a file
-hash (`kh > 0x8000000000000000`, `hammer2_synchro.c:946-951`), so it counts the
+hash (`kh > 0x8000000000000000`, `hammer2_synchro.c:830-835`), so it counts the
 `n < 0` turns among FILE keys. The three printed destroys carry keys `0xa4d`,
 `952c5ca9c9858001` and `b77f7af1cd8e8001`, all below 2^63, so none of them is in
 that counter's population.
@@ -14165,7 +14176,7 @@ run takes, and the kept images make it attributable.
 ## Why the unmount's final flush does not carry the element's copies, 2026-10-15
 
 The next fix needs to know why the copies survive to the unmount, and the unmount
-path answers it. `hammer2_vfs_sync_pmp()` (`hammer2_vfsops.c:2709`) flushes the
+path answers it. `hammer2_vfs_sync_pmp()` (`hammer2_vfsops.c:2686`) flushes the
 inodes on the PFS's **sync queue**: it moves inodes from `depq`/`sideq` to `syncq`
 and flushes those, one inode at a time. The synchronization thread's chains are
 not on that queue and have no inode on it at all, which is the port's own recorded
@@ -14173,9 +14184,9 @@ reason for `hammer2_sync_flush()` existing (`hammer2_synchro.c:100-108`: "This
 thread changes chains directly and puts no inode on the sync queue, so nothing
 bridged them").
 
-So the unmount's three `hammer2_vfs_sync_pmp()` calls (`hammer2_vfsops.c:3105-3107`)
+So the unmount's three `hammer2_vfs_sync_pmp()` calls (`hammer2_vfsops.c:3082-3084`)
 walk the inode queue and never reach the element's chains. The device teardown's
-own flush (`:2552-2560`) flushes `hmp->vchain` and `hmp->fchain` only, and it is
+own flush (`:2529-2537`) flushes `hmp->vchain` and `hmp->fchain` only, and it is
 gated on those two static chains' flags. The only thing in the tree that flushes
 the element's chains is the pass-end `hammer2_sync_flush()`, and a pass that is
 interrupted before its end never reaches it.
@@ -14754,13 +14765,17 @@ read are the first run's rows at their current line numbers, less the
 `hammer2_inode.c` row, which no longer reports. The three new ones are
 one shape:
 
+<!-- citations at 0073ebc -->
+
 | candidate | both lines upstream | disposition |
 |---|---|---|
 | `kern_dmsg.c:688` `kdmsg_msg_receive_handling()`, deref at `:660` | yes | carried |
 | `kern_dmsg.c:1117` `kdmsg_autorxmsg()`, deref at `:1105` | yes | carried |
 | `hammer2_iocom.c:231` `hammer2_autodmsg()`, deref at `:190` | yes | carried |
 
-All three, and the analyzer's `:1632`, read `msg->state->iocom` at the
+<!-- citations end -->
+
+All three, and the analyzer's `:1646`, read `msg->state->iocom` at the
 top of a function that later tests `msg->state`. In kdmsg every message
 is made by `kdmsg_msg_alloc()` with a state argument it stores, and the
 read thread passes `&iocom->state0` for every frame it receives
@@ -15080,6 +15095,8 @@ both controls ok, 7 candidates from 73 patches, 2 not run, 0 failed,
 exit 0 in 33 s at `J=4`, the same seven the hand loop read, so the
 macro file added no candidate.
 
+<!-- citations at 6ec0430 -->
+
 | candidate | patch | origin | disposition |
 |---|---|---|---|
 | `hammer2_vfsops.c:2306` `hammer2_statfs()` | `misc/minmax` | this port, `5d59669` | fixed, `min()` |
@@ -15088,6 +15105,8 @@ macro file added no candidate.
 | `hammer2_flush.c:110` `hammer2_trans_init()` | `misc/cond_no_effect` | DragonFly `hammer2_flush.c:139` | carried |
 | `hammer2_bulkfree.c:803` `h2_bulkfree_callback()` | `misc/orplus` | DragonFly `hammer2_bulkfree.c:936` | carried |
 | `hammer2_subr.c:356` `hammer2_inc_iostat()` | `misc/semicolon` | FreeBSD port `hammer2_subr.c:349` | carried |
+
+<!-- citations end -->
 
 The three carried rows stay as their origin wrote them. The
 `cond_no_effect` branch is the `HAMMER2_TRANS_BUFCACHE` case, whose
@@ -16977,7 +16996,7 @@ at `3716052`, the counts above corrected from 28 and 26. Its low
 findings: the first three rounds' slot and figures carried no
 disclosure of their source, which the sentence on the first round now
 gives for every round; and a sentence of the note read the thread
-creation at `hammer2_vfsops.c:520` as skipped for every MASTER slot
+creation at `hammer2_vfsops.c:497` as skipped for every MASTER slot
 where the line skips it only at one master, now stated as what the line
 does and what P8 asks of it, at `3716052`. The seventh audit, of
 `3716052` with the entry and the row uncommitted
@@ -18285,7 +18304,7 @@ on `h2debug-7.3`.
 How the run holds the slave stale. The mode runs the pass as
 `H2_WIRE_PASS=1` does, so the slave first holds the master's `CL` on its
 own media. The pass refuses on a device opened read-only
-(`hammer2_synchro.c:1314-1320`), and that refusal is the hold: the
+(`hammer2_synchro.c:1199-1205`), and that refusal is the hold: the
 slave's `ROOT` and `CL` unmount, which ends the link and detaches the
 element by the connection's end, its `ROOT` mounts again read-only, the
 master's message threads drain to 0, both sides dial again by their
@@ -18381,13 +18400,13 @@ pass:
 `hammer2_pfs_t`, a structure of 5006224 bytes allocated in vmalloc
 space: a write to a PFS whose pages were no longer mapped. The carried
 loop in `hammer2_sync_pass()` breaks on a root scan's error other than
-`EAGAIN` before it drains the deferral list (`hammer2_synchro.c:594-595`),
+`EAGAIN` before it drains the deferral list (`hammer2_synchro.c:554-555`),
 and that list is the thread's, kept across passes. Over the live PFS
 that is upstream's behavior and harmless; over a snapshot the deferred
 inodes belong to the snapshot PFS, which `hammer2_sync_pass_snap()`
 deletes after the pass, and the next pass's drain allocated an XOP on one
 of them. The pass now drains the list before its pass-end flush
-(`hammer2_synchro.c:739-752`, marked `XXX`), as the loop's own cleanup
+(`hammer2_synchro.c:630-643`, marked `XXX`), as the loop's own cleanup
 for a broken pass already does; the next root scan defers the same
 directories again. The mechanism is read from the code and the oops and
 confirmed by the runs below taking the same path with the fix and not
@@ -18469,7 +18488,7 @@ harness, `wire-run-20261026-124428` and `-124710`, passed by timing
 alone and are kept as `cut-disconnect-debug-race.log` and
 `cut-control-debug-race.log`, cited by nothing. The slave now dials with
 its `ROOT` read-only, so the pass refuses on the device
-(`hammer2_synchro.c:1328-1332`) until the readings are taken, and the
+(`hammer2_synchro.c:1213-1217`) until the readings are taken, and the
 run then remounts it read-write; the check requires at least one refusal
 and no snapshot read before that remount, and the remount's rc 0.
 
@@ -18883,7 +18902,7 @@ The mechanism, read from the kept klogs by count: each of the six
 release timed passes printed `START_SCAN` three times between its
 `begin` and `end`, the root, its rescan once the changed directory's
 deferral drained (`hammer2_sync_pass()`, the loop at
-`hammer2_synchro.c:585-595`, the `sync_slaves error 256` line between
+`hammer2_synchro.c:545-555`, the `sync_slaves error 256` line between
 them being `HAMMER2_ERROR_EAGAIN`), and the second verify round's. The
 count is not fixed: the million run's settle pass, 95.8 to 109.8 s,
 deferred nothing and verified in two rounds on two scans, so a pass
@@ -18895,8 +18914,8 @@ gap is a `candidate`: the stamp passes' scans of the live root, with no
 snapshot element, show the same gap (115.298 to 118.157 s and 254.050
 to 256.794 s), which refutes reading it as the snapshot's element
 filling a FIFO; the elements' storage functions run inline to their end
-before the first collect (`hammer2_admin.c:472-482`) and the FIFO
-doubles rather than blocking (`:671-689`), and which element the time
+before the first collect (`hammer2_admin.c:471-481`) and the FIFO
+doubles rather than blocking (`:670-688`), and which element the time
 goes to is not measured. A verified pass is followed by one `idlestamp`
 pass only when the thread survives to its next cadence: in each run
 that was the pass before the first change and the third change's, two
@@ -19263,7 +19282,7 @@ The million-file entry above left the time before each root scan's
 `START_SCAN` line, 2.69 to 2.82 s at the million, a `candidate`: the
 elements' storage functions run inline to their end inside the XOP
 start (`hammer2_admin.c` 471-481), into a FIFO that doubles rather than
-blocks (`:671-689`), but nothing timed the start. `b2bae17` adds the
+blocks (`:670-688`), but nothing timed the start. `b2bae17` adds the
 start's time, the time from it to the first collect, the merge's time
 and the FIFO's final size to the root scan's `filekeys` line under
 debug 0x8000, with no change in behavior.
@@ -19930,7 +19949,7 @@ thread, a PFS created and written in one mount of its device and the
 power cut after a sync of it, is a `candidate` and is not read.
 
 A sibling is recorded and not fixed: `hammer2_fixup_pfses()`
-(`hammer2_vfsops.c:2087`) sets the blockref's `PFSROOT` on a cached chain
+(`hammer2_vfsops.c:2064`) sets the blockref's `PFSROOT` on a cached chain
 that an older implementation's defect left unflagged, without the chain's
 `PFSBOUNDARY`, so such a PFS is no PFS root to the `VOLHDR` test until
 the next mount of its device, as upstream has it. It is reached only on
@@ -21588,8 +21607,8 @@ terminated inside `DMSG_LABEL_SIZE`, 128 bytes, when the span is
 received (`hammer2_iocom.c:92`); 127 bytes and the 13 of
 `.h2sync-peer` with its terminator fit the 256-byte name. The remote
 snapshot's own PFS takes slot 0 on that device, named with the pass's
-name (`hammer2_vfsops.c:530`), up to 255 bytes; it is a lone MASTER, so
-it gets no sync thread (`:596-599`) and never carries the flag. The
+name (`hammer2_vfsops.c:507`), up to 255 bytes; it is a lone MASTER, so
+it gets no sync thread (`:573-576`) and never carries the flag. The
 1.0.80 plan's long-name arm would have stopped at the server's label
 test, which `s55g` reads. `8958fd4` puts a `static_assert` on the first
 bound beside the test, which stays so that a name from another source
@@ -22262,7 +22281,7 @@ serializes the seek with) and, on the child inode, across its unlink, link
 and rename (`vfs_unlink()`, `vfs_link()`, `vfs_rename()` in 7.3), each of
 which takes the module's locks below it; the module has no xattr or
 fileattr operations; its
-stated order puts `i_rwsem` above `ip->lock` (`hammer2_vfsops.c:3042`); the
+stated order puts `i_rwsem` above `ip->lock` (`hammer2_vfsops.c:3019`); the
 writeback takes folio locks, a `HAMMER2_TRANS_BUFCACHE` transaction and
 `ip->lock` and no `i_rwsem`; `hammer2_trans_init()` sleeps only for a flush
 against a flush; and `hammer2_fallocate_locked()` already wrote back under
@@ -22331,7 +22350,7 @@ written and requires the twin to hold more: at `e547227` on `h2debug-7.3tls`
 was not read on HAMMER2, where the margin is one compressed block.
 
 The sibling sweep for the per-block shape found `hammer2_fiemap()`
-(`hammer2_vnops.c:2334`), which still asks one bmap XOP per block and reads
+(`hammer2_vnops.c:2426`), which still asks one bmap XOP per block and reads
 `i_size` unlocked. Each of its XOPs is one lookup, not a scan restarted per
 block, and FIEMAP takes no lock that a writer waits on; it is a candidate for
 the same scan, not measured.
@@ -23563,16 +23582,16 @@ fires the split rule only when every master has answered. The same
 per-element assembly would, from the code and not run, give a SLAVE
 behind its master its own stale bytes under the master's new tid on a
 sub-block writeback, and the sync pass replaces a slave block only when
-its tid differs (`hammer2_synchro.c:2499`): a candidate, which assembling
+its tid differs (`hammer2_synchro.c:2384`): a candidate, which assembling
 once from the quorum, as upstream's single buffer does, would answer.
 
 **After the fix** (`n10-6-seq15.log`, head `ecae73a`, no uncommitted
 change; predictions `p7-notes/n10-6-expected10.md`). Seq14 is the
 control. Every check passed: the debug vote 39 (`:103`), the KASAN vote
-39 (`:1338`) with 0 reports (`:1340`), the release split run 44
-(`:1415`). The partial write fails with `exit 1 eio 1` and both volumes
+39 (`:1223`) with 0 reports (`:1225`), the release split run 44
+(`:1300`). The partial write fails with `exit 1 eio 1` and both volumes
 keep block 2 at `581` and `559` (`:82`), on KASAN at `5d7` and `5af`
-(`:1317`), on release at `55b` and `533` (`:1394`); both comparison
+(`:1202`), on release at `55b` and `533` (`:1279`); both comparison
 controls differ. The debug run's kept log
 (`fixtures/quorum-run-20261106-081820.klog`) holds 52 failed reads, each
 an `H2 READ` line with `collect=00010000 error=5` followed by one line per
@@ -23591,21 +23610,21 @@ section was first written. The split run's log prints 10 more at
 0x400000000 and `hammer2_xop_collect: 199 callbacks suppressed`
 (`quorum-run-20261106-083753.klog:275`), the function's only ratelimited
 print being this one. The rest passed: the race mode on both builds (`:46`,
-`:1281`), the sync vote (`:181`), fixtures (`:205`), enospc as root and as
-a user with 0 blocks available after the sync (`:431`, `:968`, rc 0 at
-`:741` and `:1158`), xfstests `-g seek` 8 of 8 (`:1166` to `:1230`),
-`debug_locks` 1 after each group (`:105`, `:182`, `:1236`).
+`:1166`), the sync vote (`:179`), fixtures (`:203`), enospc as root and as
+a user with 0 blocks available after the sync (`:429`, `:852`, rc 0 at
+`:632` and `:1043`), xfstests `-g seek` 8 of 8 (`:1051` to `:1115`),
+`debug_locks` 1 after each group (`:105`, `:180`, `:1121`).
 
 | reading, `h2release-7.3tls`, 16 GiB | seq14 | seq15 | predicted for seq15 |
 |---|---|---|---|
-| two masters, SEEK_HOLE | 33.25 ms (`:1353`) | 34.01 ms (`:1362`) | 30 to 38 |
-| writer beside it | 66.17 ms (`:1352`) | 66.44 ms (`:1361`) | 60 to 75 |
-| split SEEK_HOLE, failing EIO | 32.84 ms (`:1354`) | 33.79 ms (`:1363`) | 28 to 40 |
-| writer beside the split | 65.65 ms (`:1356`) | 67.51 ms (`:1365`) | 55 to 80 |
-| split fallbacks | 51 (`:1357`) | 51 (`:1366`) | 10 + 41 |
+| two masters, SEEK_HOLE | 33.25 ms (`:1238`) | 34.01 ms (`:1247`) | 30 to 38 |
+| writer beside it | 66.17 ms (`:1237`) | 66.44 ms (`:1246`) | 60 to 75 |
+| split SEEK_HOLE, failing EIO | 32.84 ms (`:1239`) | 33.79 ms (`:1248`) | 28 to 40 |
+| writer beside the split | 65.65 ms (`:1241`) | 67.51 ms (`:1250`) | 55 to 80 |
+| split fallbacks | 51 (`:1242`) | 51 (`:1251`) | 10 + 41 |
 
 QEMU cores read 0 at the start and the end of both runs
-(`n10-6-seq14.log:1`, `:1408`; `n10-6-seq15.log:1`, `:1422`).
+(`n10-6-seq14.log:1`, `:1293`; `n10-6-seq15.log:1`, `:1307`).
 
 ## A write in flight is not a disagreement, and a stale slave under a partial write, 2026-11-07
 
@@ -23630,24 +23649,24 @@ which the review flagged, is corrected in the section above.
 **The run** (`n10-6-seq16.log`, head `96667a0`, no uncommitted change;
 predictions `p7-notes/n10-6-expected11.md`). Seq15 is the control for
 every reading it took; the new checks carry their controls in the same
-run. Every check passed: the debug vote 46 (`:112`), the KASAN vote 46
-(`:1356`) with 0 reports (`:1358`), the release split run 53 (`:1442`),
-the sync vote 62 (`:188`).
+run. Every check passed: the debug vote 46 (`:110`), the KASAN vote 46
+(`:1241`) with 0 reports (`:1243`), the release split run 53 (`:1327`),
+the sync vote 62 (`:186`).
 
 - With a writeback held between the masters by the debug build's
   `write_gap_ms`, SEEK_HOLE answered 131072 and FIEMAP 65536, each as
   wanted; with `write_wait_off` set both failed EIO inside the window, so
   the calls met it; `write_waits` moved 2 with the wait on and 0 with it
-  off (`:88-92`, on KASAN `:1334-1338`, on release `:1420-1424`). The
+  off (`:88-92`, on KASAN `:1219-1223`, on release `:1305-1309`). The
   predicted seek-ms bands, 2000 to 2400 ms with the wait and 500 to 700
   ms without, have no reading: the harness reads the probe's lines on
   the guest and prints only its verdict.
 - One master's scan ending on EIO before a key the other holds failed
   SEEK_HOLE with EIO, and with `scan_fail_elm` unset the same call
-  answered the hole at 0 (`:76-77`, `:1322-1323`, `:1408-1409`).
+  answered the hole at 0 (`:76-77`, `:1207-1208`, `:1293-1294`).
 - Seq15's readings held: blocks 2, 10 and 12 fail their reads with EIO
   beside block 0 whole (`:83`); the partial write into block 2 fails with
-  both masters' tids kept (`:84`, `:1330`, `:1416`); both comparison
+  both masters' tids kept (`:84`, `:1215`, `:1301`); both comparison
   controls differ (`:85-86`).
 - The debug vote's kept log (`fixtures/quorum-run-20261107-205149.klog`)
   holds 52 failed reads, each `collect=00010000 error=5` and followed by
@@ -23665,32 +23684,32 @@ the sync vote 62 (`:188`).
   `:92`, and two failures with the wait off, `:89`, `:91`) and printed
   three. Seq15 suppressed its disputed blocks' prints the same way and had
   no later print to report them.
-- The rest passed: the race mode on both builds (`:46`, `:1292`),
-  fixtures (`:213`), enospc as root and as a user, each 2 GiB filled with
-  0 failures and 0 blocks available after the sync (`:439`, `:751`,
-  `:979`, `:1168`), xfstests `-g seek` 8 of 8 (`:1245`), `debug_locks` 1
-  after each group (`:114`, `:190`, `:1247`).
+- The rest passed: the race mode on both builds (`:46`, `:1177`),
+  fixtures (`:211`), enospc as root and as a user, each 2 GiB filled with
+  0 failures and 0 blocks available after the sync (`:437`, `:642`,
+  `:863`, `:1053`), xfstests `-g seek` 8 of 8 (`:1130`), `debug_locks` 1
+  after each group (`:112`, `:188`, `:1132`).
 
 | reading, `h2release-7.3tls`, 16 GiB | seq15 | seq16 | predicted for seq16 |
 |---|---|---|---|
-| two masters, SEEK_HOLE | 34.01 ms | 32.36 ms (`:1380`) | 30 to 38 |
-| writer beside it | 66.44 ms | 65.26 ms (`:1379`) | 60 to 75 |
-| split SEEK_HOLE, failing EIO | 33.79 ms | 32.48 ms (`:1381`) | 28 to 40 |
-| writer beside the split | 67.51 ms | 65.06 ms (`:1383`) | 55 to 80 |
-| split fallbacks | 51 | 51 (`:1384`) | 10 + 41 |
+| two masters, SEEK_HOLE | 34.01 ms | 32.36 ms (`:1265`) | 30 to 38 |
+| writer beside it | 66.44 ms | 65.26 ms (`:1264`) | 60 to 75 |
+| split SEEK_HOLE, failing EIO | 33.79 ms | 32.48 ms (`:1266`) | 28 to 40 |
+| writer beside the split | 67.51 ms | 65.06 ms (`:1268`) | 55 to 80 |
+| split fallbacks | 51 | 51 (`:1269`) | 10 + 41 |
 
-**The stale slave** (`:130-132`). The review read from the code that a
+**The stale slave** (`:128-130`). The review read from the code that a
 partial write into a block a SLAVE holds stale leaves the slave's own
 bytes under the master's new tid. `cluster-sync.sh` took the reading:
 the slave's block 3 at tid `22f` behind the master's `23b` and still
-there after the seek (`:130`), the block read cold, 4 KiB of it
+there after the seek (`:128`), the block read cold, 4 KiB of it
 rewritten, a sync, then each volume's media. Both hold the block at tid
 `242`, with xxh64 `1f7a173d573f069f` on the master and `f67957fddce5660d`
-on the slave (`:132`). The reading shows the contents differ; that the
+on the slave (`:130`). The reading shows the contents differ; that the
 difference is the slave's stale 60 KiB beside the new 4 KiB is read from
 the code, each element's writeback assembling the block from its own
 chain (`hammer2_strategy_assemble()`). The sync pass replaces a block only
-when its tid differs (`hammer2_synchro.c:2499`), so from the code no later
+when its tid differs (`hammer2_synchro.c:2384`), so from the code no later
 pass repairs it; the run read the block once after the write. The defect
 predates N10.6, since the write path has assembled per element since it
 took folios smaller than a block. The fix the review gave, one assembly
@@ -23699,7 +23718,7 @@ is, is not built; `doc/README.porting.md`, "A key the masters disagree
 on", carries the case.
 
 QEMU cores read 0 at the start and the end (`n10-6-seq16.log:1`,
-`:1449`).
+`:1334`).
 
 ## The order lock, and a flush that moved an inode's tid, 2026-11-08
 
@@ -23716,8 +23735,8 @@ inode's chain made without that inode's order.
 **The first run** (`n10-6-seq17.log`, head `58a3be3`, no uncommitted
 change; predictions `p7-notes/n10-6-expected12.md`). The guarded calls
 answered inside the held window on every build, each with a rerun
-(`:89-98`, KASAN `:1522-1531`, release `:1619-1628`), and the debug vote
-failed three checks (`:125`):
+(`:89-98`, KASAN `:1407-1416`, release `:1504-1513`), and the debug vote
+failed three checks (`:123`):
 
 - `order_check` read 8 with one warning, an inode chain sync in task
   `sync` (`fixtures/quorum-run-20261108-002251.klog:534`, 164.49 s). It
@@ -23729,7 +23748,7 @@ failed three checks (`:125`):
   ms (`:96`). `->bmap` returns a block number and `hammer2_bmap()`
   answers 0 for an error as for a hole, so FIBMAP cannot carry EIO; the
   control was wrong, and the call met the window.
-- The sync vote warned once (`:192`): inode `0x424` modified at tid
+- The sync vote warned once (`:190`): inode `0x424` modified at tid
   `0x2ad` without its order, from `hammer2_vfs_sync_pmp()` through
   `hammer2_inode_chain_flush()` and the flush's
   `hammer2_chain_indirect_maintenance()`, deleting an emptied indirect
@@ -23944,7 +23963,7 @@ rerun, 9 checks and 0 failed (`seq21-enospc.out:410-411`); and
 analyzer over the four files C2 touched, 8 candidates, none on a line C2
 changed. Seven are dead stores at four sites (`hammer2_inode.c` 399, 1292
 and 1586, and `hammer2_os.h:1664`, reported once in each of the four
-files). The eighth, a garbage value compared at `hammer2_vnops.c:2236`,
+files). The eighth, a garbage value compared at `hammer2_vnops.c:2187`,
 `poff` in `hammer2_bmap()`, is new since the reading at `ca3ff80` and is
 not a defect: `hammer2_bmap_lbn()` sets `*poff` whenever its collect
 returns 0, and `hammer2_error_to_errno()` maps every nonzero error to a
@@ -23961,7 +23980,7 @@ in the tree of `d1ad8e1` (`p7-notes/instruments-20261109.log`, whose
 header names that commit's hash before two rewrites of messages; the tree
 is the same), W=1 read 0 warnings and smatch the same 59 over the same 22
 files, line numbers set aside. The analyzer in that log ran its default
-seven files, which share only `hammer2_vnops.c:2236` with C2's four and
+seven files, which share only `hammer2_vnops.c:2187` with C2's four and
 leave out `hammer2_admin.c`, the file `0bbeeb2` changed, so its equal
 count of 8 says nothing. Run again over C2's four files at `6c5d42f` (its
 hash before a rewrite of messages in the log's header), whose source
@@ -24206,7 +24225,7 @@ A second round copies only what the first failed to verify. After a
 first round that verified clean it still compares the whole set, 4.6 to
 16.7 s (the two timestamps of each row), and defers nothing; the stop is
 read only between deferrals and at the thread's loop top
-(`hammer2_synchro.c:901`, `:1692`), so the teardown waits for the round
+(`hammer2_synchro.c:785`, `:1577`), so the teardown waits for the round
 and the pass ends verified: `didbreak=0 rounds=0` in all four seq27 and
 seq28 runs. Whether the first round fails is inferred to be timing:
 C3's source read a whole first round "failed 1 kept 0 error 0" in seq23
@@ -24412,7 +24431,7 @@ not pass" counts; the S4 run's Q2 lines read ok
 (`seq30-debug-quorum-s4.out:48-53`). No core (`seq30.log:5`). At
 `f1db080` (`p7-notes/s4-instruments-20261109.log`) W=1 read 0 warnings,
 `smatch` the same 59 lines as C3's source, and the analyzer over
-`hammer2_vnops.c` its two known candidates, `:2236` and the TLS reader's
+`hammer2_vnops.c` its two known candidates, `:2187` and the TLS reader's
 `hammer2_os.h:1664` above.
 
 **Open from round 16, read from the code and not driven.** A truncate
@@ -24602,7 +24621,7 @@ the window too. A module with `seek_depth_max`, which
 `HAMMER2_LOCKDEBUG` also adds, whose parameter cannot be set or cleared
 now fails rather than skipping, and a shape's SEEK_HOLE is accepted only
 at the two ends a filesystem gives. The page written into a hole takes a
-whole-block folio (`hammer2_write_begin()`, `hammer2_vnops.c:2594-2604`,
+whole-block folio (`hammer2_write_begin()`, `hammer2_vnops.c:2545-2555`,
 read from code, not counted in a run), so no shape drives
 `hammer2_strategy_fill()`, which completes a folio smaller than its
 block. seq36 at `57abcb2`, on `h2debug-7.3tls`: with `HAMMER2_LOCKDEBUG`
@@ -25105,10 +25124,12 @@ planted double free and 59 lines over 22 files (`:5`, `:65`), 44 of
 them the kernel header's static assertion; the other 15, with their
 line numbers removed, are the 15 of a run at `efa09a6` in a clean
 checkout (`h1-smatch-base-efa09a6.log:1`, `:62`). The analyzer over its
-default seven files read 15 candidates (`:91`): the 8 the TLS tree
-reads (`h1-analyze-tls-20261112.log:17`) and the plain tree's known
-store in `hammer2_os.h:1664`, once in each file (`:72`, `:74`, `:77`,
-`:80`, `:85`, `:88`, `:90`). Over the four `.c` files the range
+default seven files read 15 candidates
+(`h1-instruments-20261112.log:91`): the plain tree's known store in
+`hammer2_os.h:1664`, once in each file
+(`h1-instruments-20261112.log:72`, `:74`, `:77`, `:80`, `:85`, `:88`,
+`:90`), and the 8 the TLS tree reads
+(`h1-analyze-tls-20261112.log:17`). Over the four `.c` files the range
 changed, `hammer2_synchro.c` and `hammer2_xops.c` outside that default
 and `hammer2_vfsops.c` and `hammer2_vnops.c` inside it, it read 12
 candidates on the TLS tree at `efa09a6` and 12 at `c38433d`
@@ -25117,3 +25138,156 @@ candidates on the TLS tree at `efa09a6` and 12 at `c38433d`
 Both comparisons drop line numbers, so a candidate that left one line
 and arrived at another in the same file with the same message would
 read as unchanged.
+
+## This record's citations put back where they were written, 2026-11-12
+
+The header of this record says a sentence here is not rewritten when the
+tree moves. It was. `script/test-citations.sh` now reads the history of
+`doc/history/` for a line a commit changed in nothing but a line citation
+(a number after `:`, or after a `.c` or `.h` name closed by a backtick
+and a space, with its range or its list), and over the history up to
+`183ee6e` (`H2_RENUMBER_RANGE=183ee6e`, output kept as
+`p7-notes/record-renumber-gate-183ee6e-r2.out`) it finds 130 such lines
+in 16 of the 538 commits that touched the directory (`:19`).
+
+Nine of the sixteen also changed `src/`. In eight of them the 121 lines
+are the record following the tree: `50de756` 1, `7a2dd0b` 16, `cb5245a`
+9, `f09e415` 1, `ea0f69f` 1, `ce7b2d0` 1, `4cded09` 5 and `f353909` 87
+(`:7-12`, `:15`, `:16`). The ninth, `2132faa`, changed one line by hand
+and is read with the hand edits below. For seven of the eight a script
+outside this repository carried each old number through its commit's
+own `src/` hunks and got the new one, 120 of 120
+(`p7-notes/record-renumber-classify.py`, output
+`record-renumber-classify-183ee6e.out:6-10`, `:13`, `:14`, `:16`); that
+classing cannot be rerun from this tree. `ce7b2d0`'s one line fails that
+test and is a remap all the same, made by content: it took
+`hammer2_vnops.c:2261` to `:2285`, and the line at 2285 in `ce7b2d0` is
+the line at 2261 in `ea0f69f`, ` * write iterator opened.` in both
+(`git show ea0f69f:src/sys/fs/hammer2/hammer2_vnops.c`, and the same of
+`ce7b2d0`). The 121 edits fell on 101 lines, 14 of them twice and one
+seven times (`p7-notes/record-restore-check.out:1`,
+`record-renumber-chains.out:1`).
+
+Two of the 101 show what a remap does to a dated line. The table of
+seq14 and seq15 cites lines of `n10-6-seq14.log`, a run log that no
+source hunk describes. `5459c07` wrote `33.25 ms` beside `:1238`, and
+line 1238 of that log reads `time dense-hole median-ns 33248426 n 10`;
+`f353909` made it `:1353`, and the log has 1293 lines. The sentence
+naming `hammer2_fiemap()` was written by `54116c0` with
+`hammer2_vnops.c:2426`, the line the function's name is on at that
+commit, and seven edits later read `:2334`
+(`record-renumber-chains.out:2-9`), which at `183ee6e` is a blank line
+inside `hammer2_fallocate_locked()`, `hammer2_fiemap()` being lines 3008
+to 3128 there. The number had left the function before the chain's end:
+`cb5245a` carried `:2406` to `:2238`, and in `cb5245a` the function is
+lines 2507 to 2625.
+
+No gate asked for it. Until this entry's commit the gate read no
+citation of this record. Its table half takes a row whose first cell is
+a line alone, and the dated records held none at the parent of any of
+the eight commits; it had no reader for a row naming a function; its
+prose half leaves the dated records out. Each of the eight passes its
+own gate with this record left as its parent had it
+(`p7-notes/record-renumber-cause.sh`, output
+`record-renumber-cause.out:1`, `:5`, `:9`, `:13`, `:17`, `:21`, `:25`,
+`:29`). So the sentence in this record's header that its table citations
+were checked on every run was true of no row here, and this commit
+rewords it. What failed as the source moved was the living documents.
+With `HEAD` at the parent of each of the eight and that commit's tree
+outside `doc/` laid over it, the tree as it stood before a document was
+touched, the commit's own gate exits 1 for all eight
+(`record-renumber-cause-tree.sh`, output
+`record-renumber-cause-tree.out:1`, `:10`, `:20`, `:30`, `:39`, `:48`,
+`:57`, `:66`). The failures are in `doc/CLUSTER_PROTOCOL_DESIGN.md` and
+`doc/SYNC_DESIGN.md`, and for `f353909` in `doc/README.status.md` as
+well: 15 table rows over three of the commits (`:15`, `:25`, `:71`) and
+from 8 to 264 prose citations in each (`:3`, `:12`, `:22`, `:32`, `:41`,
+`:50`, `:59`, `:68`). No failure names this record, whose 166 to 193
+citations each run lists as read by neither half (`:9`, `:19`, `:29`,
+`:38`, `:47`, `:56`, `:65`, `:76`). As a control the eight parents were
+read as they were committed, with none of the commit's source laid over
+them, and seven pass (`record-renumber-cause-control.out:1`, `:4`, `:7`,
+`:10`, `:13`, `:19`, `:22`). The eighth, `d933232`, the parent of
+`ce7b2d0`, already fails on the same count of 10 prose citations
+(`:16-18`; `record-renumber-cause-tree.out:48-50`): the documents had
+been failing since an earlier commit, and that commit's own source
+change adds none to the count. The record was renumbered along with the
+documents that failed.
+
+For `f353909` the tool is `p8-notes/tools/remap_citations.py`. A search
+of `p7-notes` and the directories under it for a file with `remap` in
+its name that is no script finds thirteen
+(`p7-notes/record-remap-outputs.out:2-14`), and five of them, all
+written on the day of that commit, name lines of this record:
+`remap-fix-dry.txt` on 140 lines, `remap-knob.txt` on 80,
+`remap-guard.txt` on 113, and `r5-scratch/remap-dry.txt` and
+`r5-scratch/remap-apply.txt` on 87 each (`:11`, `:13`, `:12`, `:8`,
+`:7`). The other eight name it on no line. For the other seven commits
+no output naming this record was found.
+
+The rows naming a function show the arithmetic did not hold either. The
+gate now reads a row whose first cell is a line and a function
+(`` `file:N` `symbol()` ``) for whether the line is inside that
+function, and that gate, run on a checkout of `183ee6e`, whose own
+script has no such reading, fails 13 of the 23 lines such rows cite
+(`p7-notes/two-cell-at-183ee6e-r2.out:2-14`, `:17`).
+
+What this entry's commit does. The 101 lines are back at the text they
+had before the first of the eight commits, and none is left at a
+remapped one (`record-restore-check.out:1`, `:3`). Three tables are
+wrapped in the markers that pin a region to a commit, so the gate reads
+them against the source their runs read: the first smatch run at
+`ab88d17` and the message core's smatch rows at `0073ebc`, the commits
+that wrote those tables and changed nothing under `src/`, and the
+coccinelle candidates at `6ec0430`, the commit their section says the
+run read. With the lines back and the pins in, all 23 lines are inside
+their functions.
+
+The nine lines of the other eight commits (`8dd3ce8`, `2132faa`,
+`db1b6d1`, `fb10f39` twice, `fb990df`, `1a24d0f`, `9619c28`, `5493952`;
+`record-renumber-gate-183ee6e-r2.out:3-6`, `:13`, `:14`, `:17`, `:18`)
+are a number changed by hand, and are left as made. Seven of those
+commits changed nothing under `src/`; `2132faa` changed three lines of
+`hammer2_synchro.c` at 2168 for three, which moves no line above them.
+Each was read against what it cites at the commit that wrote the first
+text and at the commit that made the second
+(`p7-notes/record-hand-edits-reread.sh`, output
+`record-hand-edits-reread.out`). Eight corrected a number that was wrong
+when written, the source or the log being the same at both commits:
+
+- `8dd3ce8` took `hammer2_chain.c:3416` to `:3453`; at `166ca00`, which
+  wrote the sentence, line 3416 is inside the comment on the atomic
+  removal and line 3453 is the rule the sentence quotes.
+- `2132faa` took `hammer2_synchro.c` 946-949 to 947-950; the comment's
+  measured sentence is lines 947 to 950 (`:5-8`, `:13-16`).
+- `db1b6d1` took DragonFly's `hammer2_iocom.c:376` to `:375`; the mark
+  is on line 375 of the DragonFly clone the output names (`:19`, `:21`).
+- `fb10f39` took the put of the transaction's reference from `:1456` to
+  `:1458` of `hammer2_remote.c`; the put is on line 1458 (`:30`, `:37`).
+- `fb990df` took `hammer2_vop_fsync()` from 1431-1470 to 1431-1472; the
+  closing brace is on line 1472 (`:62`, `:64`).
+- `1a24d0f` took the call of `hammer2_base_delete()` from
+  `hammer2_chain.c:3507` to `:3508`; the call is on line 3508 (`:69`,
+  `:73`).
+- `9619c28` widened the seq53 fix row's line 84108 of its kernel log to
+  84108-84111; the `completed` line the row quotes is 84111 (`:82`).
+- `5493952` took the seq52 control row's first two lines of its kernel
+  log from 69492 and 69497 to 69497 and 69498; 69492 is a `sync_insert`
+  line, and the census and the failed round are on 69497 and 69498
+  (`:89`, `:94`, `:95`).
+
+The ninth is no better at either text. `fb10f39` widened
+`wire-run-20261103-160942-b.klog:1894-1905` to end at 1907, and the
+sentence quotes the report's first line, its RIP and RBX 0: those are
+lines 1894, 1905 and 1908 (`:44`, `:55`, `:58`), so both ranges stop
+short of the register it names.
+
+What keeps it from recurring. The gate fails a commit after this one, or
+a working tree, that changes a line of `doc/history/` in a line citation
+alone; it fails a row of this record whose line is outside its function
+and says to pin the table; it checks this record's region markers, which
+the prose half never read. `p8-notes/tools/remap_citations.py` and
+`p7-notes/remap-head.py`, the remap tools that take a document by name
+or from a table failure, refuse a dated record.
+From here a number in this record that proves wrong is answered by a
+dated entry, and the line stays as it was written.

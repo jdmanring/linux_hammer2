@@ -262,7 +262,7 @@ The repository gates check the documentation against the tree. They are
 POSIX sh over grep, sed and git, so they run anywhere:
 
         $ bash script/test-inventory.sh   # the lists that claim to cover src/ and test/
-        $ bash script/test-citations.sh   # every file:line citation in doc/
+        $ bash script/test-citations.sh   # file:line citations in doc/: tables, prose, dated records
         $ bash script/test-history.sh     # every changelog row's commit hash
         $ bash script/test-provenance.sh  # every src/ file has an origin row; DESIGN's carried text
         $ bash script/test-absence.sh     # every "X() is not carried" resolves against src/

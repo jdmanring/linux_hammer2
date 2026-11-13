@@ -11,7 +11,7 @@ twice.
 | gate | reads | needs |
 |---|---|---|
 | `test-inventory.sh` | the lists that claim to cover `src/`, every file under `test/`, the runner behind each runnable file under `test/`, the `DEFER` ledger and the `XXX` table, that each operator document exists and README.md indexes it, that a sentence of README.md, CONTRIBUTING.md or `doc/*.md` saying without a condition that the cluster link uses kernel TLS has the record's `H2_WIRE_PASS=1 H2_WIRE_TLS=1` reading beside a `wire-run-` id (the sweep reads at least ten documents on every tree, since its first key, a handshake call in `src/`, held from 1.0.74 on and turned it off), and that every harness counting the guest's kernel reports reads `debug_locks`, since a guest whose lockdep an earlier report turned off passes a count of zero, and that every harness scanning kmemleak clears it before the load and scans again after the unload, since an uncleared list carries an earlier run's leaks under whatever names the new module's addresses give them and a scan before `rmmod` cannot see what the unload fails to free, and that every such reading scans twice, since a scan greys an object whose checksum changed since the last one and a new object's starts at `~0`, so one scan reports no new leak (the kernel's own `samples/kmemleak` module read 0 after one scan and 1 after two; two scans suffice because both guest kernels build without `CONFIG_DEBUG_KMEMLEAK_VERBOSE`, which asks for a third), the clear before each load following two scans on the same line; and that the scan after the unload counts only frames in the range `/proc/modules` gave before `rmmod`, read within twelve lines before it, its end within six and printed within three, since a frame left raw by any unloaded module looks the same. That range is the module's core text base and its total size, so it can reach into space another unloaded module's text held and leaves out init text, freed after the load; a base printed as zero (`kptr_restrict`) or a size that carries past the low half reads as unread, and the end is added on the low half alone, since a base above `INT64_MAX` is past some shells' arithmetic. The scans after the unload wait 6 s, kmemleak's minimum age being 5 s. Past the unload the whole block is compared byte for byte against the canonical copy in the gate, modulo leading indent and the `timeout 120 ` some unloads carry, so any edit inside it fails, including ones that keep every matched substring (an end added on the wrong half, a filter with `&& 0` appended, a count that assigns before reading, a guard given `true` or moved below the range it guards). The text of one block says nothing about what surrounds it, so the file around it is read too, the forms, the loads and the order of each clear and its load read on lines that are not comments, and the file's name, the block, the unload and the producer counts on every line, comments among them: one `mrange=` line, since a second is a decoy the comparison reads instead of the real one; one unload that reports, every other unload on a line, `rmmod` or `modprobe` followed in the same simple command by the name, after any flags or their arguments, quoted, with its suffix or by any path, matched by `rmmod hammer2 2>/dev/null` followed by `;` or the line's end, the cleanup before a load that every harness carries, since a second reporting unload before the block followed by a reload clears the first unload's leaks unread; every line naming the kmemleak file, `/kmemleak` as a whole word, one of the seven forms the six harnesses share, compared byte for byte once its indent and a trailing comment are stripped, so a scan or a clear respelled, requoted or prefixed on its own line fails, and so does one on a comment line, which a quote or a heredoc left open above it runs, as does a load of the module on a comment line; the clear the line before every load and every clear the line before the load, which is `insmod /tmp/hammer2.ko`, its arguments each a `name=value` with no shell operator, brace, quote, backtick or backslash in the value, and the guard the harnesses carry, `|| { echo "insmod failed"; exit 1; }` or `insmod-failed` and `exit 0`, so a second load while the module is loaded ends the shell that runs it, the guest script or a substitution, pipeline element or subshell inside it, whose output then carries the marker to the `.out` or, discarded, does not, since a clear between the load and the reading greys every leak older than kmemleak's minimum age for both readings; the clear's own marker, `kmemleak-cleared`, named nowhere else but as the host's read, which counts it by occurrence; the guarded load lines counted, one, and two in `cluster-sync.sh` (GUEST and GUESTB), whose crash run boots the guest twice, so a second clear and load whose marker never reaches the `.out`, inside a group, a function, an `exec` or a pipe that redirects or filters their output, is read by the load line it adds; the reading before the unload once, its `if` form on the line after a `sleep 6` and its count line after that, both above the reporting unload; a load spelled other than the guarded load wherever the word appears outside a comment line, the file's name and the word `insmod` read on the line whole and the form or the load compared on the line with its trailing comment stripped, so a quoted ` # ` before a clear or a load hides nothing; and `kmemleak-unl` outside the block matched by a `val` read of it on the same line below the harness's `val()` definition, where the host side is, since a producer sharing its line with a read is still a producer. The gate reads text and catches drift, and what passes it is named by class, each a mutation measured to pass. Three classes are met at run time: a second producer of the marker or either reading that does not spell the string in one token, since every harness's host side requires one `kmemleak-cleared` per load of the module the harness's own text performs, counted by occurrence (two in `cluster-sync.sh` under `H2_CRASH=1`), one `kmemleak` line, one `kmemleak-unloaded` line and one `kmemleak-unloaded-range` line in the run's own `.out`, so a second fails the run however it is spelled, and a clear with a load or an unload around it is such a producer when its marker reaches the `.out` beside the first's, on its own line, glued to a line printed without its newline or beside another on one line, and is read by the load line it adds when it does not; `cluster-sync.sh`'s two load lines both in one of its two guest scripts, which the count per file admits and one of its two runs fails, the marker count no longer matching that run's boots; and the block kept from running with nothing forged or with one of its two lines forged, and the reading before the unload kept from running with nothing forged, since the host counts both lines and an empty reading before the unload fails the run. The rest are the floor, a harness written against the gate: the block kept from running with both its lines forged the same way, and the reading before the unload kept from running with its one line forged, which the counts cannot tell from the block or the reading; that reading moved above the work, before or after the load, which file order cannot place (`cluster-sync.sh` reads it in a function) and whose leaks the range reading after the unload still counts, without their names; the reading rewritten in transit, by a filter on the guest's output or an edit of the `.out`, which leaves one line; the guest half run again by the harness with one run's output kept, the last's, whose second clear greys the first run's leaks before its reading, or the first's, the second run's reading discarded, neither of which the marker on `/dev/kmsg` below would read, the kept kernel log being one run's; a load the run performs from a file the rule does not read, a helper naming no kmemleak path, before the clear, which greys its leaks, or after the reading, which never sees them, and which runs no clear for that marker to count; the harness's one clear and load reused from a function or a loop the script runs twice, one of the two times with its output redirected or filtered, which adds no load line and keeps the marker count at one, the edit a quiet reload helper logging to a file is, deferred in the gate's comment to the marker written to `/dev/kmsg` with its trigger; a command, module or file name reaching its command other than as the next word in one token (a pipe, a list, a variable, `eval`, `cd` or `env -C` into the directory, a name split by quotes or built at run time); a form kept from running by the line before it (a continuation, an open quote, a heredoc), since the rule reads one line at a time; a command the block calls shadowed by a function, an alias or a `PATH` entry; and the host's own check rewritten; and a fourth class changes nothing the shell does, a trailing comment on a form line or a write to a path beside the file that does not exist. The controls are copies of one harness with a line added after its end or above its block, changed, moved or dropped, each going through the rule on every run and failing it for the reason it carries, the set of them measured against every weakening of the rule tried, every weakening that admits a set of the mutation matrix read by at least one control and the weakenings no control reads named in the gate's comment with what each admits, the controls' number asserted; a weakening none of them reads that admits a set is what the list grows by, and the comment names the three parts with none. A harness is admitted to this check by naming the kmemleak file by its path at all, the two scripts that name it without scanning being excluded by name and their number asserted, and the six admitted asserted too, so a harness that stops naming the path is read rather than dropped. The count is a floor and not a census: kmemleak reports an object only when its scan finds no reference to it, so a leaked object whose address survives anywhere the scan reads, a stack or a cache among them, is not reported and a leak can read 0 | sh, grep, git |
-| `test-citations.sh` | every `file:line` in a table under `doc/` or `doc/history/` resolves, and the named symbol is on the line; every prose citation of the port's source in a living document names a file of the port and a line of it that is not blank, a closing brace or a comment close, and its cited line has not moved, been deleted or been rewritten elsewhere since the commit that wrote it, by the dating its paragraph below states | sh, grep, awk, git with full history |
+| `test-citations.sh` | every `file:line` in a table of `doc/*.md` or `doc/history/*.md` resolves, and the named symbol is on the line; every prose citation of the port's source in a living document names a file of the port and a line of it that is not blank, a closing brace or a comment close, and its cited line has not moved, been deleted or been rewritten into a region whose shape changed since the commit that wrote it, by the dating its paragraph below states, a line rewritten in its own place printing a note to re-read rather than failing; a row whose path is absolute or holds a `..` component is refused, in both row shapes, since a document is as untrusted as the tree it cites, and a prose citation whose path holds a `..` component is refused the same way, while one beginning with `/` names no file of the port and is not read; a row naming a function beside its line has that line inside the function, in the tree or at the commit its region pins; no commit after the one that added the check, and no working tree, changes a line of `doc/history/` in a line citation alone; and a document whose name holds a character outside `A-Za-z0-9_./-`, a space or a tab among them, is refused whole and counted once, by the half whose list it is on, where both lists are one listing as git spells it so a name has one spelling and not read as the names its words or fragments spell, and a name holding a newline, which such a list cannot carry, stops the run as one that cannot report rather than being read as its fragments, while a name that ends in a newline is outside the population the pathspec lists and no count here sees it | sh, grep, awk, git with full history |
 | `test-history.sh` | every changelog row's commit resolves with a matching subject, no two rows share a version, every commit hash a tracked document names is on HEAD's history, and every document stating the tree's current version names the newest row | git with full history |
 | `test-provenance.sh` | every file under `src/` has an origin row, a carried file is re-checked with `cmp`, and `doc/DESIGN.md`'s upstream blocks reassemble to DragonFly's `DESIGN` blob | sh, git |
 | `test-absence.sh` | every "X() is not carried" and "->method is not written" claim resolves against `src/` | sh, grep |
@@ -365,7 +365,10 @@ tracked `.md` outside the dated records (`doc/history/`, `doc/research/`,
 `doc/upstream/` and `CHANGELOG.md`): a bare `:N` as the last named
 file's, every number of a list, and a path into another tree, a kernel's
 or upstream's, left alone. It fails a cited line past the end of its file,
-blank, a closing brace or the close of a comment, a range ending past the
+blank, a closing brace or the close of a comment, a path that is absolute or
+holds a `..` component (which it refuses before opening rather than reading
+a file the port does not hold; a path beginning with `/` is outside the names
+it matches at all, so it is not read), a range ending past the
 end, and a bare `.c` or `.h` name, or a `src/sys/` path, that resolves to
 no file of the port, together with any bare `:N` after it. A file name ends
 where a word does, so `head.cluster` names nothing. A section whose line
@@ -381,7 +384,201 @@ found such citations in the cluster note after every placement failure
 had been cleared, by reading each sentence against its lines; a sentence
 whose backticked names appear nowhere in the lines it cites is where that
 reading starts.
-The same half reads each citation's age, citation by citation and member by member: each number of a list, each end of a range in its own role (a remap by a range's length turns its old end into its new start), and a line cited alone only as a line cited alone (a range collapsed to one of its ends cannot say which, and either guess fails some correct citation). A citation is dated by the commit that wrote it on its line. That is the line's `git blame -M`, followed back while the commit that rewrote the line had cited the same line of the same file on the old line it replaced. A bare `:N` belongs to the file last named above it, as the reader assigns it. One whose line, when written, cited another file, because its file changed around it, is not dated; it is named in a note, unread, until its own line is reworded, and then it dates from the latest commit at which the carry still finds this file cited, since the same test runs at every commit the carry reaches. The old line a new line replaced is the one sharing the largest share of its words outside code spans, the nearer on a tie, and the one in the same place of a hunk that keeps its length when no word is shared, as on a line made only of citations. Words and not numbers pair them, since a uniform renumbering gives every citation its neighbor's old number. So a citation carried through a rewording keeps its age, and remaps are such rewordings: `d9acbaf` remapped one citation of `hammer2_synchro.c` and carried a stale range of `hammer2_inode.c` on the same line. The cited line is then mapped through `git diff -U0` from that commit to the tree. A move fails with the line it went to, a deletion fails, a line rewritten anywhere but in its own place fails with the region now there, and a line rewritten in place prints a note to read the sentence again. A note never fails, and an edit of the citing line after the rewrite retires it; a failure takes no such edit as a reading. Only a carried citation can retire a note that way, so an incidental rewording of its line silences the note too, and a cited line replaced in its own place by unrelated code shows only as that note. The history reads ignore an external diff tool, textconv drivers and a configured `blame.ignoreRevsFile` (cleared by the flag, since an empty `-c` value leaves it in force on git 2.56.0; a configured file that is missing stops blame itself, which the gate reports as could not run), and each reports its exit status, so a failed read fails the gate and does not pass the citation unread. Placed at `6b9dbee`, before the remap commit, the check fails 21 cited lines: 15 in the cluster note and 6 in `doc/IO_MODEL.md`, on four table rows, three of which the first half reads only as unanchored. All 21 are remapped in the commit that adds the check. The `--selftest` builds a scratch history with a citation for each case, fails each git read in turn through a shim that keeps the output and returns 1, configures an external diff tool and an ignored-revisions file and reads the same counts, configures a missing one, and runs a clone whose blame answers nothing and a shallow one. Thirty-five placed mutations of the check each fail it (`p8-notes/rot-mutations.py`). Five misses are stated rather than closed. A citation a reflow moved onto the next line pairs with that line's own old text and dates from the reflow. A line reworded so far that it shares more words with a neighbor pairs with the neighbor. A range collapsed to one of its ends is not carried. A bare citation whose file changed above it and whose source then moved before its own line was reworded dates from the last commit before the rewording and passes that move. A number that was wrong when it was written passes, since the check sees only what moved after. A shallow clone runs no rot check and exits 2. The runs are kept as `p8-notes/rot-gate-*.out` in the data tree, each with its command, tree and exit status.
+The same half reads each citation's age, citation by citation and member by member: each number of a list, each end of a range in its own role (a remap by a range's length turns its old end into its new start), and a line cited alone only as a line cited alone (a range collapsed to one of its ends cannot say which, and either guess fails some correct citation). A citation is dated by the commit that wrote it on its line. That is the line's `git blame -M`, followed back while the commit that rewrote the line had cited the same line of the same file on the old line it replaced. A bare `:N` belongs to the file last named above it, as the reader assigns it. One whose line, when written, cited another file, because its file changed around it, is not dated; it is named in a note, unread, until its own line is reworded, and then it dates from the latest commit at which the carry still finds this file cited, since the same test runs at every commit the carry reaches. The old line a new line replaced is the one sharing the largest share of its words outside code spans, the nearer on a tie, and the one in the same place of a hunk that keeps its length when no word is shared, as on a line made only of citations. Words and not numbers pair them, since a uniform renumbering gives every citation its neighbor's old number. So a citation carried through a rewording keeps its age, and remaps are such rewordings: `d9acbaf` remapped one citation of `hammer2_synchro.c` and carried a stale range of `hammer2_inode.c` on the same line. The cited line is then mapped through `git diff -U0` from that commit to the tree. A move fails with the line it went to, a deletion fails, a line rewritten anywhere but in its own place fails with the region now there, and a line rewritten in place prints a note to read the sentence again. A note never fails, and an edit of the citing line after the rewrite retires it; a failure takes no such edit as a reading. Only a carried citation can retire a note that way, so an incidental rewording of its line silences the note too, and a cited line replaced in its own place by unrelated code shows only as that note. The history reads ignore an external diff tool, textconv drivers, a binary attribute and a diff algorithm an attribute names (from the tree, from the reader's `core.attributesFile` or from `.git/info/attributes`), a configured diff algorithm, the indent heuristic configured off, and a configured `blame.ignoreRevsFile` (cleared by the flag, since an empty `-c` value leaves it in force on git 2.56.0; a configured file that is missing stops blame itself, which the gate reports as could not run), and each reports its exit status, so a failed read fails the gate and does not pass the citation unread. Placed at `6b9dbee`, before the remap commit, the check fails 21 cited lines: 15 in the cluster note and 6 in `doc/IO_MODEL.md`, on four table rows, three of which the first half reads only as unanchored. All 21 are remapped in the commit that adds the check. The `--selftest` builds a scratch history with a citation for each case, fails each git read in turn through a shim that keeps the output and returns 1, configures an external diff tool and an ignored-revisions file and reads the same counts, configures a missing one, and runs a clone whose blame answers nothing and a shallow one. Thirty-five placed mutations of the check each fail it (`p8-notes/rot-mutations.py`). Five misses are stated rather than closed. A citation a reflow moved onto the next line pairs with that line's own old text and dates from the reflow. A line reworded so far that it shares more words with a neighbor pairs with the neighbor. A range collapsed to one of its ends is not carried. A bare citation whose file changed above it and whose source then moved before its own line was reworded dates from the last commit before the rewording and passes that move. A number that was wrong when it was written passes, since the check sees only what moved after. A shallow clone runs no rot check and exits 2. The runs are kept as `p8-notes/rot-gate-*.out` in the data tree, each with its command, tree and exit status.
+
+A third reading takes the rows that name a function beside a line
+(`` `file:N` `symbol()` ``, with any further bare `:N` in the same cell),
+the form a checker's candidate table takes: 19 rows citing 23 lines on
+2026-11-12, all of them in `doc/history/verification-record.md`. The
+cited line has to lie inside the named function, which is found as the
+BSD layout puts it: its name at column 0, any indented lines of
+arguments, an opening brace at column 0, and from there to the next
+closing brace at column 0. So a prototype is not a definition, with its
+type on the same line or with the name at column 0, and neither is a
+macro invoked at column 0. A row inside a region
+pinned by `<!-- citations at HASH -->` is read against that commit's
+file and a row outside one against the tree, and a failing row of a
+dated record prints its remedy, which is to pin the table to the commit
+its run read. A looser pattern counts the rows of that shape, and the
+gate fails when the reader took fewer, as it does for a range in the
+first cell. The same loop checks the region markers of `doc/history/`,
+which the prose half leaves out: a marker naming no hash, a hash that is
+no commit, a region opened inside another, an end with none open and a
+region left open at the end of the document each fail. Placed against
+the record at `183ee6e` the reading fails 13 of the 23 lines
+(`p7-notes/two-cell-at-183ee6e-r2.out`). Four misses are stated. A line
+that drifted and is still inside its function passes. Where a file
+defines one name twice, as under the two arms of a conditional, a line
+inside either definition passes. A function whose closing brace is not
+at column 0 is read on to the next one that is, so a line of the
+function after it passes; a definition with its brace on the name's
+line is not found, which fails a correct row. A fenced block is not
+followed in a dated record, so a marker shown there as an example must
+not start its line.
+
+The dated records are held the other way round, since each says what was
+read at a commit. A commit that changes a line of `doc/history/` in
+nothing but a line citation fails, and so does a working tree that
+does. A citation here is a number after `:`, or after a `.c` or `.h`
+name closed by a backtick and a space, with its range or its list, so
+a count or a date written in that place is read as one and a change to
+it fails the same way. The
+lines come from `git log -p -U0` of the directory over the commits after
+the floor, and from `git diff` of the working tree. Both read past an
+external diff tool, a textconv driver, a binary attribute and a diff
+algorithm, whether configured or named by an attribute, and both pin
+rename detection on with no rename limit, the indent heuristic on,
+unmerged hunks, the `b/` prefix the reader takes a file's name from and
+git's own length for the short hashes it prints, so a record renamed
+and renumbered in one commit fails under any of those settings. A
+setting not pinned is read as configured, a clean filter an attribute
+names among them, which changes the working tree's text before `git
+diff` reads it. A setting git cannot parse stops each command that
+reads it with status 128 whatever is passed after it. The gate first
+reads the script three ways, by `git show` at `HEAD`, by `git log -p` of
+the last commit to change it and by `git diff` of the working tree
+against `HEAD`, and a setting that stops any of them stops the gate
+before it reads a citation, the first read to exit 128 being the one
+named: `log.diffMerges=false` stops the show, `core.bigFileThreshold`
+given no number the show of a packed object and both diffs, so it
+stops the show on a tree whose newest copy of the script is packed and
+the log on one where that copy is loose, `core.maxTreeDepth=0` stops
+the log and `index.threads` given no number the diff. One that stops `git blame` alone (`blame.date` given
+no format) stops the rot check. Each is reported as could not run. The
+floor is the first commit to name the check's mark in the script, the commit the
+check arrived in, and it is not read itself: what that commit did to the
+record is stated by its entry there and held by no gate. A commit that
+changes the mark's value becomes the floor, and that is the one way past
+a renumbering already pushed, since putting the line back in a later
+commit is a second change in digits alone and fails beside the first.
+A working tree that changes the mark's value has no commit naming it,
+so until that change is committed the check reads no commit and no
+working tree: a renumbering already in the history since the floor goes
+unread with the rest, nothing fails, and the summary says the check is
+not committed yet. The selftest holds that on a clone whose history
+holds a renumbering.
+No gate fails a commit that moves the floor, and nothing in the tree
+holds the floor where it is: the mark, the
+selftest's copy of it, any record of the floor, the script itself,
+`script/pre-push-check.sh` and the CI workflow are all text the commit
+that moves it can change. The range read is printed on every run that
+reaches the summary, and a floor that moved is seen there or not at all.
+A guard outside the tree would hold it: the script as last published,
+read from the upstream branch and run against the tree being pushed,
+whose floor no new commit can move. It is not built, since it would run
+on one machine and not in CI, a push without hooks passes it, and each
+deliberate move of the floor fails it once and needs an override at the
+push.
+The remedy the failure prints, to put the line back, holds for a working
+tree or for a commit that can still be amended. A
+removed line and an added one of the same hunk are paired when they
+differ in nothing else, after every line the hunk carries unchanged on
+both sides has been paired with itself: git stops matching a line as
+frequent as a blank one when enough changed lines surround it, and
+without that step the history to `183ee6e` reads 173 lines in 35
+commits (`p7-notes/record-renumber-no-identical-183ee6e-r2.out`). With
+it the reading is 130 lines in 16 of the 538 commits that touch the
+directory (`H2_RENUMBER_RANGE=183ee6e`, which reads the range it is
+given and no working tree;
+`p7-notes/record-renumber-gate-183ee6e-r2.out`). The verification
+record's entry of 2026-11-12 says which of those were the record
+renumbered to follow the tree and what was put back. Five misses are
+stated here: a renumbering in a commit that also rewords its line,
+one whose old and new lines git puts in different hunks, one made in a
+merge, whose diff `git log` does not print (none of the 538 commits is
+one), one made in a commit that moves the record out of `doc/history/`
+or renames it with too little left alike for git to follow the rename,
+and a line cited in any other form. Of the five, the selftest holds the
+first (a line reworded with its number is expected not read); the
+fourth's two shapes, a move out and a rename with little left alike,
+are reproduced outside it (`p7-notes/record-rename-misses.sh`, output
+`record-rename-misses.out`, beside a rename the reader follows); and
+the second, third and fifth are held by nothing, since git decides
+which hunks it prints and no tree has been built where a split hunk is
+the reason a renumbering is missed. The commit that adds a file to `doc/history/`
+has no removed line for its added ones to pair with, so nothing in it
+is read: a new record has no old text to renumber. Its later commits
+are read as any other record's, which the selftest holds with a record
+added after the floor and renumbered in the commit after. A failed read of the history
+fails the gate, a reader that prints no total fails it, a line of git's
+output that is no diff line the reader knows fails it, as every line is
+with git's color forced on, and a shallow clone reads no commit and says
+so. The `--selftest` holds every run that reaches the summaries to the
+two counts the exit status is made from, the rows' and the prose's: in
+each half the failure lines printed have to equal the failures counted,
+so a check that prints its failure and does not count it fails there. It
+reaches each of the two exits that read both counts with one of them
+zero, so a status that ignores either count fails it, and a fixture edit
+that changes nothing stops the build of the scratch history.
+The `--selftest` passes two of 140 placed mutations
+(`p7-notes/citations-mutations.py`, its runner beside it, output
+`citations-mutations.out`). Fifty-four are named, each turning off one
+decision of the function rows, the region markers, the prose reader's
+placement, fence, name and region rules, the renumber reader or an
+exit. The rest are made by line in the script's body after the
+selftest, each class being the lines the generator selects by text. The
+set is the one this generator selects: a set selected otherwise reaches
+sites this one has none at, so the number counts what this one placed
+and is no bound on what a mutation of the script can hide.
+Of the seventy-seven made by line, twenty-four remove a line adding to
+`fail` or `prosefail`, twenty-eight remove a flag of a git read, fifteen
+rename a failure the prose reader prints so that nothing reads it, six
+remove a count of the rot check, three make a word-boundary test of a
+file name false, and one unreads the test of the other half's list in
+`readname`. The fifty-four named include the nine that remove a setting
+`G` pins. No gate derives these counts; they are read from the
+generator's own name list, and a line added to the script that the
+generator selects moves one of them without any check noticing.
+Both `safe()` tests ask it of two names, the path and the one git
+blame's `previous` line gives. One of the four decisions is driven: the
+first test's `previous` half, by the document whose history passes
+through a name outside the plain set. Measured by making each decision
+dead in turn, the other three leave the selftest green: the first test's
+path half and both halves of the second. The other three decide on a
+tree no committed fixture builds, and nothing in the selftest says so,
+which is why the limit is written here. A guard is not removed for being
+undriven, since that is how round 14 let a name reach a shell command. The selftest's own code is in none of them. Its
+status is made by one function from the file its checks printed to and
+the status they exited with: 0 only with no `FAIL` line and a verdict of
+pass last, 2 only for a build that stopped with no `FAIL` line, and 1
+otherwise. The selftest reads that function from a table of printed
+files, a row for each way its tests can be told apart, and two rows
+replace the three-way test inside it with one giving 0 and one giving
+no status, so that the `FAIL` line read apart from it and the status
+kept to 0, 1 or 2 are each held there too
+(`p7-notes/r12fix/controls.out`: each test, read and status changed in a
+copy fails the selftest). The one call that hands the function the
+checks' real status is held outside the tree: that status differs from
+0 only on a run whose checks fail, and a selftest that watched its own
+failing run would have to run itself (`build-stops` and
+`build-stops-call-given-0`, the same file's last two lines). The prose half's count of citations read is
+held as well as its failures. An assertion of the selftest removed
+passes it, as removing a test passes any suite run on code that is
+right; a fixture is held instead by a change to its input or to the
+code it reaches failing it, as the mark fixture's does
+(`p7-notes/r10fix/controls.out`). One
+hundred and thirty-two fail it, the one that leaves a fixture edit changing
+nothing stops the build with the edit named, and the two it passes each
+remove a flag guarding a default git has: `--no-textconv` from `git
+show` of a file and `--no-ext-diff` from `git log`, which run no
+textconv driver and no external diff tool unless asked (git 2.56.0).
+Three exits are in no mutation because removing one changes no status:
+with no document, no prose citation or no rot check, a later exit
+returns the same 2 (`p7-notes/citations-equivalent-exits.py`, output
+`citations-equivalent-exits.out`, its first three results; the other
+three are controls, each failing). Four tests are in none for the same
+reason, each one's mutation printing the same bytes: the line a fence
+opened on is read only while the fence is open, and is set on that line
+either way; a single number cited as a range end that the start test
+skips is matched by the end test after it, and one cited as a range
+start that the end test would skip is matched by the start test before
+it; and the renumber reader's
+`+++ b/` name differs from any `+++` name only on a deleted file, whose
+lines pair with nothing (`marker-shown-in-fence-fails`,
+`range-end-as-start` and `renumber-header-file-name` in
+`p7-notes/r6fix/controls.out`, `pr-hasunit-start-as-end` in
+`p7-notes/r7fix/controls.out`; each file's other entries are controls,
+each failing).
 `test-history.sh` checks that every changelog row's commit hash resolves
 with a matching subject, and names any deliverable commit that has no row.
 It also reads every 7-to-40-digit hex token in the tracked `.md` and
@@ -1877,10 +2074,13 @@ disagreeing. Read the table.
 | gate | branch | how it was driven |
 |---|---|---|
 | `test-citations.sh` | no `doc/*.md` | the directory moved aside |
-| `test-citations.sh` | no prose citation of the source in the living documents | on 2026-10-28, since no input can be removed without also emptying the table rows, whose own branch above is reached first: the prose reader's pattern replaced by one matching nothing, in a copy under `script/` |
-| `test-citations.sh` | the rot check dates no cited line | by its own selftest, a git shim whose full blame answers nothing with status 0, on a clone with no other failure, reading exit 2 |
+| `test-citations.sh` | no `file:line` row in a table | by its own selftest, on a clone whose living document holds a prose citation and no table and whose dated records hold two function rows, reading exit 2, and exit 1 once one of those rows fails |
+| `test-citations.sh` | no prose citation of the source in the living documents | by its own selftest, on a clone whose one row cites a script, which the prose half leaves alone, reading exit 2 |
+| `test-citations.sh` | the rot check dates no cited line | by its own selftest, a git shim whose full blame answers nothing with status 0, on a clone with no other failure, and one whose blame answers a line that dates nothing, on the clone with nothing wrong, each reading exit 2 |
 | `test-citations.sh` | a shallow clone, no rot check | by its own selftest, on a clone of depth 1 of the scratch history |
 | `test-citations.sh` | a configured `blame.ignoreRevsFile` that does not exist, no rot check | by its own selftest, on the scratch history's clean clone, reading exit 2 |
+| `test-citations.sh` | a configuration on which `git show`, `git log -p` or `git diff` of the script exits 128, no citation read | by its own selftest, `log.diffMerges=false`, `core.maxTreeDepth=0` and `index.threads=zz-bogus` configured on the main scratch clone and `core.bigFileThreshold=zz-bogus` on the clean clone, whose objects are packed, each reading exit 2, the read it stopped named and no failure line |
+| `test-citations.sh` | a configuration on which `git blame` exits 128, no rot check | by its own selftest, `blame.date=zz-bogus` configured on the scratch history's clean clone, reading exit 2 and no blame read as a failure |
 | `test-provenance.sh` | no origin clone, so no carry re-verified | `H2_CLONE_DIR` pointed at a path that does not exist |
 | `test-provenance.sh` | no `git`, so the document carry's reassembly is not hashed (`UNVER`, exit 2 under `--doc-carries`) | `PATH` without `git`, 2026-11-12 |
 | `test-history.sh` | not a repository | `.git` moved aside |
