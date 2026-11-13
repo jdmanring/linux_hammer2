@@ -24647,17 +24647,22 @@ two hundred `src/` commits before `efa09a6`, and the round trip's newest
 run was on C3's tree on 2026-11-09 (`seq25-f4-fill.out`). The fleet harnesses
 the wrappers `p7-notes/seq37.sh` to `seq40.sh` list were run again at
 `efa09a6`, on `h2debug-7.3tls` with `KDIR` the 7.3 TLS tree, each from a
-frozen copy in a clean checkout (`linux_hammer2-data/ctl/h1`), and QEMU
+frozen copy in a clean checkout (`linux_hammer2-data/ctl/h1`), except
+that seq39 and seq40 ran with `hpanic-contain.sh` as `893134c` makes
+it, not yet committed there (`seq39.log:1`, `seq40.log:1`,
+`seq39.sh:5`), and QEMU
 cores read 0 before and after each. `million-tree.sh` and
 `nix-closure.sh`, which also write, are not among them, and this record
-holds no reading of either at this tree or after it. The reports
-cited in this section and the next two name the build each ran. A
-build not on `main` is a commit of a fleet clone (`ctl/h1-fix`,
+read them at the tree this step ends at ("The write rate re-read",
+below). Most reports in this section print no build; their tree is
+the one their wrapper's log names on its first line (`seq37.log:1`).
+Where a report cited in this section and the next three names its
+build, a build not on `main` is a commit of a fleet clone (`ctl/h1-fix`,
 `ctl/h1-probe`), or a copy from before a message-only replay, the tree
 unchanged, kept in the working clone by a `pre-*` tag or branch, or,
 for the one build no other ref held, an earlier copy of C3's first
-commit, by the tag `keep-c3-first-copy`. None of those refs is pushed, so a clone of the
-published repository does not resolve those hashes.
+commit, by the tag `keep-c3-first-copy`. None of those refs is pushed,
+so a clone of the published repository does not resolve those hashes.
 
 The crash matrix, both ports writing, five cells, two runs each: nine
 cells agree in both runs with every verdict ok, the torn cells reporting
@@ -25018,3 +25023,75 @@ The same two shapes before `2a89ed1` (seq49) read 144 and 139 and failed
 seven median checks each, the time mode's, which the window mode never
 produces (`seq49-l6-window.out:153`, `:155-171`;
 `seq49-l6-plain.out:153`, `:155-171`).
+
+## The write rate re-read, 2026-11-12
+
+`doc/README.status.md` and `doc/PERFORMANCE.md` said a large file
+writes at twice the rate of ext4 and btrfs, from the first release
+kernel reading of 2026-09-07 (582, 296 and 277 MiB/s, "One large file,
+and what the BSD buffer cache gave for free"). seq46 at `4cded09` read
+hammer2 563 MiB/s with btrfs at 665, at host load 5 to 6. Before
+writing either page, seq54 asked whether the write path had slowed
+since C3 (`p7-notes/seq54.sh`, predictions in its header): three runs
+of `throughput.sh` at `09a766b` and three at `248e9ef`, C3's last
+commit, alternated on `h2release-7.3tls`, both trees driven by
+`09a766b`'s harness. The reports and `seq55`'s print as their build
+the commit the local tag `pre-h1r6-rewrite` names, an earlier copy of
+this range's changelog commit that differs from `09a766b` in no
+`src/`, `script/` or `test/` file. Host load read 2.0 to 4.6 with
+77 GiB available (`seq54.log:7-18`), and each run ended with 0
+failures (`seq54-*-[123].out:42`) and no QEMU core
+(`seq54.log:8-18`).
+
+The harness times from `/proc/uptime`, in hundredths of a second, so
+512 MiB at 0.70 s prints 731 MiB/s and at 0.69 s 742. The write with
+`fsync` took 0.70, 0.70 and 0.70 s at `248e9ef` and 0.88, 0.68 and
+0.69 s at `09a766b` (`seq54-c3-{1,2,3}.out:7`,
+`seq54-head-{1,2,3}.out:7`); the preceding `syncfs` 0.57, 0.55 and
+3.70 s and 0.65, 0.65 and 0.55 s (`:6`). Five runs of six agree within
+two hundredths, on both trees; one slow write and one slow sync, one on
+each tree, do not repeat. seq23's four runs on 2026-11-09 read 0.64 to
+0.67 s on C3 and the tree before it. No `src/` commit since C3 changes
+a plain file's write: the code is the sync thread, the unmount's scrap
+count, `->getattr`'s count of unflushed blocks and LOCKDEBUG-only seek
+code (`git diff 248e9ef 09a766b -- src/`). The write path did not slow,
+and seq46's 563 (0.91 s) is a slow run of the same kind.
+
+ext4's and btrfs's writes in the same runs read 403 to 2133 and 220 to
+2844 MiB/s (`:10`, `:13`), a tenfold spread run to run on one host and
+one hour, the host's cache rather than either filesystem, so the
+instrument supports no ratio to them, and the two pages now give
+hammer2's own figure. The read, cold in the guest and warm on the host, is 5689 to 6400
+MiB/s against DragonFly's 895 to 1107 reading the same file
+(`:15`, `:35`), 5.1 to 6.5 times within each run, where 2026-09-07
+read about six.
+
+**million-tree.sh** (seq55, `p7-notes/seq55.sh`), at `09a766b` on
+`h2debug-7.3tls` with lockdep and kmemleak on, defaults: 1000000 files
+under 1000 directories created by one writer in 2149 s
+(`seq55-tree.out:1-2`, `:7`), counted 1000000 after the remount with
+the cold walk 25 s, 0 walk errors and 200 spot-checked files right
+(`:16-19`), `debug_locks` 1 and 0 kernel warnings (`:21`, `:30`), and
+DragonFly counted 1000000, 0 errors, its checker clean (`:34-37`); the
+host checker passed after each side with its negative control
+(`:32-33`, `:38-39`), 0 failures (`:40`). The sync after the create
+read "0 s" (`:12`), whole seconds, with 11488 pages dirty a moment
+before (`:8`), so it took under a second. `H2_TREE_CHURN=1` is not this
+run: its snapshot check fails on the carried defect recorded above
+("A snapshot through a churn keeps a new directory's name without its
+inode").
+
+**nix-closure.sh** (seq55). The closure of 2026-09-06, a KDE system of
+1978 paths, is no longer in the host's store; the largest closure there
+is a Saxum server system, 531 paths, 35701 files, 8709 symlinks and
+7954 directories, 3.48 GB (`seq55-closure.out:1`, `:5`), 52364 entries
+walked (`:15`) against the earlier one's 422075, an eighth. Copied in by four writers
+(`H2_NC_JOBS=4`, the setting that reached the hash-cleanup defect) in
+22 s (`:6`), every file hashed as its source in path order and every
+symlink with its source's target (`:41-42`), the collection's 265
+removed paths leaving 18076 files that hash as their source (`:32`,
+`:34`, `:45`), lockdep on throughout with 0 kernel warnings
+(`:36-38`, `:46`), and DragonFly counted the same 18076 files and 3512
+symlinks with its checker clean (`:49-51`), 0 failures (`:54`). The
+erofs reference did not run, `mkfs.erofs` not being installed (`:44`);
+it is a read rate, and the content check does not use it.

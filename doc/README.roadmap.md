@@ -855,9 +855,11 @@ read-ahead on the device mapping for the BSD cluster hint took it to
 numbers were the debug kernel's; on a release build of the same
 kernel the port reads at 2.8 GiB/s with one reader and 5.3 with the
 readahead workers of 0.9.19 verifying blocks on every CPU, six times
-DragonFly's own kernel on the same volume, and writes at twice ext4
-and btrfs. `doc/history/verification-record.md` has the tables and
-the profiles.
+DragonFly's own kernel on the same volume. `doc/history/verification-record.md`
+has the tables and the profiles. The write was read then at twice
+ext4's and btrfs's; read again on 2026-11-12, their write rates moved
+tenfold from run to run, the host's cache, so the instrument supports
+no ratio to them (the record, "The write rate re-read").
 
 The rows that need no closure are measured: a million files written
 by four writers in 248 s, a tenth of them deleted and rewritten with a
