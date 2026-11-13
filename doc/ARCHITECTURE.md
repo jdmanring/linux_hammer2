@@ -178,7 +178,8 @@ test builds, whose negative controls' comments say never to install
 them, which nothing enforces, since `make install` installs the last
 module built:
 `HAMMER2_LOCKDEBUG` for the fault and probe parameters,
-`HAMMER2_CCMS_LOCKTEST`, `HAMMER2_CONNWAIT`, a delay, and negative
+`HAMMER2_CCMS_LOCKTEST` for two kernel threads taking the CCMS lock,
+`HAMMER2_CONNWAIT` and `HAMMER2_CLOSEWAIT`, two delays, and negative
 controls such as `HAMMER2_FOLIO_CONTROL` and the `HAMMER2_NO*` set,
 each of which takes back a check so that a harness can show the check
 is what passes it.

@@ -2,7 +2,7 @@
 
 How to format, mount, snapshot, compress and replicate with this port.
 The commands below follow the README and the scripts under `script/`,
-except `setcomp`, which only `test/hammer2-seek.c` runs here; the userland is [hammer2-utils](https://github.com/kusumi/hammer2-utils)
+except `setcomp`, which only `test/hammer2-seek.c` and `test/hammer2-fiemap.c` run here; the userland is [hammer2-utils](https://github.com/kusumi/hammer2-utils)
 (`newfs_hammer2`, `hammer2`, `fsck_hammer2`). Use scratch media: the
 port is not yet recommended for data you cannot restore.
 

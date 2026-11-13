@@ -6,8 +6,11 @@ A version names a milestone on the roadmap, not a calendar release:
 the first two numbers say how far along `doc/README.roadmap.md`'s ladder
 the driver is, and the third is the point release inside it
 (`CHANGELOG.md`, the header). Every row of `CHANGELOG.md` pins the
-commit that delivered it and names the gate or run that verified it,
-and `script/test-history.sh` checks that each pin resolves.
+commit that delivered it, and `script/test-history.sh` checks that each
+pin resolves. A row's last cell names the gate or run that verified it,
+which no gate reads: the five rows from 0.7.47 to 0.9.0 have no such
+cell and name their runs inside the delivered cell or, for 0.9.0, under
+0.7.49 and 0.7.50.
 
 `v1.0.0` and `v1.0.4` are tagged (`git tag -l 'v*'` lists any since).
 Other point releases are changelog rows, not tags. To evaluate a known state, check out the

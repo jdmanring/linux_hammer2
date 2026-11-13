@@ -21,6 +21,15 @@ one, and none has been built. The kernels this port is tested on are
 64-bit and configured this way; on a kernel that builds the libraries as modules,
 `modprobe hammer2` loads them first, and `insmod` does not.
 
+The link's TLS options need more. `CONFIG_NET_HANDSHAKE` has no prompt
+of its own in 7.3: the kernel turns it on only with `SUNRPC`, `NVME_TCP`
+or `NVME_TARGET_TCP`, and without it the module builds, loads and
+refuses `cluster_tls=psk` with `EOPNOTSUPP` (`hammer2_iocom.c`). The
+kernels the TLS link is tested on also carry `CONFIG_TLS` and the AEADs
+kernel TLS installs, `CRYPTO_GCM`, `CRYPTO_CHACHA20POLY1305` and
+`CRYPTO_CCM`; a build without ChaCha20-Poly1305 completed a handshake
+on it and then failed to install it (`doc/README.testing.md`).
+
 ## Userland
 
 Formatting, PFS management, snapshots and checking come from
@@ -31,10 +40,12 @@ a filesystem across volumes, and the module's own options are `emerg`,
 `cluster_fd=` and the link's TLS inputs `cluster_tls=psk`,
 `cluster_tls_role`, `cluster_tls_keyring`, `cluster_tls_key` and
 `cluster_tls_clid`, which binds a cluster id to the key before it (up to
-ten). Two module
-parameters bear on the link: `cluster_tls_timeout_ms` (10000, fixed at
-load) bounds a handshake, and `cluster_tls_required` (0) refuses an intake
-that asks for no TLS when set to 1.
+ten). A TLS link also needs `tlshd` from ktls-utils running on each
+host; 1.5.0 is the version tested. Three module
+parameters bear on the link: `remote_timeout_ms` (10000, writable)
+bounds a request's wait for the peer, `cluster_tls_timeout_ms` (10000,
+fixed at load) bounds a handshake, and `cluster_tls_required` (0)
+refuses an intake that asks for no TLS when set to 1.
 
 ## Root on HAMMER2
 

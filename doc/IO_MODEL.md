@@ -240,8 +240,11 @@ strategy would meet the same format.
 | `test/contract/ctl-shrink-ceiling.h` | the control that shrinks the ceiling |
 
 `HAMMER2_LIMIT_DIRTY_INODES` in `hammer2.h` is 65536 and is neither: it
-bounds a count of inodes and merely shares the number. It is defined and not
-yet referenced anywhere in this tree. Listed so the next sweep does not
+bounds a count of inodes and merely shares the number. `hammer2.h` defines
+it twice with the one value, and `hammer2_init_limits()` reads it as the
+ceiling on `hammer2_limit_dirty_inodes`; this paragraph said until
+2026-11-12 that nothing referenced it, which stopped being so when the
+limits were carried on 2026-09-06. Listed so the next sweep does not
 classify it as either.
 
 Citations into the kernel's own headers are by expression throughout this
@@ -400,8 +403,10 @@ on two fills with that alone: the retrying request still failed 22
 and 37 times a fill, in the last seconds, and each failure still cost
 fifteen blocks, 465 and 504 rewritten blocks against a slack of 766.
 So `hammer2_writepages()` gathers a split block's other dirty folios
-under writeback beside the first and the write XOP lays them all into
-the one block write, and a block goes out once however it was split;
+under writeback beside the first, and a block goes out once however it
+was split: the write XOP laid them all into the one block write until
+1.0.96, and since then `hammer2_writepages()` fills the block's buffer
+from them itself before the XOP (`hammer2_strategy_fill()`, above);
 a sibling locked or already under writeback at the gather is left to
 its own XOP and costs what it did before.
 
@@ -511,9 +516,11 @@ strengthens the conclusion rather than changing it, and it removes the
 other half of the same trap: `get_tree_bdev()` is out for the same
 reason, because what it runs is `setup_bdev_super()`, which opens one
 device itself and ends in `sb_set_blocksize(sb, block_size(bdev))` -- the
-device's block size, not `HAMMER2_PBUFSIZE`. The mount path still owes
-`sb->s_blocksize` itself, and now owes it with nothing underneath to
-infer it from. See the opening comment of `hammer2_vfsops.c`.
+device's block size, not `HAMMER2_PBUFSIZE`. The mount path owed
+`sb->s_blocksize` itself, with nothing underneath to infer it from, and
+`hammer2_get_tree()` now sets it and `sb->s_blocksize_bits` to
+`HAMMER2_PBUFSIZE` and `HAMMER2_PBUFRADIX`; this paragraph said "still
+owes" until 2026-11-12. See the opening comment of `hammer2_vfsops.c`.
 
 `mapping_set_folio_min_order()` and `mapping_set_folio_order_range()`
 (both `static inline` in `include/linux/pagemap.h`) are how a filesystem
@@ -526,13 +533,20 @@ half of `->get_tree` landing on 2026-08-26, `hammer2_open_devvp()` calls
 `mapping_set_folio_min_order()` on its own. It cannot report the
 condition. Read at the kernel of record: `set_blocksize()` validates
 through `bdev_validate_blocksize()`, which checks `blk_validate_block_size()`
-and the device's logical block size and nothing about folios; then
-`mapping_set_folio_order_range()` returns immediately when
-`CONFIG_TRANSPARENT_HUGEPAGE` is off, and clamps `min` down to
-`MAX_PAGECACHE_ORDER` when it is on. Both are silent, and both leave
-`set_blocksize()` returning 0. So a kernel that cannot give this
-filesystem the folio it needs produces a successful open, which is the
-shape a refusal has to be written against.
+and the device's logical block size and nothing about folios. With
+`CONFIG_TRANSPARENT_HUGEPAGE` off, `BLK_MAX_BLOCK_SIZE` is `PAGE_SIZE`
+(`include/linux/blkdev.h`), so that check returns `-EINVAL` for a 64 KiB
+block on a 4 KiB page and says nothing about why; the assertion in
+`hammer2_io.c` stops the build before a module can meet it. With it on,
+the limit is 64 KiB, the check passes, and
+`mapping_set_folio_order_range()` clamps `min` down to
+`MAX_PAGECACHE_ORDER` in silence and leaves `set_blocksize()` returning
+0. So a kernel that cannot give this filesystem the folio it needs
+produces a bare `EINVAL` in the one case and a successful open in the
+other, and neither names the folio, which is the shape a refusal has to
+be written against. This paragraph said until 2026-11-12 that both cases
+returned 0, which the kernel of record's `BLK_MAX_BLOCK_SIZE` contradicts
+for the first.
 
 Two guards already stand between that and a wrong read, which is why the
 refusal is a diagnosis improvement and not an open hole: the

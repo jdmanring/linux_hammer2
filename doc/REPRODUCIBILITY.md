@@ -10,7 +10,8 @@ script, what each proves, and the guest kernels' configuration.
   `script/test-syntax.sh` pins as `KERNEL_REF`, configured with the
   options `doc/PACKAGING_NOTES.md` lists.
 - `make`, `gcc`, `clang`, `git`, `bash`, `dash`, `busybox`, `vale`,
-  `python3`, and for the fleet `qemu`, `libvirt` (`virsh`) and `ssh`.
+  `python3`, `perl` (for `test-checkpatch.sh`), and for the fleet
+  `qemu`, `libvirt` (`virsh`) and `ssh`.
 - For `test-provenance.sh`, clones of the origin trees its rows name;
   without one, a row claiming a byte-for-byte carry reports
   COULD-NOT-RUN.
@@ -37,9 +38,11 @@ for g in script/test-*.sh; do bash "$g"; echo "$g exit $?"; done
 
 Exit 0 passes, 1 fails, and 2 means the instrument could not run, which
 is neither. `script/pre-push-check.sh` runs what a push needs without a
-guest: the module build (`script/build-check.sh`), every gate but the
-two fleet gates, and the selftest of every gate that has one. It
-fetches `checkpatch.pl` at the baseline's kernel version when no cached
+guest: the module build (`script/build-check.sh`, against the plain tree
+of record and against `KDIR` when the two differ), every gate but the
+two fleet gates, a remake of `compile_commands.json`, and the selftest
+of every script under `script/` that has one, fleet harnesses included.
+It fetches `checkpatch.pl` at the baseline's kernel version when no cached
 copy matches the baseline's hash.
 
 ## 3. The guests
@@ -54,7 +57,10 @@ document lists) drive libvirt guests over ssh as root:
 - `H2_FIXTURE_START=1` lets a gate start a guest that is off;
   `H2_FIXTURE_DIR` is where images and kept reports go.
 - Each script builds the module itself against `KDIR`, which must be the
-  tree of the kernel the guest booted, and copies it in.
+  tree of the kernel the guest booted, and copies it in. Two do not:
+  `hpanic-contain.sh` takes a built module in `H2_KO` and names its
+  guest itself, reading neither `H2_GUEST` variable, and
+  `dfly-enospc.sh` runs on the DragonFly guest alone.
 - The maintainer's Linux guests are Artix Linux with 4 GiB and 12 vCPUs
   each, booting debug (lockdep, kmemleak), KASAN and release builds of
   7.3, each also built with kernel TLS; `doc/README.testing.md` records

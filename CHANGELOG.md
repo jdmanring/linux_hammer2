@@ -2,7 +2,8 @@ Changelog
 =========
 
 Every point release this port has made, newest first, each pinned to the
-commit that delivered it and to the gate that verified it. A row is added
+commit that delivered it and, in a last cell the five rows from 0.7.47
+to 0.9.0 lack, to the gate or run that verified it. A row is added
 when a deliverable is verified, not when work starts.
 
 Versions are milestones, not calendar releases. The first two numbers say
