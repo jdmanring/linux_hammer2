@@ -24637,7 +24637,8 @@ core (`seq36.log:1`, `:20`). The outputs of seq35 and seq36,
 `dfly-backport/seqsd-port.out:1` and the host copy of the exerciser by
 its file name carry the hashes `aabc483` and `57abcb2` had before rounds
 22 and 23 reworded messages, the trees unchanged; the branch
-`pre-r22-rewrite` keeps those.
+`pre-r22-rewrite` in the working clone keeps those, and it is not
+pushed.
 
 ## Compatibility and the fleet at HEAD, 2026-11-11
 
@@ -24652,7 +24653,9 @@ cores read 0 before and after each. `million-tree.sh` and
 holds no reading of either at this tree or after it. The reports of the
 runs in this section and the next two carry the hashes their trees had
 before two message-only replays; the tags `pre-h1-rewrite` and
-`pre-h1r2-rewrite` keep those, the trees unchanged.
+`pre-h1r2-rewrite` in the working clone keep those, the trees
+unchanged. The tags are not pushed, so a clone of the published
+repository does not resolve those hashes.
 
 The crash matrix, both ports writing, five cells, two runs each: nine
 cells agree in both runs with every verdict ok, the torn cells reporting
@@ -24941,7 +24944,7 @@ a mounted PFS.
 |---|---|---|---|---|---|
 | seq51 control | `87a5162`, no guard | 2 | `completed ... error 00000000 modified 60423`, round 1 acted 60064 failed 0, verified in round 2 | 60582 | `cluster-run-20261112-022618.klog:83537`, `:83538`, `:83550`, `:83575` |
 | seq51 fix | `87a5162` | 1 | re-flag inside the transaction, `completed ... modified 3`, round 1 acted 60064 failed 0 | 0 | `cluster-run-20261112-024320.klog:83539`, `:83541`, `:83542`; `seq51-fix.out:63` |
-| seq52 control | `baa2120` | 2 | scan failed in round 1, census 15580 | 51663 | `cluster-run-20261112-032642.klog:69497`, `:69498`, `:69523` |
+| seq52 control | `baa2120` | 2 | census 15580, a copy failed in round 1 | 51663 | `cluster-run-20261112-032642.klog:69497`, `:69498`, `:69523` |
 | seq52 fix | `baa2120` | 1 | census 0 | 0 | `seq52-fix.out:63-64` |
 | seq53 control | `b62d485` | 2 | `completed ... error 00000000 modified 60423`, census 20022, round 1 acted 60064 failed 0 error 1, unverified | 60582 | `cluster-run-20261112-061248.klog:83800-83803`, `:83827`; `seq53-ctl-1.out:63` |
 | seq53 fix | `b62d485` | 1 | re-flag inside the transaction, `completed ... modified 3`, census 0 | 0 | `cluster-run-20261112-063019.klog:84108-84111`; `seq53-fix.out:63-64` |
@@ -24978,9 +24981,12 @@ what a fix predicts but do not prove it alone (0.8^10 is 0.11); the forced
 pairs are the proof. seq51's six natural runs at `87a5162` were cut
 short when that candidate was replaced by `baa2120`: its first run
 was rc 0, 63 checks, 0 failed, 0 chains scrapped
-(`seq51-nat-1.out:62`, `:74`), the sequence was stopped inside its
-second, whose report holds only its header and build lines
-(`seq51-nat-2.out:1-4`), and the other four did not run.
+(`seq51-nat-1.out:62`, `:74`), the sequence was stopped by hand inside
+its second, whose report holds only its header, build and module-hash
+lines (`seq51-nat-2.out:1-4`), and the other four did not run.
+`seq51.log` ends at the first natural run, 03:13 (`:9`), with no end
+line, and seq52 started on `baa2120` at 03:25 (`seq52.log:1`); the reason, the candidate's replacement, is the
+operator's and no run prints it.
 
 **latency.sh, rerun.** seq46's latency run exited 2 when the wrapper left
 a guest up, and seq48 reran it at `4cded09` on `h2release-7.3tls`, rc 0
@@ -24990,3 +24996,16 @@ median is 144 µs, against ext4's 3254 and btrfs's 2897 (`:23`, `:35`,
 issues no device cache flush, as recorded in `doc/SECURITY_MODEL.md`,
 while ext4's and btrfs's do. The DEFER on `hammer2_vfs_sync_devs()` asks
 whether the median reads above ext4's, and it does not.
+
+**The seek window on the release build.** `1bdafe2` lets
+`seek-matrix.sh`'s window mode run on a kernel without lockdep, and
+`2a89ed1` gives that mode its own verdict. Run at `baa2120` of the
+fleet clone on `h2release-7.3tls`, the window with a `HAMMER2_LOCKDEBUG`
+module read 144 checks, 0 failed, the media-only reading answering
+with 3 of 6 answers changed, and the plain module 139, 0 failed, with
+the note that no such module answers (`seq52-l6-window.out:2`, `:35`,
+`:153`, `:156`; `seq52-l6-plain.out:2`, `:35`, `:153-154`, `:156`;
+`seq52.log:18`, `:21-22`), the counts seq36 read on the debug build.
+The same two shapes before `2a89ed1` (seq49) read 144 and 139 and failed
+seven median checks each, the time mode's, which the window mode never
+produces (`seq49-l6-window.out:153`, `:155-171`).
