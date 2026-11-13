@@ -24650,12 +24650,14 @@ the wrappers `p7-notes/seq37.sh` to `seq40.sh` list were run again at
 frozen copy in a clean checkout (`linux_hammer2-data/ctl/h1`), and QEMU
 cores read 0 before and after each. `million-tree.sh` and
 `nix-closure.sh`, which also write, are not among them, and this record
-holds no reading of either at this tree or after it. The reports of the
-runs in this section and the next two carry the hashes their trees had
-before two message-only replays; the tags `pre-h1-rewrite` and
-`pre-h1r2-rewrite` in the working clone keep those, the trees
-unchanged. The tags are not pushed, so a clone of the published
-repository does not resolve those hashes.
+holds no reading of either at this tree or after it. The reports
+cited in this section and the next two name the build each ran. A
+build not on `main` is a commit of a fleet clone (`ctl/h1-fix`,
+`ctl/h1-probe`), or a copy from before a message-only replay, the tree
+unchanged, kept in the working clone by a `pre-*` tag or branch, or,
+for the one build no other ref held, an earlier copy of C3's first
+commit, by the tag `keep-c3-first-copy`. None of those refs is pushed, so a clone of the
+published repository does not resolve those hashes.
 
 The crash matrix, both ports writing, five cells, two runs each: nine
 cells agree in both runs with every verdict ok, the torn cells reporting
@@ -24837,7 +24839,8 @@ vote 62 and 0, and 0 KASAN or UBSAN reports on `h2kasan-7.3tls`
 (`seq41.log`); `cluster-wire.sh` 36 and 0 and `cluster-dmsg.sh` 87 and 0
 on `h2debug-7.3tls`. That build's `cluster-quorum.sh` exited 2 because
 the second guest, `artix-s6-h2b`, was still up after `cluster-wire.sh`
-and `cluster-dmsg.sh` and seq41's wrapper did not stop it; seq42's wrapper stops every other guest before each run, and it
+and `cluster-dmsg.sh` and seq41's wrapper did not stop it;
+seq42's wrapper stops every other guest before each run, and it
 read 62 and 0 (`seq42-debug-quorum.out`). On `h2release-7.3tls` at
 `994103c` the seek readings the DEFER above `hammer2_seek_scanall()`
 holds to 50 ms: a single volume's dense SEEK_HOLE over 16 GiB 14.0 ms median
@@ -24917,7 +24920,8 @@ indirect block unflagged and skipped it (`:62313`). It returned error 0;
 the pass's first round failed one copy and its second was interrupted
 (`:62320`, `:63349`), and the teardown scrapped 42280 chains the pass had
 copied. A pass whose flush skipped its pins could also verify the copy in
-memory, which the control below reads (seq51). `f353909` runs the re-flag inside the pass-end flush's own
+memory, which the control below reads (seq51).
+`f353909` runs the re-flag inside the pass-end flush's own
 transaction, which `hammer2_trans_init()` admits one at a time per PFS
 (`hammer2_flush.c:102-104`).
 
@@ -24985,8 +24989,9 @@ was rc 0, 63 checks, 0 failed, 0 chains scrapped
 its second, whose report holds only its header, build and module-hash
 lines (`seq51-nat-2.out:1-4`), and the other four did not run.
 `seq51.log` ends at the first natural run, 03:13 (`:9`), with no end
-line, and seq52 started on `baa2120` at 03:25 (`seq52.log:1`); the reason, the candidate's replacement, is the
-operator's and no run prints it.
+line, and seq52 started on `baa2120` at 03:25 (`seq52.log:1`); the
+reason, the candidate's replacement, is the operator's and no run
+prints it.
 
 **latency.sh, rerun.** seq46's latency run exited 2 when the wrapper left
 a guest up, and seq48 reran it at `4cded09` on `h2release-7.3tls`, rc 0
@@ -25002,10 +25007,14 @@ whether the median reads above ext4's, and it does not.
 `2a89ed1` gives that mode its own verdict. Run at `baa2120` of the
 fleet clone on `h2release-7.3tls`, the window with a `HAMMER2_LOCKDEBUG`
 module read 144 checks, 0 failed, the media-only reading answering
-with 3 of 6 answers changed, and the plain module 139, 0 failed, with
-the note that no such module answers (`seq52-l6-window.out:2`, `:35`,
-`:153`, `:156`; `seq52-l6-plain.out:2`, `:35`, `:153-154`, `:156`;
-`seq52.log:18`, `:21-22`), the counts seq36 read on the debug build.
+every shape's layout with 8, 14, 3 and 3 changed answers, and the plain
+module 139, 0 failed, with the note that no such module answers
+(`seq52-l6-window.out:2`, `:26`, `:29`, `:32`, `:35`, `:153`, `:156`;
+`seq52-l6-plain.out:2`, `:35`, `:153-154`, `:156`; `seq52.log:18`,
+`:21-22`), the counts seq36 read on the debug build. Each module line
+reads `dirty 1` because the wrapper's frozen copy of the script sits in
+the clone while it runs.
 The same two shapes before `2a89ed1` (seq49) read 144 and 139 and failed
 seven median checks each, the time mode's, which the window mode never
-produces (`seq49-l6-window.out:153`, `:155-171`).
+produces (`seq49-l6-window.out:153`, `:155-171`;
+`seq49-l6-plain.out:153`, `:155-171`).

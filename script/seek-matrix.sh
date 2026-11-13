@@ -27,7 +27,7 @@
 #             shape's three, because a first file costing one block makes
 #             the rule pass without the sharing being measured.
 #
-# Four modes replace the three cases and stop no guest:
+# Five modes replace the three cases and stop no guest:
 #
 #   H2_SEEK_RACE=1  a truncate aimed inside a held SEEK_HOLE (seekprobe
 #                   race). The module is built with HAMMER2_LOCKDEBUG=1
