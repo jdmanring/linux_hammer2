@@ -25095,3 +25095,25 @@ removed paths leaving 18076 files that hash as their source (`:32`,
 symlinks with its checker clean (`:49-51`), 0 failures (`:54`). The
 erofs reference did not run, `mkfs.erofs` not being installed (`:44`);
 it is a read rate, and the content check does not use it.
+
+**The host instruments on 1.0.98's source**
+(`p7-notes/h1-instruments-20261112.log`, at `c38433d` on the plain 7.3
+tree, `:1`). The range from `efa09a6` changed five files under `src/`,
+255 lines added and 26 removed, and the record held no reading of them
+by these three. `make W=1` read 0 warnings (`:3`). `smatch` reported its
+planted double free and 59 lines over 22 files (`:5`, `:65`), 44 of
+them the kernel header's static assertion; the other 15, with their
+line numbers removed, are the 15 of a run at `efa09a6` in a clean
+checkout (`h1-smatch-base-efa09a6.log:1`, `:62`). The analyzer over its
+default seven files read 15 candidates (`:91`): the 8 the TLS tree
+reads (`h1-analyze-tls-20261112.log:17`) and the plain tree's known
+store in `hammer2_os.h:1664`, once in each file (`:72`, `:74`, `:77`,
+`:80`, `:85`, `:88`, `:90`). Over the four `.c` files the range
+changed, `hammer2_synchro.c` and `hammer2_xops.c` outside that default
+and `hammer2_vfsops.c` and `hammer2_vnops.c` inside it, it read 12
+candidates on the TLS tree at `efa09a6` and 12 at `c38433d`
+(`h1-analyze-range-base-efa09a6.log:18`,
+`h1-analyze-range-head-c38433d.log:18`), the same by file and message.
+Both comparisons drop line numbers, so a candidate that left one line
+and arrived at another in the same file with the same message would
+read as unchanged.
