@@ -25291,3 +25291,67 @@ the prose half never read. `p8-notes/tools/remap_citations.py` and
 or from a table failure, refuse a dated record.
 From here a number in this record that proves wrong is answered by a
 dated entry, and the line stays as it was written.
+
+## A document name the listing never held, 2026-11-15
+
+`test-citations.sh` listed its documents with `git ls-files -z '*.md'`. A
+pathspec asks a name to end with what it names, so a tracked name ending
+in a newline matched neither `*.md` nor anything else the gate asked for.
+Such a document was outside the listing before any count of it was taken:
+the run read every other document, reported nothing about this one, and
+exited 0. It is not a hypothetical shape. On a clone of `68e9f63b` with
+the real `doc/IO_MODEL.md` removed and its path plus a newline carrying a
+body whose every citation fails, the gate read 26 rows and 623 prose
+citations against the clean tree's 38 and 636, and exited 0
+(`p7-notes/r14fix/trailnl-before.out`).
+
+The round 22 entry above, and the sentence in `doc/README.testing.md`
+that repeats it, said such a name was outside the gate's population and
+that no count here could see it. The second clause was false, and its
+own evidence said so: 57 `.md` records on the clean tree and 56 on the
+clone is the arithmetic of a record *deleted*, not of one never listed.
+
+What the run does now. The listing is `git ls-files -z '*.md*'`, which
+holds a name ending in a newline because it does not ask the name to end
+in `.md`; the documents are the lines of that listing that do end in
+`.md`; and the record count is taken from the same file the lines are
+read from, so the two numbers the guard compares are one listing and not
+two. Measured on the same clone, the run prints
+`COULD-NOT-RUN: 57 tracked name(s) list as 58 line(s)` and exits 2
+(`p7-notes/r14fix/trailnl-after.out`). The clean tree is unchanged at 38
+rows, 636 prose citations and exit 0.
+
+Two controls. Restoring `'*.md'` fails the selftest's new fixture on the
+run it names. Making the count guard compare a number with itself fails
+both newline fixtures, the one whose name holds a newline and the one
+whose name ends in it
+(`p7-notes/citations-mutations-name-handling.out`, mutations
+`pathspec-narrowed-to-md` and `record-count-guard-removed`, 3 and 4
+lines failed).
+
+A second defect in the same block, found while reading it. `$nl` and
+`$blame` were each made by `mktemp` and each given its own
+`trap 'rm -f ...' EXIT`, and the second trap replaces the first: `$nl`
+was left on disk by every run of the gate, and `/tmp` held 40944 such
+files when this was read. One trap now names both. The selftest counts
+the `tmp.*` files in the temporary directory before and after a run of
+the clean clone and fails on a rise, which is driven: putting the split
+traps back reports `a run left 1 temporary file(s) behind`.
+
+The readings. The selftest is 905 `ok` lines under bash 5.3.20, dash
+0.5.13.3, busybox ash 1.37.0 and dash with mawk 1.3.4, and all four
+outputs are the same bytes (`p7-notes/r14fix/shells-name-handling.out`).
+The wrapper's own `0 of 4` line is wrong here and was not when the earlier
+entries were written: it compares each run against `$d/bash.out` while
+the bash run writes `$d/bash.out` only after the label it passes, so the
+file is `$d/bash.out` for a run named `bash` and the comparison reads
+nothing; the four-way comparison above is a direct `cmp` of the four
+outputs (`p7-notes/r14fix/shells-cmp-name-handling.out`). The mutation set
+is 143 placed with 1 passed
+(`p7-notes/citations-mutations-name-handling.out`). The one is the
+removal of `--no-ext-diff` from the `git log` over `doc/history/`: no
+clone that history is read on has a diff driver configured, so the flag's
+value is not observable. It is a fixture gap and not a default git
+supplies: a driver on the clone would be read. The other flag removals
+fail, as do all three mutations of this change, the pathspec, the record
+count and the trap. Fourteen fast gates exit 0.

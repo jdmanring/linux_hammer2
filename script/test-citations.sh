@@ -998,6 +998,56 @@ README.md"
 	rc=$?
 	expect 'COULD-NOT-RUN:' 'a name holding a newline is a run that cannot report, not one that reads its fragments'
 	exits 2
+	# A name that ENDS in a newline, which '*.md' does not list since such
+	# a name does not end in .md. Read through that pathspec the document
+	# was gone before any count saw it, and the run passed over it in
+	# silence. The listing is taken wide enough to hold it, so the record
+	# count sees it and the run refuses to report rather than reading
+	# every other document and none of this one. This fixture fails if
+	# the pathspec goes back to '*.md'.
+	git clone -q "file://$t/pure" "$t/trailnl"
+	(
+		cd "$t/trailnl" || exit 2
+		printf 'x\n' > "doc/IO_MODEL.md
+"
+		git add -A
+		git -c user.name=selftest -c user.email=selftest@localhost -c commit.gpgsign=false commit -qm trail
+		# The name is in the index and not under the narrow pathspec:
+		# both halves of the control, so a change to either the listing
+		# or git's matching is visible here rather than in a green run.
+		echo "  $(git ls-files -z | tr -cd '\0' | wc -c | tr -d ' ') record(s) in the tree, $(git ls-files -z '*.md' | tr -cd '\0' | wc -c | tr -d ' ') under '*.md', $(git ls-files -z '*.md*' | tr -cd '\0' | wc -c | tr -d ' ') under '*.md*'"
+	) >> "$t/trailnl.listing"
+	listed=$(sed -n 's/^  \([0-9]*\) record(s) in the tree, \([0-9]*\) under '\''\*\.md'\'', \([0-9]*\) under.*/\1 \2 \3/p' "$t/trailnl.listing")
+	set -- $listed
+	if [ "$#" -eq 3 ] && [ "$3" -eq $(($2 + 1)) ]; then
+		echo "  ok    a name ending in a newline is one record git lists and the '*.md' pathspec leaves out"
+	else
+		echo "  FAIL  the trailing-newline name lists as [$listed], where '*.md*' must hold one record more than '*.md' and the tree's extra names are neither"
+		sf=1
+	fi
+	out=$(cd "$t/trailnl" && sh script/test-citations.sh 2>&1)
+	rc=$?
+	expect 'COULD-NOT-RUN:' 'a name ending in a newline is a run that cannot report, not one that passes over the document'
+	exits 2
+	# One trap removes both files the gate makes. A second `trap ... EXIT`
+	# replaces the first, so a trap beside each mktemp left the first file
+	# behind on every run of the gate, which is why /tmp held thousands of
+	# them. The count is the run's own, taken either side of it, so it
+	# fails if a file is added without the trap or the trap stops naming
+	# one. The counts are not printed: another process writing its own
+	# temporary file between the two readings moves them without the gate
+	# leaving anything, and a line that differs per run would stop this
+	# selftest's output being compared byte for byte across shells.
+	ntmp() { ls "${TMPDIR:-/tmp}" | command grep -c '^tmp\.' || true; }
+	nb=$(ntmp)
+	out=$(cd "$t/pure" && sh script/test-citations.sh 2>&1)
+	na=$(ntmp)
+	if [ "$na" -le "$nb" ]; then
+		echo "  ok    a run leaves no temporary file behind"
+	else
+		echo "  FAIL  a run left $((na - nb)) temporary file(s) behind"
+		sf=1
+	fi
 	# Without the blank line on both sides of one hunk, the count below
 	# says nothing about a line a hunk carries unchanged.
 	gap=$(git -C "$t/ren" log -1 --format= -U0 -p --grep='^five$' -- doc/history/w.md | command grep -c '^[-+]$' || true)
@@ -1310,26 +1360,33 @@ stops git diff -U0 HEAD -- script/test-citations.sh
 # while the name itself was never opened. A newline is the one character
 # a line-per-name list cannot carry: it splits a name into the fragments
 # it spells, and where those are documents too the split reads them and
-# never the name. So the listing is held to its record count, and a name
-# with a newline in it is a run that cannot report what it read rather
-# than a run that passes over a document.
-# A name holding a newline would split into the fragments it spells, and
-# the run would read them and never the name. So the stream is written
-# once and its records counted against the lines it makes: git prints one
-# line per record, so a mismatch is a name with a newline inside it.
+# never the name. So the stream is written once and its records are
+# counted against the lines it makes, and a mismatch is a name holding a
+# newline, or ending in one, in a run that says it cannot report rather
+# than passing over the document.
+#
+# The pathspec is '*.md*' and not '*.md'. A pathspec asks a name to END
+# with what it names, so '*.md' does not list a name that ends in a
+# newline: such a name was gone before any count could see it, and the
+# document behind it was read as nothing and reported as nothing. The
+# wider pathspec lists it, so the record count sees it and the guard
+# fires. Names the superset adds that do not end in .md are dropped from
+# the documents below, which is what the opening sentence of this gate
+# says it reads: everything ending in .md.
 nl=$(mktemp) || exit 2
-trap 'rm -f "$nl"' EXIT
-git ls-files -z '*.md' | tr '\0' '\n' > "$nl" || exit 2
-allmd=$(cat "$nl")
-# The pathspec leaves out a name that ends in a newline, since such a
-# name does not end in .md: that document is outside this gate's
-# population by name, and no count here can see it.
-nrec=$(git ls-files -z '*.md' | tr -cd '\0' | wc -c | tr -d ' ')
-nline=$(wc -l < "$nl" | tr -d ' ')
+blame=$(mktemp) || exit 2
+# One trap for both files. A second `trap ... EXIT` replaces the first
+# rather than adding to it, so a trap set beside each mktemp left the
+# first file behind on every run.
+trap 'rm -f "$nl" "$blame"' EXIT
+git ls-files -z '*.md*' > "$nl" || exit 2
+nrec=$(tr -cd '\0' < "$nl" | wc -c | tr -d ' ')
+nline=$(tr '\0' '\n' < "$nl" | wc -l | tr -d ' ')
 if [ "$nline" -ne "$nrec" ]; then
-	echo "citations: COULD-NOT-RUN: $nrec tracked .md file(s) list as $nline line(s), so a name holds a newline and no name can be read whole" >&2
+	echo "citations: COULD-NOT-RUN: $nrec tracked name(s) list as $nline line(s), so a name holds a newline or ends in one, and no name can be read whole" >&2
 	exit 2
 fi
+allmd=$(tr '\0' '\n' < "$nl" | command grep -E '\.md$')
 # The documents the table half reads: doc/*.md and doc/history/*.md, and
 # no deeper.
 tabledocs=$(printf '%s\n' "$allmd" | command grep -E '^doc/(history/)?[^/]+\.md$')
@@ -1683,8 +1740,8 @@ rotedit=0
 rotcarried=0
 rotundated=0
 blamed=0
-blame=$(mktemp) || exit 2
-trap 'rm -f "$blame"' EXIT
+# `$blame` is made with `$nl` above, and both are removed by the one trap
+# there.
 # The age of a citation needs the whole history: a shallow clone dates
 # every line to its boundary commit and reads every citation as fresh.
 norot=0
