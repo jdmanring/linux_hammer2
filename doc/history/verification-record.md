@@ -25325,8 +25325,8 @@ Two controls. Restoring `'*.md'` fails the selftest's new fixture on the
 run it names. Making the count guard compare a number with itself fails
 both newline fixtures, the one whose name holds a newline and the one
 whose name ends in it
-(`p7-notes/citations-mutations-name-handling.out`, mutations
-`pathspec-narrowed-to-md` and `record-count-guard-removed`, 3 and 4
+(`p7-notes/r14fix/citations-mutations-eb73edda.out`, mutations
+`pathspec-narrowed-to-md` and `record-count-guard-removed`, 2 and 4
 lines failed).
 
 A second defect in the same block, found while reading it. `$nl` and
@@ -25349,17 +25349,17 @@ are clean (`conc8-after.out`); the split traps still fail it at exactly one file
 (`trap-control-after-fix.out`), and the four shells still agree byte for
 byte (`shells-cmp-tmpdir-fix.out`).
 
-The readings. The selftest is 905 `ok` lines under bash 5.3.20, dash
-0.5.13.3, busybox ash 1.37.0 and dash with mawk 1.3.4, and all four
-outputs are the same bytes (`p7-notes/r14fix/shells-name-handling.out`).
-The wrapper's own `0 of 4` line is wrong here and was not when the earlier
-entries were written: it compares each run against `$d/bash.out` while
-the bash run writes `$d/bash.out` only after the label it passes, so the
-file is `$d/bash.out` for a run named `bash` and the comparison reads
-nothing; the four-way comparison above is a direct `cmp` of the four
-outputs (`p7-notes/r14fix/shells-cmp-tmpdir-fix.out`, the same comparison
-at the gate as changed). The mutation set is 143 placed with 2 passed
-(`p7-notes/r14fix/citations-mutations-tmpdir-fix.out`). The removal of
+The readings, taken at the gate `eb73edda` leaves, sha256 `c15b2592`,
+which differs from the one `90e8c19d` commits in the wording of the
+guard's message and in nothing else. The selftest is 905 `ok` lines in
+each of the wrapper's five lanes: bash 5.3.20, dash 0.5.13.3, busybox ash
+1.37.0 with the host's awk, grep and sed, the same ash with busybox awk,
+grep, sed, cut, tr, head, wc, sort and cmp first on `PATH`, and dash with
+mawk 1.3.4. The wrapper counts 4 of 4 outputs the same bytes as bash's
+(`p7-notes/r14fix/shells-eb73edda.out`). The mutation set is 143 placed
+with 2 passed (`p7-notes/r14fix/citations-mutations-eb73edda.out`), and
+the run at the gate `90e8c19d` commits printed the same 143 verdict lines
+(`citations-mutations-tmpdir-fix.out`). The removal of
 `--no-ext-diff` from the `git log` over `doc/history/` passes because no
 clone that history is read on has a diff driver configured, so the flag's
 value is not observable; it is a fixture gap and not a default git
@@ -25370,17 +25370,42 @@ given: a driver that prints `MANGLED` for every file prints that from
 `git show --textconv HEAD:f.c` and the stored blob from `git show
 HEAD:f.c`, on git 2.56.0, and git's manual says textconv is enabled by
 default for `git diff` and `git log` only. The other flag removals fail,
-as do all three mutations of this change, the pathspec, the record count
-and the trap.
-The run recorded first, `p7-notes/citations-mutations-name-handling.out`,
-was taken at a gate a few lines off the one `05b0acdc` commits: its own
-header gives that gate sha256 `0deb9ef`, and the committed gate hashes
-`63f719f5`. Its fixture read the shared `/tmp`, so a lane's verdict moved
-with the other seven, and its one survivor is not a reading about the
-flag: `flag-no-textconv-removed-at-1864` there failed on the fixture's
-count alone, and the same mutation passes at the gate this change leaves,
-which is the `--no-textconv` removal described above, the same fact
-reached twice. That run is superseded by the one above.
+as do all three mutations of this change, the pathspec at 2 lines, the
+record count at 4 and the trap at 1.
+
+The mutation run recorded first,
+`p7-notes/citations-mutations-name-handling.out`, was taken at a gate no
+commit holds. Its own header gives that gate sha256 `0deb9ef`, the file
+is kept as `p7-notes/r14fix/gate-0deb9ef.sh`, and the gate `05b0acdc`
+commits hashes `63f719f5`; the two differ in comments, in the guard's
+message and in the leak fixture's two lines, which in the earlier one
+print both counts. That fixture read the shared `/tmp`, so a lane's
+verdict moved with the other seven. The run passed one mutation,
+`flag-no-ext-diff-removed-at-2347`. `flag-no-textconv-removed-at-1864`
+failed in it, on one line, `a run left 5 temporary file(s) behind (872
+before, 877 after)`, which is the fixture's count and no reading about
+the flag. The same mutation, at line 1868 since the fixture's fix added
+four lines above it, passes at the gate this change leaves, for the
+reason given above. That run is superseded by the two above.
+
+A wrapper run this entry first cited for the shells,
+`p7-notes/r14fix/shells-name-handling.out`, is withdrawn as a reading.
+Its header gives a gate sha256 `bc23100e` that no commit holds and no
+file keeps. Its lane with busybox's applets first on `PATH` read nothing:
+the busybox it was handed has an `ash` applet and no `awk`, `grep` or
+`sed`, each exiting 127 with `applet not found`
+(`p7-notes/r14fix/busybox-applets.out`), so that lane's `0 ok` is a
+reading about the binary. The same holds of the five wrapper runs before
+it, the first of them at 17:36 on 2026-11-13, whose outputs are beside
+the wrapper in `p7-notes` and none of which an entry here cites; the
+seven before those were handed another busybox, and the lane passed in
+each. Its `0 of 4` line has a candidate
+cause and no measured one: the gate of that hour that is kept, the
+`0deb9ef` above, prints the fixture's two counts of the shared `/tmp` in
+its `ok` line, which two runs print alike only by chance. This entry
+first gave that line a cause in the wrapper's own comparison, which the
+wrapper's history does not bear out: the same comparison printed `4 of 4`
+and `3 of 4` in the runs before.
 
 A number this entry first carried, 40944 `tmp.*` files in `/tmp`, is
 withdrawn: no file in `p7-notes` holds it, and `/tmp` held 1174 when the

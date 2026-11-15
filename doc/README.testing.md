@@ -507,20 +507,23 @@ so. The `--selftest` holds every run that reaches the summaries to the
 two counts the exit status is made from, the rows' and the prose's: in
 each half the failure lines printed have to equal the failures counted,
 so a check that prints a failure and does not add it to its half's
-counter fails there. It
-reaches each of the two exits that read both counts with one of them
-zero, so a status that ignores either count fails it, and a fixture edit
-that changes nothing stops the build of the scratch history.
+counter fails there. It reaches each of the two exits that read both
+counts with one of them zero, so a status that ignores either count
+fails it, and a fixture edit that changes nothing stops the build of the
+scratch history.
 The `--selftest` passes two of 143 placed mutations
 (`p7-notes/citations-mutations.py`, its runner beside it, output
-`r14fix/citations-mutations-tmpdir-fix.out`; `citations-mutations.out` is
-the run before this change, two of 140). The run recorded first, at a
-gate a few lines off the committed one, passed one, and the leak fixture
-below is why: it read the shared `/tmp`, so a lane's verdict moved with
-the other seven, and in that run `flag-no-textconv` failed on nothing but
-the fixture's count, at the gate's `git show` that was then line 1864
-and is 1868 once the fixture's own lines grew. The same mutation passes
-at the committed gate, for the reason given below.
+`r14fix/citations-mutations-eb73edda.out`; `citations-mutations.out` is
+the run before this change, two of 140). An earlier run of the 143,
+`citations-mutations-name-handling.out`, was taken at a gate no commit
+holds and passed one of the two, the removal of `--no-ext-diff`. The
+removal of `--no-textconv` failed there on one line, `a run left 5
+temporary file(s) behind`, and on nothing about the flag: the selftest's
+check that a run of the gate leaves no temporary file then counted the
+shared `/tmp`, which the runner's seven other lanes were writing to. The
+check now counts a `TMPDIR` of its own, and the same mutation passes, for
+the reason given below. That fix made the selftest four lines longer, so
+the `git show` that run names at line 1864 is at 1868.
 Fifty-seven are named, each turning off one
 decision of the function rows, the region markers, the prose reader's
 placement, fence, name and region rules, the renumber reader, the
