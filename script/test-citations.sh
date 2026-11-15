@@ -1032,16 +1032,20 @@ README.md"
 	# One trap removes both files the gate makes. A second `trap ... EXIT`
 	# replaces the first, so a trap beside each mktemp left the first file
 	# behind on every run of the gate, which is why /tmp held thousands of
-	# them. The count is the run's own, taken either side of it, so it
-	# fails if a file is added without the trap or the trap stops naming
-	# one. The counts are not printed: another process writing its own
-	# temporary file between the two readings moves them without the gate
-	# leaving anything, and a line that differs per run would stop this
-	# selftest's output being compared byte for byte across shells.
-	ntmp() { ls "${TMPDIR:-/tmp}" | command grep -c '^tmp\.' || true; }
-	nb=$(ntmp)
-	out=$(cd "$t/pure" && sh script/test-citations.sh 2>&1)
-	na=$(ntmp)
+	# them. The count is the run's own, so it fails if a file is added
+	# without the trap or the trap stops naming one. It is taken in a
+	# TMPDIR of the fixture's own, since a run given a TMPDIR makes its
+	# files there (mktemp with no template reads it) and the shared /tmp
+	# moves under this reading for every other process that writes one: in
+	# eight selftests run side by side, five reported a file they never
+	# made. Nothing is printed, since a count differing per run would stop
+	# the outputs of the four shells comparing byte for byte.
+	ntmp() { ls "$1" | command grep -c '^tmp\.' || true; }
+	tdir=$t/tdir
+	mkdir "$tdir" || exit 2
+	nb=$(ntmp "$tdir")
+	out=$(cd "$t/pure" && TMPDIR="$tdir" sh script/test-citations.sh 2>&1)
+	na=$(ntmp "$tdir")
 	if [ "$na" -le "$nb" ]; then
 		echo "  ok    a run leaves no temporary file behind"
 	else

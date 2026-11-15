@@ -25338,6 +25338,17 @@ the `tmp.*` files in the temporary directory before and after a run of
 the clean clone and fails on a rise, which is driven: putting the split
 traps back reports `a run left 1 temporary file(s) behind`.
 
+That fixture was the change's own defect, found by the mutation run. It
+counted the shared `/tmp`, which every other process writing a temporary
+file moves under it, and the mutation runner gives each of eight lanes a
+selftest of its own: in eight run side by side, five reported a file the
+gate never made, with rises of 8, 8, 5, 12 and 10 files
+(`p7-notes/r14fix/conc8-before.out`). The fixture now runs on a `TMPDIR`
+of its own, which `mktemp` with no template reads, and eight side by side
+are clean (`conc8-after.out`); the split traps still fail it at exactly one file
+(`trap-control-after-fix.out`), and the four shells still agree byte for
+byte (`shells-cmp-tmpdir-fix.out`).
+
 The readings. The selftest is 905 `ok` lines under bash 5.3.20, dash
 0.5.13.3, busybox ash 1.37.0 and dash with mawk 1.3.4, and all four
 outputs are the same bytes (`p7-notes/r14fix/shells-name-handling.out`).
@@ -25346,12 +25357,25 @@ entries were written: it compares each run against `$d/bash.out` while
 the bash run writes `$d/bash.out` only after the label it passes, so the
 file is `$d/bash.out` for a run named `bash` and the comparison reads
 nothing; the four-way comparison above is a direct `cmp` of the four
-outputs (`p7-notes/r14fix/shells-cmp-name-handling.out`). The mutation set
-is 143 placed with 1 passed
-(`p7-notes/citations-mutations-name-handling.out`). The one is the
-removal of `--no-ext-diff` from the `git log` over `doc/history/`: no
+outputs (`p7-notes/r14fix/shells-cmp-tmpdir-fix.out`, the same comparison
+at the gate as changed). The mutation set is 143 placed with 2 passed
+(`p7-notes/r14fix/citations-mutations-tmpdir-fix.out`). The removal of
+`--no-ext-diff` from the `git log` over `doc/history/` passes because no
 clone that history is read on has a diff driver configured, so the flag's
-value is not observable. It is a fixture gap and not a default git
-supplies: a driver on the clone would be read. The other flag removals
-fail, as do all three mutations of this change, the pathspec, the record
-count and the trap. Fourteen fast gates exit 0.
+value is not observable; it is a fixture gap and not a default git
+supplies, since a driver on the clone would be read. The removal of
+`--no-textconv` from the `git show` at one revision of one file passes
+because git applies no textconv to that form unless `--textconv` is
+given: a driver that prints `MANGLED` for every file prints that from
+`git show --textconv HEAD:f.c` and the stored blob from `git show
+HEAD:f.c`, on git 2.56.0, and git's manual says textconv is enabled by
+default for `git diff` and `git log` only. The other flag removals fail,
+as do all three mutations of this change, the pathspec, the record count
+and the trap.
+The run recorded first, at `p7-notes/citations-mutations-name-handling.out`,
+passed one and was taken at a gate a few lines off the committed one
+(sha256 `0deb9ef`, where the commit is `63f719f5`). It read the shared
+`/tmp`, so a lane's verdict moved with the other seven:
+`flag-no-textconv-removed-at-1864` there failed on the fixture's count
+alone, and the same mutation at the committed gate passes. That run is
+superseded by the one above. Fourteen fast gates exit 0.

@@ -510,11 +510,16 @@ so a check that prints its failure and does not count it fails there. It
 reaches each of the two exits that read both counts with one of them
 zero, so a status that ignores either count fails it, and a fixture edit
 that changes nothing stops the build of the scratch history.
-The `--selftest` passes one of 143 placed mutations
+The `--selftest` passes two of 143 placed mutations
 (`p7-notes/citations-mutations.py`, its runner beside it, output
-`citations-mutations-name-handling.out`, taken at `68e9f63b` with the gate
-as changed; `citations-mutations.out` is the run before it, two of 140).
-Fifty-six are named, each turning off one
+`r14fix/citations-mutations-tmpdir-fix.out`; `citations-mutations.out` is
+the run before this change, two of 140). The run recorded first, at a
+gate a few lines off the committed one, passed one, and the leak fixture
+below is why: it read the shared `/tmp`, so a lane's verdict moved with
+the other seven, and in that run `flag-no-textconv-removed-at-1864`
+failed on nothing but the fixture's count while the same mutation at the
+committed gate passes.
+Fifty-seven are named, each turning off one
 decision of the function rows, the region markers, the prose reader's
 placement, fence, name and region rules, the renumber reader, the
 listing a name ending in a newline is dropped by, the one trap that
@@ -524,23 +529,30 @@ selftest, each class being the lines the generator selects by text. The
 set is the one this generator selects: a set selected otherwise reaches
 sites this one has none at, so the number counts what this one placed
 and is no bound on what a mutation of the script can hide.
-Of the seventy-seven made by line, twenty-four remove a line adding to
+Of the eighty-six made by line, twenty-four remove a line adding to
 `fail` or `prosefail`, twenty-eight remove a flag of a git read, fifteen
 rename a failure the prose reader prints so that nothing reads it, six
 remove a count of the rot check, three make a word-boundary test of a
-file name false, and one unreads the test of the other half's list in
-`readname`. The fifty-six named include the ten that remove a setting
-`G` pins. No gate derives these counts; they are read from the
-generator's own name list, and a line added to the script that the
-generator selects moves one of them without any check noticing. The one
-mutation the selftest passes is the removal of `--no-ext-diff` from the
-`git log` that reads the history of `doc/history/`: every clone that
-history is read on has no diff driver configured, so the flag's value is
-not observable there. It is not the pass-through the removal of a flag
-guarding a git default usually is, and the two facts differ: were a
-driver configured on that clone, the run would read the driver's diff.
-The flag stays, since a tree that configures one is a reason to keep it
-rather than a reason the fixture need not build one.
+file name false, nine remove a setting `G` pins, and one unreads the test
+of the other half's list in `readname`. No gate derives these counts;
+they are read from the generator's own name list, and a line added to the
+script that the generator selects moves one of them without any check
+noticing.
+Two mutations the selftest passes, and neither is unobserved. The
+removal of `--no-ext-diff` from the `git log` that reads the history of
+`doc/history/` is unobservable on every clone that history is read on,
+since none configures a diff driver; it is not the pass-through the
+removal of a flag guarding a git default usually is, and the two facts
+differ: were a driver configured on that clone, the run would read the
+driver's diff. The flag stays, since a tree that configures one is a
+reason to keep it rather than a reason the fixture need not build one.
+The removal of `--no-textconv` from the `git show` that reads one
+revision of one file is dead code in the other direction: git applies no
+textconv to that form unless `--textconv` is given, measured on git
+2.56.0 with a driver that mangles every file's content (the blob prints
+as it is stored, and prints mangled once `--textconv` is added), and
+git's own manual says textconv is enabled by default for `git diff` and
+`git log` only. The flag stays for the same reason.
 Both `safe()` tests ask it of two names, the path and the one git
 blame's `previous` line gives. One of the four decisions is driven: the
 first test's `previous` half, by the document whose history passes
