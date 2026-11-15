@@ -1387,7 +1387,7 @@ git ls-files -z '*.md*' > "$nl" || exit 2
 nrec=$(tr -cd '\0' < "$nl" | wc -c | tr -d ' ')
 nline=$(tr '\0' '\n' < "$nl" | wc -l | tr -d ' ')
 if [ "$nline" -ne "$nrec" ]; then
-	echo "citations: COULD-NOT-RUN: $nrec tracked name(s) list as $nline line(s), so a name holds a newline or ends in one, and no name can be read whole" >&2
+	echo "citations: COULD-NOT-RUN: $nrec tracked name(s) list as $nline line(s), so a name holds a newline, at its end or inside it, and no name can be read whole" >&2
 	exit 2
 fi
 allmd=$(tr '\0' '\n' < "$nl" | command grep -E '\.md$')

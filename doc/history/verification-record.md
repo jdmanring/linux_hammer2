@@ -25332,8 +25332,8 @@ lines failed).
 A second defect in the same block, found while reading it. `$nl` and
 `$blame` were each made by `mktemp` and each given its own
 `trap 'rm -f ...' EXIT`, and the second trap replaces the first: `$nl`
-was left on disk by every run of the gate, and `/tmp` held 40944 such
-files when this was read. One trap now names both. The selftest counts
+was left on disk by every run of the gate. One trap now names both. The
+selftest counts
 the `tmp.*` files in the temporary directory before and after a run of
 the clean clone and fails on a rise, which is driven: putting the split
 traps back reports `a run left 1 temporary file(s) behind`.
@@ -25341,7 +25341,7 @@ traps back reports `a run left 1 temporary file(s) behind`.
 That fixture was the change's own defect, found by the mutation run. It
 counted the shared `/tmp`, which every other process writing a temporary
 file moves under it, and the mutation runner gives each of eight lanes a
-selftest of its own: in eight run side by side, five reported a file the
+selftest of its own: in eight runs side by side, five reported a file the
 gate never made, with rises of 8, 8, 5, 12 and 10 files
 (`p7-notes/r14fix/conc8-before.out`). The fixture now runs on a `TMPDIR`
 of its own, which `mktemp` with no template reads, and eight side by side
@@ -25372,10 +25372,19 @@ HEAD:f.c`, on git 2.56.0, and git's manual says textconv is enabled by
 default for `git diff` and `git log` only. The other flag removals fail,
 as do all three mutations of this change, the pathspec, the record count
 and the trap.
-The run recorded first, at `p7-notes/citations-mutations-name-handling.out`,
-passed one and was taken at a gate a few lines off the committed one
-(sha256 `0deb9ef`, where the commit is `63f719f5`). It read the shared
-`/tmp`, so a lane's verdict moved with the other seven:
-`flag-no-textconv-removed-at-1864` there failed on the fixture's count
-alone, and the same mutation at the committed gate passes. That run is
-superseded by the one above. Fourteen fast gates exit 0.
+The run recorded first, `p7-notes/citations-mutations-name-handling.out`,
+was taken at a gate a few lines off the one `05b0acdc` commits: its own
+header gives that gate sha256 `0deb9ef`, and the committed gate hashes
+`63f719f5`. Its fixture read the shared `/tmp`, so a lane's verdict moved
+with the other seven, and its one survivor is not a reading about the
+flag: `flag-no-textconv-removed-at-1864` there failed on the fixture's
+count alone, and the same mutation passes at the gate this change leaves,
+which is the `--no-textconv` removal described above, the same fact
+reached twice. That run is superseded by the one above.
+
+A number this entry first carried, 40944 `tmp.*` files in `/tmp`, is
+withdrawn: no file in `p7-notes` holds it, and `/tmp` held 1174 when the
+audit of this change counted them on 2026-11-15. The defect and its fix do
+not depend on it, and the count that is recorded is the one
+`p7-notes/r14fix/trap-control-after-fix.out` prints, one file per run of
+the gate with the split traps. Fourteen fast gates exit 0.
