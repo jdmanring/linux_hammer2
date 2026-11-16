@@ -234,7 +234,7 @@ mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP mount failed"; exit 0; }
 mode_close='
 umount /mnt/sm; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
-echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 echo "debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null || echo none)"
 '
 race_body='
@@ -290,7 +290,7 @@ e=$(dd if=/mnt/sm/ind of=/dev/null bs=65536 2>&1); s=$?
 echo "corrupt read exit $s eio $(printf "%s\n" "$e" | grep -c "Input/output error")"
 umount /mnt/sm; echo "corrupt umount exit $?"
 rmmod hammer2; echo "corrupt rmmod exit $?"
-echo "corrupt log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+echo "corrupt log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 echo "corrupt debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null || echo none)"
 '
 cold_drop='
@@ -400,7 +400,7 @@ SETUP cold reattach failed"
 	fi
 	fail=0
 	case $out in *SETUP*failed*) echo "  FAIL  $(printf '%s\n' "$out" | command grep -m1 'SETUP.*failed')"; fail=$((fail + 1)) ;; esac
-	for want in "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0$" "^debug_locks [1n]"; do
+	for want in "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0$" "^debug_locks [1n]"; do
 		printf '%s\n' "$out" | command grep -q "$want" || {
 			echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 	done
@@ -477,7 +477,7 @@ SETUP cold reattach failed"
 		fi
 		for want in "^refuse depth exit 0$" "^refuse corrupt exit 0$" \
 		    "^corrupt read exit [1-9][0-9]* eio [1-9]" "^corrupt umount exit 0$" \
-		    "^corrupt rmmod exit 0$" "^corrupt log: bug 0 oops 0 warn 0$" "^corrupt debug_locks [1n]"; do
+		    "^corrupt rmmod exit 0$" "^corrupt log: bug 0 oops 0 warn 0 kasan 0 ubsan 0$" "^corrupt debug_locks [1n]"; do
 			printf '%s\n' "$out" | command grep -q "$want" || {
 				echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 		done
@@ -650,7 +650,7 @@ fi
 $P check /mnt/sm/live "live after recovery"
 umount /mnt/sm; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
-echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 '
 out2=$(ssh "$GUEST_SSH" "$post_stop" 2>&1)
 printf '%s\n' "$out2" | sed 's/^/  /'
@@ -661,7 +661,7 @@ fail=0
 ok=$(printf '%s\n' "$all" | command grep -c '^seekm-ok')
 bad=$(printf '%s\n' "$all" | command grep -c '^seekm-fail')
 fail=$((fail + bad))
-for want in "^snapshot exit 0$" "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0$"; do
+for want in "^snapshot exit 0$" "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0$"; do
 	printf '%s\n' "$all" | command grep -q "$want" || {
 		echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 done

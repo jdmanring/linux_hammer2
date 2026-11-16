@@ -172,7 +172,7 @@ nf=0; for f in /mnt/h2xtest/*.fsxlog; do [ -f \"\$f\" ] && nf=\$((nf + 1)) && ec
 [ \$nf -gt 0 ] || echo \"fsxlog none\"
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
-echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\")\"" 2>&1)
+echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\") kasan \$(dmesg | grep -c \"BUG: KASAN\") ubsan \$(dmesg | grep -c \"UBSAN:\")\"" 2>&1)
 echo "  suite: $(git -C "$XFS" log -1 --format='%h %s' 2>/dev/null)"
 printf '%s\n' "$out" | sed 's/^/  /'
 
@@ -215,7 +215,7 @@ keep() {
 [ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
 fail=0
 [ -n "$failed" ] && fail=1
-printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0$' || {
+printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0$' || {
 	echo "  FAIL  the kernel log is not clean"; fail=1; }
 [ "$fail" -eq 0 ] || keep
 echo "$summary"

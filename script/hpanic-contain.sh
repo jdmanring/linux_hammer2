@@ -72,7 +72,7 @@ timeout 60 umount /mnt/hp; echo "umount $?"
 timeout 60 rmmod hammer2; echo "rmmod $?"
 sha_after=$(dd if=/dev/vdb bs=1M iflag=direct 2>/dev/null | sha256sum | cut -c1-16)
 [ "$sha_before" = "$sha_after" ] && echo "device identical $sha_before" || echo "device CHANGED $sha_before $sha_after"
-echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") hpanic $(dmesg | grep -c "insert stops here")"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") hpanic $(dmesg | grep -c "insert stops here") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 REMOTE
 virsh detach-disk $GUEST vdb >/dev/null 2>&1; virsh shutdown $GUEST >/dev/null 2>&1
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "host fsck clean" | tee -a "$T" || echo "host fsck NOT clean"
@@ -90,6 +90,7 @@ else
 	want "the mount reads ro" 'guest mount options ro$'
 	want "the device is byte-identical to the sync before the fault" 'guest device identical'
 	want "no BUG and no oops in the log" 'guest log: bug 0 oops 0 '
+	want "no KASAN or UBSAN report in the log" ' kasan 0 ubsan 0$'
 fi
 verdict
 fi

@@ -156,7 +156,7 @@ exportfs -ua
 rpc.nfsd 0
 umount $S; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
-echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:")"
+echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 '
 # The output is written to a file beside the image as well as read
 # back, because a reading a document cites has to outlive the run:
@@ -215,7 +215,7 @@ done
 fp=$(printf '%s\n' "$out" | sed -n 's/^decode subtree_check .*fh_to_parent \([0-9]*\) .*/\1/p')
 [ "${fp:-0}" -ge 1 ] && echo "  ok    subtree_check reached fh_to_parent ${fp} time(s)" || {
 	echo "  FAIL  subtree_check never reached fh_to_parent, so the decode this run exists for did not run"; fail=$((fail + 1)); }
-for want in '^umount exit 0$' '^rmmod exit 0$' '^log: bug 0 oops 0 warn 0$'; do
+for want in '^umount exit 0$' '^rmmod exit 0$' '^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0$'; do
 	printf '%s\n' "$out" | command grep -q "$want" || { echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 done
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    fsck_hammer2 clean after the exports" || {
