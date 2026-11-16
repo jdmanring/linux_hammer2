@@ -25300,8 +25300,8 @@ in a newline matched neither `*.md` nor anything else the gate asked for.
 Such a document was outside the listing before any count of it was taken:
 none of its rows or citations entered either half's count, nothing named
 it, and the run exited 0. It is not a hypothetical shape. On a clone of
-`68e9f63b` with the real `doc/IO_MODEL.md` removed and its path plus a newline carrying a
-body whose citations point past the end of their files, the gate read 26
+`68e9f63b` with the real `doc/IO_MODEL.md` removed and its path plus a
+newline carrying a body whose citations point past the end of their files, the gate read 26
 rows and 623 prose citations against the clean tree's 38 and 636, and
 exited 0, with the name staged and with it committed
 (`p7-notes/r14fix/trailnl-clone-20261115.out`, made by the script of the
@@ -25321,7 +25321,8 @@ The gate's comment above that listing, and the sentence in
 the gate's population and that no count here could see it. The second
 clause was false. The tree holds 318 records on the clean tree and on the
 clone, and `'*.md'` lists 57 of them on the first and 56 on the second,
-where `'*.md*'` lists 57 on both (the same file).
+where `'*.md*'` lists 57 on both
+(`p7-notes/r14fix/trailnl-clone-20261115.out`).
 
 What the run does now. The listing is `git ls-files -z '*.md*'`, which
 holds a name ending in a newline because it does not ask the name to end
@@ -25332,7 +25333,7 @@ taken as the lines of the listing that end in `.md`, and a line is then a
 whole name because the guard has refused every name that would split.
 Measured on the same clone, the run prints
 `COULD-NOT-RUN: 57 tracked name(s) list as 58 line(s)` and exits 2
-(the same file). The clean tree is unchanged at 38
+(`trailnl-clone-20261115.out`). The clean tree is unchanged at 38
 rows, 636 prose citations and exit 0.
 
 Four controls, mutations of the gate in
@@ -25366,11 +25367,16 @@ counted the shared `/tmp`, which every other process writing a temporary
 file moves under it, and the mutation runner gives each of eight lanes a
 selftest of its own: in eight runs side by side, five reported a file the
 gate never made, with rises of 8, 8, 5, 12 and 10 files
-(`p7-notes/r14fix/conc8-before.out`). The fixture now runs on a `TMPDIR`
+(`p7-notes/r14fix/conc8-before.out`). The files were other lanes': the
+other three read clean, which a gate leaving a file of its own on every
+run could not, and the file's first line gives `/tmp` the same count
+before the eight and after them. The fixture now runs on a `TMPDIR`
 of its own, which `mktemp` with no template reads, and eight side by side
-are clean (`conc8-after.out`); the split traps still fail it at exactly one file
-(`trap-control-after-fix.out`), and the four shells still agree byte for
-byte (`shells-cmp-tmpdir-fix.out`).
+are clean (`p7-notes/r14fix/conc8-after.out`); the split traps still
+fail it at exactly one file
+(`p7-notes/r14fix/trap-control-after-fix.out`), and the four shells
+still agree byte for byte
+(`p7-notes/r14fix/shells-cmp-tmpdir-fix.out`).
 
 The readings are taken at `b1d10dea`, the last change to the gate this
 entry describes, in a clone holding no other change; the gate there is
@@ -25403,9 +25409,13 @@ other flag removal fails.
 
 Two runs this entry cited before are superseded by those. A wrapper run
 and a mutation run of 143, `p7-notes/r14fix/shells-20261115.out` and
-`citations-mutations-20261115.out`, read the gate of sha256 `43571886`
-in a tree at `5fd2de0a` holding one change no commit holds, as their
-headers say; the gate's later fixtures change both counts.
+`citations-mutations-20261115.out`, read the gate of sha256 `43571886`.
+Their headers give the tree as `5fd2de0a`, the wrapper's with one
+changed file; the gate `5fd2de0a` commits hashes `c15b2592`
+(`gate-hash-sweep-20261115.out`, where `5fd2de0a` changes no gate and the
+last commit before it that does is `57c24e15`), so the gate they read
+was a change in the working tree that no commit on `HEAD`'s history
+holds. The gate's later fixtures change both counts.
 
 The mutation run recorded first,
 `p7-notes/citations-mutations-name-handling.out`, was taken at a gate no
@@ -25427,18 +25437,22 @@ A wrapper run this entry first cited for the shells,
 `p7-notes/r14fix/shells-name-handling.out` (04:36 on 2026-11-15), is
 withdrawn as a reading. Its header gives a gate sha256 `bc23100e` that
 no commit on any ref holds (the same sweep) and no file keeps. Its lane
-with busybox's applets first on `PATH` read nothing: the busybox it was
-handed has an `ash` applet and no `awk`, `grep` or `sed`, each exiting
-127 with `applet not found` (`p7-notes/r14fix/busybox-applets.out`), so
-that lane's `0 ok` is a reading about the binary. Every kept output of
+with busybox's applets first on `PATH` exited 1 with 0 `ok` lines and
+one failure in 13 lines, and the wrapper keeps none of those lines: the
+busybox it was handed has an `ash` applet and no `awk`, `grep` or `sed`,
+each exiting 127 with `applet not found`
+(`p7-notes/r14fix/busybox-applets.out`), so that lane's reading is about
+the binary. Every kept output of
 the wrapper is tabulated in `p7-notes/r14fix/wrapper-history-20261115.out`
 (its script beside it), each named there by its file and its time. The
-first, at 22:11 on 2026-11-12, has no such lane. The next seven, from
+first, at 22:11 on 2026-11-12, is from an earlier form of the script,
+with no comparison line and no such lane. The next seven, from
 23:57 on 2026-11-12 to 15:36 on 2026-11-13, were handed the busybox
 `hm1y...`, and the lane passed in each. The five from 17:36 on
 2026-11-13 to 02:56 on 2026-11-14 were handed `90hw3j...` or
 `yysvx...`, neither of which carries the applets (the same probe reads
-both), and the lane read `0 ok` in each. The runs under `r14fix/` in
+both), and the lane read `0 ok` in each, exiting 2 in the first two and
+1 in the other three. The runs under `r14fix/` in
 between print one line per shell and have no such lane. The first run
 with that lane after the withdrawn one, at 13:56 on 2026-11-15, was
 handed the static `wq18...`, which carries every applet the lane links,
@@ -25455,4 +25469,4 @@ withdrawn: no file in `p7-notes` holds it. The defect and its fix do
 not depend on it, and the count that is recorded is the one
 `p7-notes/r14fix/trap-control-after-fix.out` prints, one file per run of
 the gate with the split traps. Fourteen fast gates exit 0 at the commit
-that holds this text (`p7-notes/r14fix/fastgates-20261115-2300.out`).
+that holds this text (`p7-notes/r14fix/fastgates-20261115-2310.out`).

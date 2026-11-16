@@ -534,8 +534,8 @@ that compares the listing's records with its lines and the counts its
 message prints, the `.md` filter applied after that guard, the one trap
 that removes both files a run makes, a pinned row's read of the
 revision it names, or an exit. The rest are made by line in the
-script's body after the selftest, each class being the lines the generator selects by text. The
-set is the one this generator selects: a set selected otherwise reaches
+script's body after the selftest, each class being the lines the
+generator selects by text. The set is the one this generator selects: a set selected otherwise reaches
 sites this one has none at, so the number counts what this one placed
 and is no bound on what a mutation of the script can hide.
 Of the eighty-six made by line, twenty-four remove a line adding to
@@ -598,10 +598,11 @@ code it reaches failing it, as the mark fixture's does
 (`p7-notes/r10fix/controls.out`). Of the 145 placed mutations, one
 hundred and forty-two fail it with exit 1, the one that leaves a fixture
 edit changing nothing stops the build with the edit named and exit 2,
-and the two it passes each
-remove a flag guarding a default git has: `--no-textconv` from `git
-show` of a file and `--no-ext-diff` from `git log`, which run no
-textconv driver and no external diff tool unless asked (git 2.56.0).
+and the two it passes each remove a flag guarding a default git has:
+`--no-textconv` from the `git show` of one revision of a file, which runs
+no textconv driver without `--textconv`, and `--no-ext-diff` from the
+`git log -p`, which runs no external diff tool without `--ext-diff`
+(git 2.56.0).
 Three exits are in no mutation because removing one changes no status:
 with no document, no prose citation or no rot check, a later exit
 returns the same 2 (`p7-notes/citations-equivalent-exits.py`, output
