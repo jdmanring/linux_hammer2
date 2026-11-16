@@ -25471,3 +25471,31 @@ not depend on it, and the count that is recorded is the one
 `p7-notes/r14fix/trap-control-after-fix.out` prints, one file per run of
 the gate with the split traps. Fourteen fast gates exit 0 at the commit
 that holds this text (`p7-notes/r14fix/fastgates-20261115-2340.out`).
+
+## Tracked names refused at the inventory, and a flush sentence withdrawn, 2026-11-16
+
+`test-inventory.sh` now lists every tracked name with `git ls-files -z`,
+record by record, and fails on a name holding any byte outside
+`[A-Za-z0-9._/+-]`. The entry above fixed one reader of such a name; this
+refuses the name for every reader. On the tree it reads 318 names and
+exits 0 under bash, dash and busybox ash. In clones of `40fc037a` with
+the gate copied in (`p7-notes/r14fix/names-fixture-20261116.out`, made by
+the script of the same name beside it), a name `a b` added at the root
+fails with the refusal naming it and exit 1, and so does a name holding
+a newline, printed as `c\nd`; with the refusal's count removed both exit
+0, and the unmodified clone exits 0. The gate runs a control of its own on
+every run, one name its function must pass and three it must refuse.
+Widening the set to admit a space, or leaving a newline in a name
+unmapped, fails that control and exits 1. A tree that is not a git work
+tree exits 2.
+
+Correction to the entry of 2026-09-26 on what `fsync` costs. Its sentence
+that `hammer2_dev_cache_flush()` "has no callers, and neither does its
+counterpart in the tree it is carried from" was false in both clauses
+when written. The port's `hammer2_flush.c` has called it in the volume
+flush since `a235a5b2`, a month before that entry, and DragonFly's
+`sys/vfs/hammer2/hammer2_flush.c` issues `BUF_CMD_FLUSH` before it writes
+the volume header (lines 1489 to 1497 in the clone read on 2026-11-16).
+The sentences after it stand: `hammer2_vop_fsync()` here and upstream
+issues no cache flush of its own, and the flush the volume header waits
+for is the sync's, not the `fsync`'s.
