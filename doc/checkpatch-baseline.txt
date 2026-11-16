@@ -300,6 +300,9 @@
 # once the done-list census's `if` block sits above it (read by running
 # the checker on both versions of the file). No category is new. See
 # README.kernel-style.md.
+# 1,677 to 1,678: hammer2_fsync_commit(), the commit concurrent fsyncs
+# share, returns `return (error);`. No category is new. See
+# README.kernel-style.md.
 23 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -330,7 +333,7 @@
 4 please, no space before tabs
 252 please, no spaces at the start of a line
 86 quoted string split across lines
-398 return is not a function, parentheses are not required
+399 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)

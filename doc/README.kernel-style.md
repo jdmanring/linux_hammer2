@@ -372,7 +372,7 @@ new.
 depth argument, `hammer2_xops.c:1597`, is a continuation-line indent; the
 debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
 `return (x);`; and the chunked scan's fatal-signal check returns a positive
-`EINTR` at `hammer2_vnops.c:1676`, which is the module's errno convention
+`EINTR` at `hammer2_vnops.c:1735`, which is the module's errno convention
 and is negated at the VFS boundary like every other. No category is new.
 
 1,659 to 1,661 with the seek's vote on several MASTERs
@@ -434,6 +434,11 @@ second parameter line, and `hammer2_sync_flush()`'s closing `return
 (error);`, unchanged, stops being reported once the done-list census's
 `if` block sits above it where `hammer2_trans_done()` sat; both read by
 running the recorded checker on the file at HEAD and in the tree. No
+category is new and nothing was fixed rather than baselined.
+
+1,677 to 1,678 when `fsync` came to commit the PFS
+(`doc/README.porting.md`, "fsync commits the PFS"): the commit concurrent
+callers share, `hammer2_fsync_commit()`, returns `return (error);`. No
 category is new and nothing was fixed rather than baselined.
 
 The count reached 894 first, with twelve hits including one `return of an
