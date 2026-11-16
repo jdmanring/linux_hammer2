@@ -25409,9 +25409,9 @@ other flag removal fails.
 
 Two runs this entry cited before are superseded by those. A wrapper run
 and a mutation run of 143, `p7-notes/r14fix/shells-20261115.out` and
-`citations-mutations-20261115.out`, read the gate of sha256 `43571886`.
-Their headers give the tree as `5fd2de0a`, the wrapper's with one
-changed file; the gate `5fd2de0a` commits hashes `c15b2592`
+`p7-notes/r14fix/citations-mutations-20261115.out`, read the gate of
+sha256 `43571886`. Their headers give the tree as `5fd2de0a`, the
+wrapper's with one changed file; the gate `5fd2de0a` commits hashes `c15b2592`
 (`gate-hash-sweep-20261115.out`, where `5fd2de0a` changes no gate and the
 last commit before it that does is `57c24e15`), so the gate they read
 was a change in the working tree that no commit on `HEAD`'s history
@@ -25459,14 +25459,15 @@ handed the static `wq18...`, which carries every applet the lane links,
 and read 905 `ok` in all five lanes. The withdrawn run's comparison
 reads `0 of 4`, where the five runs that failed the lane the same way
 read `3 of 4`; no kept reading explains the difference. A candidate: the
-gate kept from that hour, the `0deb9ef` above (kept at 04:14, its
+gate kept from that hour, the `0deb9ef` above (its file's time 04:14, its
 mutation run ending at 04:30), prints the leak fixture's two counts of
-the shared `/tmp` in its `ok` line, which would make every lane's output
-differ from bash's.
+the shared `/tmp` in its `ok` line, which would make the output of each
+of the three lanes that passed differ from bash's, the failing lane's
+differing already.
 
 A number this entry first carried, 40944 `tmp.*` files in `/tmp`, is
 withdrawn: no file in `p7-notes` holds it. The defect and its fix do
 not depend on it, and the count that is recorded is the one
 `p7-notes/r14fix/trap-control-after-fix.out` prints, one file per run of
 the gate with the split traps. Fourteen fast gates exit 0 at the commit
-that holds this text (`p7-notes/r14fix/fastgates-20261115-2310.out`).
+that holds this text (`p7-notes/r14fix/fastgates-20261115-2340.out`).
