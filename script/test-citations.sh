@@ -981,6 +981,8 @@ int l_004b;/'
 		sf=1
 	fi
 	exits 1
+	# The records git lists under one pathspec in one clone.
+	nrecs() { (cd "$1" && git ls-files -z "$2" | tr -cd '\0' | wc -c | tr -d ' '); }
 	# A name holding a newline, which a line-per-name list cannot carry.
 	# Read as two lines it is the two documents its fragments spell, and
 	# where those are tracked the run reads them and never the name. The
@@ -996,7 +998,8 @@ README.md"
 	)
 	out=$(cd "$t/oddnl" && sh script/test-citations.sh 2>&1)
 	rc=$?
-	expect 'COULD-NOT-RUN:' 'a name holding a newline is a run that cannot report, not one that reads its fragments'
+	nwide=$(nrecs "$t/oddnl" '*.md*')
+	expect "$nwide tracked name(s) list as $((nwide + 1)) line(s)" 'a name holding a newline is a run that cannot report, not one that reads its fragments'
 	exits 2
 	# A name that ENDS in a newline, which '*.md' does not list since such
 	# a name does not end in .md. Read through that pathspec the document
@@ -1012,44 +1015,62 @@ README.md"
 "
 		git add -A
 		git -c user.name=selftest -c user.email=selftest@localhost -c commit.gpgsign=false commit -qm trail
-		# The name is in the index and not under the narrow pathspec:
-		# both halves of the control, so a change to either the listing
-		# or git's matching is visible here rather than in a green run.
-		echo "  $(git ls-files -z | tr -cd '\0' | wc -c | tr -d ' ') record(s) in the tree, $(git ls-files -z '*.md' | tr -cd '\0' | wc -c | tr -d ' ') under '*.md', $(git ls-files -z '*.md*' | tr -cd '\0' | wc -c | tr -d ' ') under '*.md*'"
-	) >> "$t/trailnl.listing"
-	listed=$(sed -n 's/^  \([0-9]*\) record(s) in the tree, \([0-9]*\) under '\''\*\.md'\'', \([0-9]*\) under.*/\1 \2 \3/p' "$t/trailnl.listing")
-	set -- $listed
-	if [ "$#" -eq 3 ] && [ "$3" -eq $(($2 + 1)) ]; then
+	)
+	# The name is in the index, which a pathspec ending in ? reads since
+	# ? takes the newline, and the wide pathspec lists one record more
+	# than the narrow one: both halves of the control, so a change to
+	# either the fixture or git's matching is visible here rather than in
+	# a green run.
+	nin=$(nrecs "$t/trailnl" 'doc/IO_MODEL.md?')
+	nmd=$(nrecs "$t/trailnl" '*.md')
+	nwide=$(nrecs "$t/trailnl" '*.md*')
+	if [ "$nin" -eq 1 ] && [ "$nwide" -eq $((nmd + 1)) ]; then
 		echo "  ok    a name ending in a newline is one record git lists and the '*.md' pathspec leaves out"
 	else
-		echo "  FAIL  the trailing-newline name lists as [$listed], where '*.md*' must hold one record more than '*.md' and the tree's extra names are neither"
+		echo "  FAIL  the trailing-newline name is [$nin] record(s) of the index, [$nmd] under '*.md' and [$nwide] under '*.md*', where 1 and the last one more than the one before"
 		sf=1
 	fi
 	out=$(cd "$t/trailnl" && sh script/test-citations.sh 2>&1)
 	rc=$?
-	expect 'COULD-NOT-RUN:' 'a name ending in a newline is a run that cannot report, not one that passes over the document'
+	expect "$nwide tracked name(s) list as $((nwide + 1)) line(s)" 'a name ending in a newline is a run that cannot report, not one that passes over the document'
 	exits 2
+	# A name the wide pathspec lists that does not end in .md is no
+	# document. This one is outside the plain set, so a run that took it
+	# for a document would refuse it by name and exit 1.
+	git clone -q "file://$t/pure" "$t/oddext"
+	(
+		cd "$t/oddext" || exit 2
+		printf 'a\n' > 'doc/r;1.mdx'
+		git add -A
+		git -c user.name=selftest -c user.email=selftest@localhost -c commit.gpgsign=false commit -qm ext
+	)
+	out=$(cd "$t/oddext" && sh script/test-citations.sh 2>&1)
+	rc=$?
+	if [ "$(nrecs "$t/oddext" '*.md*')" -eq $(($(nrecs "$t/oddext" '*.md') + 1)) ]; then
+		echo "  ok    a name ending in .mdx is one record the wide pathspec adds"
+	else
+		echo "  FAIL  the .mdx name is not the one record '*.md*' lists past '*.md'"
+		sf=1
+	fi
+	absent 'document name with a character' 'and it is not read as a document'
+	exits 0
 	# One trap removes both files the gate makes. A second `trap ... EXIT`
 	# replaces the first, so a trap beside each mktemp left the first file
-	# behind on every run of the gate, which is why /tmp held thousands of
-	# them. The count is the run's own, so it fails if a file is added
-	# without the trap or the trap stops naming one. It is taken in a
-	# TMPDIR of the fixture's own, since a run given a TMPDIR makes its
-	# files there (mktemp with no template reads it) and the shared /tmp
-	# moves under this reading for every other process that writes one: in
-	# eight selftests run side by side, five reported a file they never
-	# made. Nothing is printed, since a count differing per run would stop
-	# the outputs of the four shells comparing byte for byte.
-	ntmp() { ls "$1" | command grep -c '^tmp\.' || true; }
+	# behind on every run of the gate. The directory is the fixture's own
+	# and empty, so a file in it after the run is one the run left: it
+	# fails if a file is added without the trap or the trap stops naming
+	# one. A run given a TMPDIR makes its files there (mktemp with no
+	# template reads it), and the shared /tmp moves under such a reading
+	# for every other process that writes one: in eight selftests run
+	# side by side, five reported a file they never made.
 	tdir=$t/tdir
 	mkdir "$tdir" || exit 2
-	nb=$(ntmp "$tdir")
 	out=$(cd "$t/pure" && TMPDIR="$tdir" sh script/test-citations.sh 2>&1)
-	na=$(ntmp "$tdir")
-	if [ "$na" -le "$nb" ]; then
+	na=$(ls "$tdir" | wc -l | tr -d ' ')
+	if [ "$na" -eq 0 ]; then
 		echo "  ok    a run leaves no temporary file behind"
 	else
-		echo "  FAIL  a run left $((na - nb)) temporary file(s) behind"
+		echo "  FAIL  a run left $na temporary file(s) behind"
 		sf=1
 	fi
 	# Without the blank line on both sides of one hunk, the count below
@@ -1374,9 +1395,9 @@ stops git diff -U0 HEAD -- script/test-citations.sh
 # newline: such a name was gone before any count could see it, and the
 # document behind it was read as nothing and reported as nothing. The
 # wider pathspec lists it, so the record count sees it and the guard
-# fires. Names the superset adds that do not end in .md are dropped from
-# the documents below, which is what the opening sentence of this gate
-# says it reads: everything ending in .md.
+# fires. Past the guard no name holds a newline, so each line of the
+# listing is one name, and the documents are the lines ending in .md: a
+# name the wider pathspec adds that does not end there is not one.
 nl=$(mktemp) || exit 2
 blame=$(mktemp) || exit 2
 # One trap for both files. A second `trap ... EXIT` replaces the first
