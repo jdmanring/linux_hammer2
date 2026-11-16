@@ -25507,3 +25507,164 @@ the volume header (lines 1489 to 1497 in the clone read on 2026-11-16).
 The sentences after it stand: `hammer2_vop_fsync()` here and upstream
 issues no cache flush of its own, and the flush the volume header waits
 for is the sync's, not the `fsync`'s.
+
+## fsync commits the volume, 2026-11-16
+
+What `fsync` promised after a crash had never been read; the record's
+latency entry of 2026-09-26 read what it cost. xfstests' 65
+`dm-flakey` tests under `tests/generic` (suite `a6d1f76`, listed in
+`p7-notes/crash-instrument/flakey-tests.txt`) are that reading, and none
+had run, since the six guest trees leave `CONFIG_DM_FLAKEY` unset. The
+targets were built out of tree from each tree's own `drivers/md` sources
+and loaded by `insmod` (`dm-load.sh` and its outputs in the same
+directory). The prediction was written before either run
+(`expected-flakey-20261116.md`). Without the targets loaded, 0 of 65 ran
+and the harness exited 2 (`flakey-run1-nomodules-20261116.out`); with
+them, on `h2debug-7.3tls` at `2d97223e`, 52 ran, 5 passed and 47 failed
+with the kernel log clean (`flakey-run2-modules-20261116.out`, results in
+`fixtures/xfstests-results-20261116-070217`). Classed per test from its
+`.out.bad` (`flakey-run2-classes-20261116.txt`): 19 stopped on
+`fsync: Invalid argument` for a directory, since `hammer2_dir_fops` had
+no `.fsync`, and 28 lost state `fsync` had acknowledged, generic/056's
+file absent after the power cut among them. One of the 28, generic/483,
+is read below as a format limit and not a lost commit, so the class is
+27.
+
+DragonFly 6.4.2's own HAMMER2 does the same
+(`dfly-fsync-probe.sh`, `dfly-fsync-probe-20261116.out`): five rounds of a
+file written and `sync`ed, a file left in the page cache, and a 4 KiB file
+`fsync`ed with the guest destroyed on the acknowledgment. The synced file
+was present five times, the other two absent five times, and the volume
+header's `mirror_tid` read `0x13` before and after every cut. Its first
+run is void and kept as `-void-csh.out`: the guest's root shell is csh.
+The observation is staged as
+`doc/upstream/dragonfly-hammer2_vnops-fsync-root-topology.md`.
+
+The options were reviewed before any code (`fsync-design-brief.md`,
+`fsync-design-review.md`), which recommended the commit `->sync_fs` runs,
+then the header's flush, with the directory `.fsync` first. Two of the
+review's claims did not survive their readings. It predicted that an
+overwrite with no allocation would commit without a header write; the
+block trace below shows a header after both cases it named, since an
+overwrite on this format allocates. It warned that a cache flush after the
+header would fail on a device with no write cache; the kernel of record
+completes an empty flush on such a device with `BLK_STS_OK`
+(`block/blk-core.c`, `submit_bio_noacct()`), as the flush before the
+header already relied on.
+
+The changes. `28424c54` gives directories `hammer2_vop_fsync()`.
+`6cbde3dc` has `fsync` run `hammer2_vfs_sync_pmp()` and
+`hammer2_vfs_sync_devs()` after its own flush, under
+`sb_start_intwrite()`, sets the PFS root's sync error on the superblock as
+well as its mapping, and has `fsync` read the superblock's error sequence
+through the descriptor's cursor. `6e0eab75` issues a cache flush after the
+header write. `10578ac3` shares one commit among concurrent callers.
+`7ae7bcb8` retires the `DEFER` over `hammer2_vfs_sync_devs()`, whose
+trigger the latency run below met and whose premise the commit removed.
+`205498cc` is an instrument fix, below.
+
+The directory `fsync` alone, at `28424c54` on `h2debug-7.3tls`
+(`flakey-run3-dirfsync-20261116.out`, results
+`fixtures/xfstests-results-20261116-131254`): 52 ran, 46 failed,
+generic/557 passed, and no `.out.bad` holds `Invalid argument` where run 2
+had 19. The 18 others now fail on the state, which is the review's point
+that a directory `fsync` without the commit is a false acknowledgment:
+generic/056's file is absent, and generic/065 reads three links and a
+file missing.
+
+With the commit and the header flush, at `6e0eab75`: 52 ran and 51 passed
+on `h2debug-7.3tls` (`flakey-run4-commit-20261116.out`, results
+`fixtures/xfstests-results-20261116-132248`) and on `h2kasan-7.3tls`
+(`flakey-run5-kasan-20261116.out`, results
+`fixtures/xfstests-results-20261116-135420`), generic/483 failing on both.
+The harness's log line on the KASAN run could not see a sanitizer report
+(below), so that boot's log was read directly after it,
+`kasan-klog-read-20261116.out`: 0 `BUG: KASAN`, 0 `UBSAN:`, 0 `BUG:`, 0
+`WARNING:`, 0 lockdep reports, 0 hung tasks, uptime 28 minutes, the run's
+whole span. `storm.sh` on the same boot: every cell whole in 8 files of
+256, `fsck_hammer2` clean, 0 KASAN, 0 UBSAN, 0 lockdep
+(`storm-kasan-20261116.out`).
+
+generic/483 fallocates past the end of three files with
+`FALLOC_FL_KEEP_SIZE` and asks that the ranges still be extents after the
+cut. On this format they are not extents before it either: the port's
+`->fallocate` zeroes rather than allocates, since the media holds no zero
+block (the comment above `hammer2_fallocate_locked()`). It joins the
+exclude list's preallocation group.
+
+A freeze. `freeze-fsync.sh` writes a file, freezes the volume, runs `fsync`
+in a child and reads whether it is still running three seconds later,
+then thaws. At `6e0eab75` the `fsync` was blocked in 5 of 5 rounds and
+returned 0 after the thaw (`freeze-fsync-B-20261116.out`); on `28424c54`,
+the control, it returned while frozen in 5 of 5
+(`freeze-fsync-control-20261116.out`). Lockdep reported nothing.
+
+The header's flush. `trace-fsync.sh` records the `block_rq_issue` events
+of one `fsync` after an overwrite of 4 KiB in an existing file and after a
+new 4 KiB file. At `6e0eab75` both read the data writes, a flush, the
+volume header (sector 0 for the first, 4194304 for the second), and a
+second flush (`trace-fsync-BD-20261116.out`); at `6cbde3dc`, the control,
+the header is the last request (`trace-fsync-Bonly-control-20261116.out`).
+The script's first run read no events, because the guest had not mounted
+tracefs, and exited 0; it now mounts it and exits 2 when the event is
+absent.
+
+What it costs, on `h2release-7.3tls`. The host's disk was shared with
+other work, and its I/O pressure is printed beside each run; a run under
+`full avg60` of 13 read ext4's `fsync` at 12.6 ms and is kept but not used
+(`fsync-cost-BD-20261116.out`). With pressure near 4, one 4 KiB write and
+`fsync` costs a median of 3488 us without the shared commit and 3445 us
+with it, against ext4's 3387 and 3403 in the same runs
+(`fsync-cost-nogroup-20261116.out` at `6e0eab75`,
+`fsync-cost-group-20261116.out` built from the source committed as
+`10578ac3`, whose tree line reads the commit beneath it). Before the
+commit it was 84 us (`fsync-cost-20261116.out` at `2d97223e`). Writers
+on their own files, each writing 4 KiB and calling `fsync`, committed 263,
+273 and 254 times a second at 1, 4 and 16 threads without the shared
+commit, and 272, 528 and 1344 with it; ext4 beside them 289, 1079 and
+2036. `latency.sh` at `10578ac3` (`latency-group-20261116.out`): median
+write-and-`fsync` 3755 us against ext4's 3653 and btrfs's 4092, a batch of
+eight writes and one `fsync` 4371 us against 4201 and 4374, `randread4k`
+8 us against 2 and 3.
+
+An instrument defect found on the way. `xfstests.sh`, `nfsd-export.sh`,
+`seek-matrix.sh` and `hpanic-contain.sh` counted `kernel BUG`, `oops` and
+`WARNING:` in the guest's log, none of which a KASAN report (`BUG:
+KASAN:`) or a UBSAN one (`UBSAN:`) matches, so their runs on the sanitizer
+kernel passed whatever such a report said. `storm.sh` counted both.
+`205498cc` adds both counts to the four and requires them zero. Their
+earlier readings on a KASAN kernel are therefore readings of oopses and
+warnings only, except where an entry read the log itself; they are not
+re-read here.
+
+A citation left stale. The comment at the top of
+`hammer2_vfs_sync_pmp()` says the chain held there on a full volume is
+"the other half of the lock cycle doc/README.status.md records"; that
+document has held no such entry since its rewrite as a status page
+(`ff6a8e61`). Not changed here.
+
+The closing readings, on the final source at `7ae7bcb8`, each in
+`p7-notes/crash-instrument/final-<build>-<reading>-20261116.out` and
+driven by `final-batch.sh` beside them. The 65 tests ran with generic/483
+expunged by the exclude list, so 64 were named: on `h2debug-7.3tls` and on
+`h2kasan-7.3tls` alike, 51 ran, 51 passed and 13 were not run for a
+feature the port lacks, and the harness's log line, which now counts
+sanitizer reports, read zero; the guest's log read directly after each
+run held no KASAN, UBSAN, `BUG:`, `WARNING:`, lockdep or hung-task line,
+over 586 s of uptime on debug and 1691 s on KASAN. `storm.sh` on both:
+every cell whole, `fsck_hammer2` clean, 0 sanitizer and lockdep reports.
+On debug alone: the freeze probe blocked in 5 of 5 rounds and returned 0
+after the thaw; the block trace reads a flush after the header in both
+cases; the preallocation probe reads no extent past the end of the
+HAMMER2 file before or after a clean remount, where ext4 beside it, the
+control that the reading can show one, reads an unwritten extent over
+sectors 512 to 2559 both times; and `cluster-sync.sh` passed 60 of 60
+checks, the slave matching the master over 40055 file entries, with
+kmemleak reporting nothing of hammer2's. In a worktree at `7ae7bcb8`
+against `linux-7.3-tls`: `make W=1` printed no warning; `analyze.sh`
+printed 8 candidates, the same set by file and message as its run of
+2026-11-12 (`p7-notes/h1-analyze-tls-20261112.log`); `smatch.sh` printed
+the same 15 findings as `p7-notes/h1-smatch-head-c38433d.log`, compared
+by file, function and message with line numbers stripped, beside the same
+44 copies of the `include/net/neighbour.h` assertion its sparse layer
+fails on.

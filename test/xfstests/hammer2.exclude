@@ -12,7 +12,11 @@
 # FIEMAP has no unwritten extent to report where the test expects one.
 # generic/568 asks that a write into a fallocated range not grow the
 # blocks stat reports; the range holds no block until it is written.
+# generic/483 asks that a range fallocated past the end of a file with
+# FALLOC_FL_KEEP_SIZE still be an extent after a power cut; it is not one
+# before the cut either, nor after a clean remount.
 generic/009
+generic/483
 generic/568
 generic/092
 generic/255

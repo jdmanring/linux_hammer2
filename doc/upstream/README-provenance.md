@@ -500,3 +500,18 @@ which are the local clones' commits. The patches apply to the local
 clones at `250a8b4` and those three. `bugs.dragonflybsd.org` was not
 searched, for the proof-of-work reason above, so it is not claimed
 unreported.
+
+## hammer2_vnops-fsync-root-topology
+
+`dragonfly-hammer2_vnops-fsync-root-topology.md`, an observation and not
+a patch: DragonFly's `fsync` flushes the inode's chain and not the root
+topology, so a file `fsync` returned on is absent after a power cut that
+follows it, five rounds of five on DragonFly 6.4.2. The port's change is
+a Linux decision beside upstream's design, not a fix to send.
+
+Still that way at DragonFly head on 2026-11-16 (`b4111474907e`), read
+through the forge API: `sys/vfs/hammer2/hammer2_vnops.c` keeps the
+comment at its line 211 and the `HAMMER2_XOP_INODE_STOP` flush at its
+line 257, and Kusumi's three heads at `v1.2.13` carry the same body.
+`bugs.dragonflybsd.org` was not searched, for the proof-of-work reason
+above, so it is not claimed unreported.

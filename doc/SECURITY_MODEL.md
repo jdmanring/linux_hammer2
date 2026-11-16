@@ -25,17 +25,23 @@ this page summarizes the parts an operator meets today.
 
 The volume flush issues a device cache flush before it writes the volume
 header (`hammer2_flush.c`, the `VOLUMESYNC` arm), the order DragonFly
-uses. A device or virtual disk that acknowledges a cache flush without
-making the data durable can lose the last committed transaction on
-power loss, as with any filesystem that commits through a header.
+uses, and a second one after it, which DragonFly does not, so the header
+is on stable media when the commit returns. A device or virtual disk
+that acknowledges a cache flush without making the data durable can lose
+the last committed transaction on power loss, as with any filesystem that
+commits through a header.
 
-`fsync` issues no device cache flush. It flushes the file's buffers and
-the inode's chains and writes the block device back
-(`sync_blockdev()`), which is what DragonFly's `fsync` and the FreeBSD
-port's do; a write `fsync` returned on is durable only as far as the
-device keeps its write order, and the cache flush comes with the next
-volume flush (`doc/history/verification-record.md`, "Per-operation
-latency, the half that was never measured").
+`fsync` commits: after flushing the file's data and the inode's chains it
+runs the same PFS sync `syncfs(2)` runs, through the volume header and
+both cache flushes, so a file `fsync` returned on survives a power cut.
+DragonFly's `fsync` stops at the inode and leaves the commit to the next
+sync, up to thirty seconds later, and so do the three BSD ports; the
+port differs because Linux defines `fsync` as durable on return
+(`doc/README.porting.md`, "fsync commits the PFS"). A write that no
+`fsync` or `sync` covered is committed by the syncer, which runs thirty
+seconds after its last run ended, or at once when dirty chains or
+dirty inodes pass half their limit, and is lost if the power fails
+before that sync completes.
 
 ## Local callers
 

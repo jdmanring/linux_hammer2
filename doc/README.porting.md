@@ -465,6 +465,67 @@ the latency reading in `doc/history/verification-record.md` is where that
 shows, and the `DEFER` beside the helper names the number that reopens
 it.
 
+## fsync commits the PFS
+
+Upstream's `hammer2_vop_fsync()` writes the file's data and flushes the
+inode's chains with `HAMMER2_XOP_INODE_STOP`, and says in its own comment
+that it does not flush the root topology: the inode stays on the sideq
+and the syncer carries it to the volume root up to thirty seconds later.
+Until then nothing the volume header points at reaches the new blocks,
+and a crash loses what `fsync` acknowledged. DragonFly 6.4.2 does exactly
+that, five rounds of five
+(`doc/upstream/dragonfly-hammer2_vnops-fsync-root-topology.md`), and the
+three BSD ports carry the same body, so there is no port to follow.
+
+Linux defines `fsync(2)` as durable on return, and the port's `fsync`
+therefore commits. After upstream's flush it runs the pair `->sync_fs`
+runs, `hammer2_vfs_sync_pmp()` and then `hammer2_vfs_sync_devs()`: the
+sideq, the PFS root flushed with `HAMMER2_XOP_VOLHDR`, the volume header
+and the devices beneath it. The carried sync is called, not changed, so
+the change is a caller in the OS half and upstream's sync reads as it
+did. A commit takes the whole sideq, not the one file, because the
+inodes on it share a dependency set the sync moves as one; a narrower
+commit of one inode's path to the root would need the flush to confine
+itself to that path, which the carried flush has no means to do.
+
+Three things come with it. The commit is a filesystem-internal write, so
+it runs under `sb_start_intwrite()`, as ext4's and btrfs's commits do:
+`hammer2_freeze_fs()` stops only the syncer, and without the protection an
+`fsync` on a frozen volume committed under the freeze. The PFS root's
+flush error, which is the commit's, went to the root directory's mapping
+alone, where neither `syncfs(2)` nor an `fsync` of another file reads it;
+`hammer2_sync_error()` now sets it on the superblock as well, and `fsync`
+reads the superblock's error sequence through the descriptor's own
+cursor, so each descriptor reports a failed commit once, as `syncfs` does.
+And the volume header is followed by a second device cache flush, since
+the flush before it orders only what the header points at, and a drive
+with a volatile cache holds the header itself until a later flush. On a
+device without a write cache the block layer completes that flush at
+once, as it already did the one before the header.
+
+Concurrent callers share a commit (`hammer2_fsync_commit()`). Each takes
+a ticket once its own data and chains are flushed, and the caller holding
+the PFS's `fsync_lock` reads the newest ticket before it starts the sync;
+every ticket at or below that one belongs to a flush that ended before
+the sync began, so the sync commits it, and a caller a finished commit
+covered returns without running one. This is the group commit a
+journaling filesystem runs, kept in the OS half: the carried sync
+serializes on its flush transaction, and without the ticket each waiter
+ran a whole commit of its own after the one that had already covered it.
+On the release guest, sixteen threads each writing 4 KiB and calling
+`fsync` on their own file committed 254 times a second before and 1344
+after, one thread 263 and 272, ext4 beside them 2036 and 289; one
+`fsync` costs a median of 3.4 ms, as ext4's does on the same virtual
+disk, where it cost 84 us when it committed nothing
+(`doc/history/verification-record.md`, "fsync commits").
+
+The directory's `fsync` came with it. `hammer2_dir_fops` had none, so the
+VFS answered `EINVAL`, where DragonFly's one vop table serves directories
+with the same function. Added alone it is a false acknowledgment: with
+the directory `fsync` and not the commit, xfstests generic/065 read three
+links and a file missing after the power cut where it had stopped on
+`EINVAL` before.
+
 ## Reading the kernel, not guessing at it
 
 The kernel tree of record on this machine is a headers package: the
