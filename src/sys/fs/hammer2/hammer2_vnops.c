@@ -1428,12 +1428,27 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
  * vop_stdfsync() is file_write_and_wait_range() here.  As upstream says,
  * this is not a flush transaction; the inode stays on the sideq and the
  * syncer carries it to the volume root.
+ *
+ * Linux: and then this commits the PFS, because fsync(2) on Linux means
+ * the file survives a crash once the call returns, and upstream's flush
+ * leaves the inode unreachable from the volume header until the next
+ * sync.  xfstests' dm-flakey tests read it: 28 lost state fsync had
+ * acknowledged.  DragonFly 6.4.2 loses an fsync'ed file across a power
+ * cut the same way, and its comment above says so; the BSD ports carry
+ * upstream's body unchanged.  The commit is the one ->sync_fs runs, the
+ * PFS sync and then the devices, so its cost is a sync's (1.6 ms median
+ * on the release guest against 84 us for the flush alone).  It is a
+ * filesystem-internal write, held off by a freeze as ext4's and btrfs's
+ * commits are, since hammer2_freeze_fs() stops only the syncer.  A
+ * commit's error is the superblock's (hammer2_sync_error()), and each
+ * descriptor reads it once, as syncfs(2) does.
  */
 static int
 hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
     int datasync __maybe_unused)
 {
 	struct inode *inode = file_inode(file);
+	struct super_block *sb = inode->i_sb;	/* Linux */
 	hammer2_inode_t *ip = VTOI(inode);
 	int error1 = 0, error2;
 
@@ -1464,11 +1479,22 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 	 * own.
 	 */
 	if (error1 == 0) {
-		error1 = hammer2_vfs_sync_devs(ip->pmp);
-		if (error1) {
+		sb_start_intwrite(sb);
+		if (!READ_ONCE(hammer2_device_error))
+			error1 = hammer2_vfs_errno(
+			    hammer2_vfs_sync_pmp(ip->pmp, MNT_WAIT));
+		if (error1 == 0)
+			error1 = hammer2_vfs_sync_devs(ip->pmp);
+		if (READ_ONCE(hammer2_device_error))
+			error1 = -EIO;
+		sb_end_intwrite(sb);
+		if (error1)
 			mapping_set_error(inode->i_mapping, error1);
-			error1 = file_check_and_advance_wb_err(file);
-		}
+		error1 = file_check_and_advance_wb_err(file);
+		error2 = errseq_check_and_advance(&sb->s_wb_err,
+		    &file->f_sb_err);
+		if (error1 == 0)
+			error1 = error2;
 	}
 	return (error1);
 }
