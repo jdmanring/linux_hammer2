@@ -25298,45 +25298,68 @@ dated entry, and the line stays as it was written.
 pathspec asks a name to end with what it names, so a tracked name ending
 in a newline matched neither `*.md` nor anything else the gate asked for.
 Such a document was outside the listing before any count of it was taken:
-the run read every other document, reported nothing about this one, and
-exited 0. It is not a hypothetical shape. On a clone of `68e9f63b` with
-the real `doc/IO_MODEL.md` removed and its path plus a newline carrying a
-body whose every citation fails, the gate read 26 rows and 623 prose
-citations against the clean tree's 38 and 636, and exited 0
-(`p7-notes/r14fix/trailnl-before.out`).
+none of its rows or citations entered either half's count, nothing named
+it, and the run exited 0. It is not a hypothetical shape. On a clone of
+`68e9f63b` with the real `doc/IO_MODEL.md` removed and its path plus a newline carrying a
+body whose citations point past the end of their files, the gate read 26
+rows and 623 prose citations against the clean tree's 38 and 636, and
+exited 0, with the name staged and with it committed
+(`p7-notes/r14fix/trailnl-clone-20261115.out`, made by the script of the
+same name beside it). That script's control stages the same body under
+the document's own name over the commit that removed it, and the gate
+fails 11 rows and 13 prose citations and exits 1: twelve are the moved
+citations, and the thirteenth is the reader refusing a path in
+`doc/IO_MODEL.md`'s history, which now passes through the name ending in
+a newline. Committed or staged in place of the document on the clean
+clone, with no such commit in its history, the same body fails 11 rows
+and 12 prose citations (`p7-notes/r14fix/control-count-20261115.out`,
+three routes, its script beside it). Either way those citations fail
+where they are read.
 
-The round 22 entry above, and the sentence in `doc/README.testing.md`
-that repeats it, said such a name was outside the gate's population and
-that no count here could see it. The second clause was false, and its
-own evidence said so: 57 `.md` records on the clean tree and 56 on the
-clone is the arithmetic of a record *deleted*, not of one never listed.
+The gate's comment above that listing, and the sentence in
+`doc/README.testing.md` that repeated it, said such a name was outside
+the gate's population and that no count here could see it. The second
+clause was false. The tree holds 318 records on the clean tree and on the
+clone, and `'*.md'` lists 57 of them on the first and 56 on the second,
+where `'*.md*'` lists 57 on both (the same file).
 
 What the run does now. The listing is `git ls-files -z '*.md*'`, which
 holds a name ending in a newline because it does not ask the name to end
-in `.md`; the documents are the lines of that listing that do end in
-`.md`; and the record count is taken from the same file the lines are
-read from, so the two numbers the guard compares are one listing and not
-two. Measured on the same clone, the run prints
+in `.md`. The guard counts that listing's records and its lines, both
+from the same file, and stops the run when they differ, which any name
+holding a newline makes them do. Only past the guard are the documents
+taken as the lines of the listing that end in `.md`, and a line is then a
+whole name because the guard has refused every name that would split.
+Measured on the same clone, the run prints
 `COULD-NOT-RUN: 57 tracked name(s) list as 58 line(s)` and exits 2
-(`p7-notes/r14fix/trailnl-after.out`). The clean tree is unchanged at 38
+(the same file). The clean tree is unchanged at 38
 rows, 636 prose citations and exit 0.
 
-Two controls. Restoring `'*.md'` fails the selftest's new fixture on the
-run it names. Making the count guard compare a number with itself fails
-both newline fixtures, the one whose name holds a newline and the one
-whose name ends in it
-(`p7-notes/r14fix/citations-mutations-eb73edda.out`, mutations
-`pathspec-narrowed-to-md` and `record-count-guard-removed`, 2 and 4
-lines failed).
+Four controls, mutations of the gate in
+`p7-notes/r14fix/citations-mutations-20261115-2110.out`. Restoring
+`'*.md'` fails the selftest's fixture for that run at 2 lines
+(`pathspec-narrowed-to-md`). Making the guard compare a number with
+itself fails both newline fixtures, the one whose name holds a newline
+and the one whose name ends in it, at 4 (`record-count-guard-removed`).
+Both fixtures ask for the guard's whole message with its two counts,
+where they first asked for `COULD-NOT-RUN:`, which the gate's other lines
+of that kind print as well, so printing the counts the wrong way round
+fails them at 2 (`guard-message-counts-swapped`). Dropping the `.md`
+filter fails a fixture whose tree holds `doc/r;1.mdx`, a name the wider
+pathspec adds and outside the plain set, which a run taking it for a
+document refuses by name, at 2 (`md-filter-removed`). The fixture for a
+name ending in a newline reads its own tree first: the pathspec
+`'doc/IO_MODEL.md?'` lists one name, the one ending in the newline, and
+`'*.md*'` lists one more than `'*.md'`.
 
 A second defect in the same block, found while reading it. `$nl` and
 `$blame` were each made by `mktemp` and each given its own
 `trap 'rm -f ...' EXIT`, and the second trap replaces the first: `$nl`
 was left on disk by every run of the gate. One trap now names both. The
-selftest counts
-the `tmp.*` files in the temporary directory before and after a run of
-the clean clone and fails on a rise, which is driven: putting the split
-traps back reports `a run left 1 temporary file(s) behind`.
+selftest runs the clean clone with a temporary directory of its own,
+made empty, and fails unless that directory is empty after the run, which
+is driven: putting the split traps back reports `a run left 1 temporary
+file(s) behind` (`trap-drops-first-file`, 1 line).
 
 That fixture was the change's own defect, found by the mutation run. It
 counted the shared `/tmp`, which every other process writing a temporary
@@ -25349,67 +25372,87 @@ are clean (`conc8-after.out`); the split traps still fail it at exactly one file
 (`trap-control-after-fix.out`), and the four shells still agree byte for
 byte (`shells-cmp-tmpdir-fix.out`).
 
-The readings, taken at the gate `eb73edda` leaves, sha256 `c15b2592`,
-which differs from the one `90e8c19d` commits in the wording of the
-guard's message and in nothing else. The selftest is 905 `ok` lines in
-each of the wrapper's five lanes: bash 5.3.20, dash 0.5.13.3, busybox ash
-1.37.0 with the host's awk, grep and sed, the same ash with busybox awk,
-grep, sed, cut, tr, head, wc, sort and cmp first on `PATH`, and dash with
-mawk 1.3.4. The wrapper counts 4 of 4 outputs the same bytes as bash's
-(`p7-notes/r14fix/shells-eb73edda.out`). The mutation set is 143 placed
-with 2 passed (`p7-notes/r14fix/citations-mutations-eb73edda.out`), and
-the run at the gate `90e8c19d` commits printed the same 143 verdict lines
-(`citations-mutations-tmpdir-fix.out`). The removal of
-`--no-ext-diff` from the `git log` over `doc/history/` passes because no
-clone that history is read on has a diff driver configured, so the flag's
-value is not observable; it is a fixture gap and not a default git
-supplies, since a driver on the clone would be read. The removal of
-`--no-textconv` from the `git show` at one revision of one file passes
-because git applies no textconv to that form unless `--textconv` is
-given: a driver that prints `MANGLED` for every file prints that from
-`git show --textconv HEAD:f.c` and the stored blob from `git show
-HEAD:f.c`, on git 2.56.0, and git's manual says textconv is enabled by
-default for `git diff` and `git log` only. The other flag removals fail,
-as do all three mutations of this change, the pathspec at 2 lines, the
-record count at 4 and the trap at 1.
+The readings are taken at `b1d10dea`, the last change to the gate this
+entry describes, in a clone holding no other change; the gate there is
+sha256 `1f2e41f6`, as each run's header says. The selftest is 908 `ok`
+lines in each of the wrapper's five lanes: bash 5.3.20, dash 0.5.13.3,
+busybox ash 1.37.0 with the host's awk, grep and sed, the same ash with
+busybox awk, grep, sed, cut, tr, head, wc, sort and cmp first on `PATH`,
+and dash with mawk 1.3.4. The wrapper counts 4 of 4 outputs the same
+bytes as bash's (`p7-notes/r14fix/shells-20261115-2110.out`). The
+mutation set is 145 placed: 142 fail the selftest with exit 1,
+`fixture-edit-not-made` stops its build with exit 2, and 2 pass
+(`p7-notes/r14fix/citations-mutations-20261115-2110.out`). The removal of
+`--no-ext-diff` from the `git log -p` over `doc/history/`
+(`flag-no-ext-diff-removed-at-2372`) passes because that form runs no
+external diff tool unless `--ext-diff` is given: with `diff.external` set
+to a command that prints a marker, `git diff` prints it and prints none
+with `--no-ext-diff`, and `git log -p` and `git show` print it only with
+`--ext-diff`, on git 2.56.0
+(`p7-notes/r14fix/ext-diff-probe-20261115.out`, its script beside it).
+The same flag removed from the `git diff` of the working tree over
+`doc/history/` (`flag-no-ext-diff-removed-at-2377`) fails at 2 lines.
+The removal of `--no-textconv` from the `git show` at one revision of one
+file (`flag-no-textconv-removed-at-1889`) passes because git applies no
+textconv to that form unless `--textconv` is given: a driver that prints
+`MANGLED` for every file prints that from `git show --textconv HEAD:f.c`
+and the stored blob from `git show HEAD:f.c`, on git 2.56.0
+(`p7-notes/r14fix/textconv-probe-20261115.out`), and git's manual says
+textconv is enabled by default for `git diff` and `git log` only. Every
+other flag removal fails.
+
+Two runs this entry cited before are superseded by those. A wrapper run
+and a mutation run of 143, `p7-notes/r14fix/shells-20261115.out` and
+`citations-mutations-20261115.out`, read the gate of sha256 `43571886`
+in a tree at `5fd2de0a` holding one change no commit holds, as their
+headers say; the gate's later fixtures change both counts.
 
 The mutation run recorded first,
 `p7-notes/citations-mutations-name-handling.out`, was taken at a gate no
 commit holds. Its own header gives that gate sha256 `0deb9ef`, the file
-is kept as `p7-notes/r14fix/gate-0deb9ef.sh`, and the gate `05b0acdc`
-commits hashes `63f719f5`; the two differ in comments, in the guard's
-message and in the leak fixture's two lines, which in the earlier one
-print both counts. That fixture read the shared `/tmp`, so a lane's
-verdict moved with the other seven. The run passed one mutation,
+is kept as `p7-notes/r14fix/gate-0deb9ef.sh`, and the gate `41b4a878`
+commits hashes `63f719f5`; no commit on any ref holds `0deb9ef`
+(`p7-notes/r14fix/gate-hash-sweep-20261115.out`, the hash of the gate
+at every commit that changed it). The two differ in comments, in the
+guard's message and in the leak fixture's two lines, which in the
+earlier one print both counts. That fixture read the shared `/tmp`, so a
+lane's verdict moved with the other seven. The run passed one mutation,
 `flag-no-ext-diff-removed-at-2347`. `flag-no-textconv-removed-at-1864`
 failed in it, on one line, `a run left 5 temporary file(s) behind (872
 before, 877 after)`, which is the fixture's count and no reading about
-the flag. The same mutation, at line 1868 since the fixture's fix added
-four lines above it, passes at the gate this change leaves, for the
-reason given above. That run is superseded by the two above.
+the flag. The same mutation, at line 1889 of the gate `b1d10dea`
+commits, passes, for the reason given above.
 
 A wrapper run this entry first cited for the shells,
-`p7-notes/r14fix/shells-name-handling.out`, is withdrawn as a reading.
-Its header gives a gate sha256 `bc23100e` that no commit holds and no
-file keeps. Its lane with busybox's applets first on `PATH` read nothing:
-the busybox it was handed has an `ash` applet and no `awk`, `grep` or
-`sed`, each exiting 127 with `applet not found`
-(`p7-notes/r14fix/busybox-applets.out`), so that lane's `0 ok` is a
-reading about the binary. The same holds of the five wrapper runs before
-it, the first of them at 17:36 on 2026-11-13, whose outputs are beside
-the wrapper in `p7-notes` and none of which an entry here cites; the
-seven before those were handed another busybox, and the lane passed in
-each. Its `0 of 4` line has a candidate
-cause and no measured one: the gate of that hour that is kept, the
-`0deb9ef` above, prints the fixture's two counts of the shared `/tmp` in
-its `ok` line, which two runs print alike only by chance. This entry
-first gave that line a cause in the wrapper's own comparison, which the
-wrapper's history does not bear out: the same comparison printed `4 of 4`
-and `3 of 4` in the runs before.
+`p7-notes/r14fix/shells-name-handling.out` (04:36 on 2026-11-15), is
+withdrawn as a reading. Its header gives a gate sha256 `bc23100e` that
+no commit on any ref holds (the same sweep) and no file keeps. Its lane
+with busybox's applets first on `PATH` read nothing: the busybox it was
+handed has an `ash` applet and no `awk`, `grep` or `sed`, each exiting
+127 with `applet not found` (`p7-notes/r14fix/busybox-applets.out`), so
+that lane's `0 ok` is a reading about the binary. Every kept output of
+the wrapper is tabulated in `p7-notes/r14fix/wrapper-history-20261115.out`
+(its script beside it), each named there by its file and its time. The
+first, at 22:11 on 2026-11-12, has no such lane. The next seven, from
+23:57 on 2026-11-12 to 15:36 on 2026-11-13, were handed the busybox
+`hm1y...`, and the lane passed in each. The five from 17:36 on
+2026-11-13 to 02:56 on 2026-11-14 were handed `90hw3j...` or
+`yysvx...`, neither of which carries the applets (the same probe reads
+both), and the lane read `0 ok` in each. The runs under `r14fix/` in
+between print one line per shell and have no such lane. The first run
+with that lane after the withdrawn one, at 13:56 on 2026-11-15, was
+handed the static `wq18...`, which carries every applet the lane links,
+and read 905 `ok` in all five lanes. The withdrawn run's comparison
+reads `0 of 4`, where the five runs that failed the lane the same way
+read `3 of 4`; no kept reading explains the difference. A candidate: the
+gate kept from that hour, the `0deb9ef` above (kept at 04:14, its
+mutation run ending at 04:30), prints the leak fixture's two counts of
+the shared `/tmp` in its `ok` line, which would make every lane's output
+differ from bash's.
 
 A number this entry first carried, 40944 `tmp.*` files in `/tmp`, is
-withdrawn: no file in `p7-notes` holds it, and `/tmp` held 1174 when the
-audit of this change counted them on 2026-11-15. The defect and its fix do
+withdrawn: no file in `p7-notes` holds it. The defect and its fix do
 not depend on it, and the count that is recorded is the one
 `p7-notes/r14fix/trap-control-after-fix.out` prints, one file per run of
-the gate with the split traps. Fourteen fast gates exit 0.
+the gate with the split traps. Fourteen fast gates exit 0 at the commit
+that holds this text (`p7-notes/r14fix/fastgates-20261115-2300.out`).

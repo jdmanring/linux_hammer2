@@ -511,26 +511,30 @@ counter fails there. It reaches each of the two exits that read both
 counts with one of them zero, so a status that ignores either count
 fails it, and a fixture edit that changes nothing stops the build of the
 scratch history.
-The `--selftest` passes two of 143 placed mutations
-(`p7-notes/citations-mutations.py`, its runner beside it, output
-`r14fix/citations-mutations-eb73edda.out`; `citations-mutations.out` is
-the run before this change, two of 140). An earlier run of the 143,
-`citations-mutations-name-handling.out`, was taken at a gate no commit
-holds and passed one of the two, the removal of `--no-ext-diff`. The
-removal of `--no-textconv` failed there on one line, `a run left 5
-temporary file(s) behind`, and on nothing about the flag: the selftest's
-check that a run of the gate leaves no temporary file then counted the
-shared `/tmp`, which the runner's seven other lanes were writing to. The
-check now counts a `TMPDIR` of its own, and the same mutation passes, for
-the reason given below. That fix made the selftest four lines longer, so
-the `git show` that run names at line 1864 is at 1868.
-Fifty-seven are named, each turning off one
-decision of the function rows, the region markers, the prose reader's
-placement, fence, name and region rules, the renumber reader, the
-listing a name ending in a newline is dropped by, the one trap that
-removes both files a run makes, or an
-exit. The rest are made by line in the script's body after the
-selftest, each class being the lines the generator selects by text. The
+The `--selftest` passes two of 145 placed mutations (the generator
+`p7-notes/citations-mutations.py`, run by
+`p7-notes/citations-mutations.sh`, output
+`p7-notes/r14fix/citations-mutations-20261115-2110.out`;
+`citations-mutations.out` is the run before this change, two of 140). An
+earlier run, `citations-mutations-name-handling.out`, was taken at a
+gate no commit holds and passed one of the two, the removal of
+`--no-ext-diff`. The removal of `--no-textconv` failed there on one line,
+`a run left 5 temporary file(s) behind`, and on nothing about the flag:
+the selftest's check that a run of the gate leaves no temporary file then
+counted the shared `/tmp`, where the runner's other seven lanes, each
+running a selftest of its own, were writing. The check now counts a
+`TMPDIR` of its own, and the same mutation passes, for the reason given
+below. The `git show` that run names at line 1864 is at line 1889 of the
+gate as it now stands.
+Fifty-nine are named, the entries of the generator's `MUTS`, each
+turning off one decision of the function rows, the region markers, the
+prose reader's placement, fence, name and region rules, the renumber
+reader, the listing a name ending in a newline is dropped by, the guard
+that compares the listing's records with its lines and the counts its
+message prints, the `.md` filter applied after that guard, the one trap
+that removes both files a run makes, a pinned row's read of the
+revision it names, or an exit. The rest are made by line in the
+script's body after the selftest, each class being the lines the generator selects by text. The
 set is the one this generator selects: a set selected otherwise reaches
 sites this one has none at, so the number counts what this one placed
 and is no bound on what a mutation of the script can hide.
@@ -543,19 +547,25 @@ of the other half's list in `readname`. No gate derives these counts;
 they are read from the generator's own name list, and a line added to the
 script that the generator selects moves one of them without any check
 noticing.
-Two mutations the selftest passes, and neither is unobserved. The
-removal of `--no-ext-diff` from the `git log` that reads the history of
-`doc/history/` is unobservable on every clone that history is read on,
-since none configures a diff driver; it is not the pass-through the
-removal of a flag guarding a git default usually is, and the two facts
-differ: were a driver configured on that clone, the run would read the
-driver's diff. The flag stays, since a tree that configures one is a
-reason to keep it rather than a reason the fixture need not build one.
+Two mutations the selftest passes, and each is explained by what git
+does with the flag removed. The removal of `--no-ext-diff` from the
+`git log -p` that reads the history of `doc/history/`
+(`flag-no-ext-diff-removed-at-2372`) passes because that form runs no
+external diff tool unless `--ext-diff` is given: with `diff.external` set
+to a command that prints a marker, `git diff` prints it and prints none
+with `--no-ext-diff`, while `git log -p` and `git show` print it only
+with `--ext-diff`, on git 2.56.0
+(`p7-notes/r14fix/ext-diff-probe-20261115.out`). The same flag removed
+from the `git diff` of the working tree
+(`flag-no-ext-diff-removed-at-2377`) fails it at 2 lines. The flag on
+the `git log` stays, since it states the reading and costs nothing.
 The removal of `--no-textconv` from the `git show` that reads one
-revision of one file is dead code in the other direction: git applies no
+revision of one file (`flag-no-textconv-removed-at-1889`) passes for
+the same kind of reason: git applies no
 textconv to that form unless `--textconv` is given, measured on git
 2.56.0 with a driver that mangles every file's content (the blob prints
-as it is stored, and prints mangled once `--textconv` is added), and
+as it is stored, and prints mangled once `--textconv` is added;
+`r14fix/textconv-probe-20261115.out`), and
 git's own manual says textconv is enabled by default for `git diff` and
 `git log` only. The flag stays for the same reason.
 Both `safe()` tests ask it of two names, the path and the one git
@@ -585,9 +595,10 @@ held as well as its failures. An assertion of the selftest removed
 passes it, as removing a test passes any suite run on code that is
 right; a fixture is held instead by a change to its input or to the
 code it reaches failing it, as the mark fixture's does
-(`p7-notes/r10fix/controls.out`). One
-hundred and thirty-two fail it, the one that leaves a fixture edit changing
-nothing stops the build with the edit named, and the two it passes each
+(`p7-notes/r10fix/controls.out`). Of the 145 placed mutations, one
+hundred and forty-two fail it with exit 1, the one that leaves a fixture
+edit changing nothing stops the build with the edit named and exit 2,
+and the two it passes each
 remove a flag guarding a default git has: `--no-textconv` from `git
 show` of a file and `--no-ext-diff` from `git log`, which run no
 textconv driver and no external diff tool unless asked (git 2.56.0).
