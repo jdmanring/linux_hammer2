@@ -65,7 +65,10 @@ fail=0; nc=0; nh=0
 # fix per reader; refusing the name here is one fix for all of them. The
 # listing is git's NUL-separated one, read record by record: tr makes each
 # NUL the record's end and each newline inside a name \001, which the set
-# refuses, so such a name cannot split into two that each pass.
+# refuses, so such a name cannot split into two that each pass. A tree with
+# no .git, a `git archive` extracted, holds the tracked names as its files,
+# so there the files on disk are read instead, and the gate's other checks,
+# which need no git, still run.
 NAMESET='A-Za-z0-9._/+-'
 # names_bad reads NUL-separated names on stdin and prints each it refuses,
 # a newline in one as \n and any other unprintable byte as ?.
@@ -73,22 +76,33 @@ names_bad() {
 	tr '\n\000' '\001\n' | LC_ALL=C command grep "[^$NAMESET]" |
 	    sed "s/$(printf '\001')/\\\\n/g" | LC_ALL=C tr -c ' -~\n' '?'
 }
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
-	{ echo "inventory: COULD-NOT-RUN: not a git work tree"; exit 2; }
-ntracked=$(git ls-files -z | tr -cd '\000' | wc -c | tr -d ' ')
-[ "${ntracked:-0}" -gt 0 ] || { echo "inventory: FAIL: git lists no tracked name at all" >&2; exit 1; }
-bad=$(git ls-files -z | names_bad)
+if [ -e .git ]; then
+	names_from='tracked name(s)'
+	names() { git ls-files -z; }
+else
+	names_from='file name(s) on disk, no .git'
+	names() { find . -type f -print0; }
+fi
+nnames=$(names | tr -cd '\000' | wc -c | tr -d ' ')
+[ "${nnames:-0}" -gt 0 ] || { echo "inventory: FAIL: no name listed at all ($names_from)" >&2; exit 1; }
+bad=$(names | names_bad)
 if [ -n "$bad" ]; then
 	printf '%s\n' "$bad" | while IFS= read -r n; do
-		echo "  FAIL tracked name outside [$NAMESET]: '$n'"
+		printf '  FAIL name outside [%s]: %s\n' "$NAMESET" "'$n'"
 	done
 	fail=$((fail + $(printf '%s\n' "$bad" | wc -l)))
 fi
-# The control runs the same function on every run: one name it must pass and
-# three it must refuse, a space, a newline and a byte the set leaves out.
-ctl=$(printf 'a/b-c_d.e+f\000a b\000c\nd\000e\351f\000' | names_bad)
-[ "$ctl" = "$(printf 'a b\nc\\nd\ne?f')" ] || {
-	echo "  FAIL control: the name check refused '$(printf '%s' "$ctl" | tr '\n' '|')', not 'a b|c\\nd|e?f'"
+# The control runs the same function on every run over each printable ASCII
+# byte as a name of its own, of which the set must refuse exactly the 28 it
+# leaves out (95 less 67), so a set widened or narrowed by one byte moves the
+# count; and over a name holding a newline and one holding a byte above 0x7f,
+# which it must refuse once each and print as `c\nd` and `e?f`.
+ctl=$( { awk 'BEGIN { for (i = 32; i < 127; i++) printf "%c\n", i }' | tr '\n' '\000'
+	printf 'c\nd\000e\351f\000'; } | names_bad)
+nnamectl=$(printf '%s\n' "$ctl" | wc -l | tr -d ' ')
+printf '%s\n' "$ctl" | command grep -qx 'c\\nd' && printf '%s\n' "$ctl" | command grep -qx 'e?f' &&
+    [ "$nnamectl" = 30 ] || {
+	printf '  FAIL control: the name check refused %s name(s) of the 30 it must, or printed no c\\nd or e?f line\n' "$nnamectl"
 	fail=$((fail + 1)); }
 
 for f in $srcs $hdrs; do
@@ -1121,5 +1135,5 @@ done
 	echo "  FAIL only $ntlsdocs document(s) read for a TLS claim, so the sweep matched far less than doc/ holds"
 	fail=$((fail + 1)); }
 
-echo "inventory: $ntracked tracked name(s), $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
+echo "inventory: $nnames $names_from, $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
