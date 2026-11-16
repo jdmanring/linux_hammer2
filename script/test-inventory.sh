@@ -58,51 +58,69 @@ hdrs=$(ls "$DIR"/*.h 2>/dev/null | xargs -r -n1 basename)
 
 fail=0; nc=0; nh=0
 
-# Every tracked name is one a reader taking a listing a line at a time reads
-# whole. Gates and tools here read `git ls-files` that way, and a name with a
-# newline in it reads as two names to them: test-citations.sh passed over a
-# document whose name ended in one until 1.0.100. Teaching each reader is a
-# fix per reader; refusing the name here is one fix for all of them. The
-# listing is git's NUL-separated one, read record by record: tr makes each
-# NUL the record's end and each newline inside a name \001, which the set
-# refuses, so such a name cannot split into two that each pass. A tree with
-# no .git, a `git archive` extracted, holds the tracked names as its files,
-# so there the files on disk are read instead, and the gate's other checks,
-# which need no git, still run.
+# Every tracked name is one any reader of the tree passes whole. A reader
+# taking a listing a line at a time, or a name as a word, misreads a name
+# holding a newline, a space or a shell metacharacter: `git ls-files`
+# without -z prints such a name C-quoted, a token naming no file, and the
+# `*.md` pathspec test-citations.sh used passed over a document whose name
+# ended in a newline until 1.0.100. A component beginning with - reads as
+# an option to the tool given the name: vale took a tracked `--x.md` for a
+# flag, and the prose gate still counted no finding. Teaching each reader
+# is a fix per reader; refusing the name here is one fix for all of them.
+# The listing is git's NUL-separated one, read record by record: tr makes
+# each NUL the record's end and each newline inside a name \001, which the
+# set refuses, so a newline cannot split a name into two that each pass.
+# A tree with no .git, a `git archive` extracted, holds the tracked names
+# as its files, so there the files on disk are read instead, and the
+# gate's other checks, which need no git, still run. The listing's status
+# is read, so one that fails part way through is not a short population.
 NAMESET='A-Za-z0-9._/+-'
 # names_bad reads NUL-separated names on stdin and prints each it refuses,
 # a newline in one as \n and any other unprintable byte as ?.
 names_bad() {
-	tr '\n\000' '\001\n' | LC_ALL=C command grep "[^$NAMESET]" |
+	tr '\n\000' '\001\n' |
+	    LC_ALL=C command grep -e "[^$NAMESET]" -e '^-' -e '/-' |
 	    sed "s/$(printf '\001')/\\\\n/g" | LC_ALL=C tr -c ' -~\n' '?'
 }
 if [ -e .git ]; then
+	command -v git >/dev/null 2>&1 ||
+		{ echo "inventory: COULD-NOT-RUN: .git is here and git is not"; exit 2; }
 	names_from='tracked name(s)'
 	names() { git ls-files -z; }
 else
 	names_from='file name(s) on disk, no .git'
 	names() { find . -type f -print0; }
 fi
-nnames=$(names | tr -cd '\000' | wc -c | tr -d ' ')
-[ "${nnames:-0}" -gt 0 ] || { echo "inventory: FAIL: no name listed at all ($names_from)" >&2; exit 1; }
-bad=$(names | names_bad)
+nlist=$(mktemp) || exit 2
+names > "$nlist"; nst=$?
+nnames=$(tr -cd '\000' < "$nlist" | wc -c | tr -d ' ')
+bad=$(names_bad < "$nlist")
+rm -f "$nlist"
+[ "$nst" = 0 ] && [ "${nnames:-0}" -gt 0 ] || {
+	echo "inventory: FAIL: the listing of $names_from exited $nst with ${nnames:-0} name(s)" >&2
+	exit 1; }
 if [ -n "$bad" ]; then
 	printf '%s\n' "$bad" | while IFS= read -r n; do
-		printf '  FAIL name outside [%s]: %s\n' "$NAMESET" "'$n'"
+		printf '  FAIL name outside [%s] or with a component beginning -: %s\n' "$NAMESET" "'$n'"
 	done
 	fail=$((fail + $(printf '%s\n' "$bad" | wc -l)))
 fi
-# The control runs the same function on every run over each printable ASCII
-# byte as a name of its own, of which the set must refuse exactly the 28 it
-# leaves out (95 less 67), so a set widened or narrowed by one byte moves the
-# count; and over a name holding a newline and one holding a byte above 0x7f,
-# which it must refuse once each and print as `c\nd` and `e?f`.
+# The control runs the same function on every run, over each printable
+# ASCII byte as a name of its own and four names more, and compares what it
+# refuses, in order, with what a second spelling of the rule refuses: the
+# 67 bytes of the set written out one by one rather than as a bracket
+# expression, and a name beginning with -. A change to the set, one byte
+# swapped for another among them, fails it. The four: a newline in a name
+# and a byte above 0x7f, refused and printed as `c\nd` and `e?f`; `a/-b`,
+# refused; `a-b/c.d`, passed.
 ctl=$( { awk 'BEGIN { for (i = 32; i < 127; i++) printf "%c\n", i }' | tr '\n' '\000'
-	printf 'c\nd\000e\351f\000'; } | names_bad)
-nnamectl=$(printf '%s\n' "$ctl" | wc -l | tr -d ' ')
-printf '%s\n' "$ctl" | command grep -qx 'c\\nd' && printf '%s\n' "$ctl" | command grep -qx 'e?f' &&
-    [ "$nnamectl" = 30 ] || {
-	printf '  FAIL control: the name check refused %s name(s) of the 30 it must, or printed no c\\nd or e?f line\n' "$nnamectl"
+	printf 'c\nd\000e\351f\000a/-b\000a-b/c.d\000'; } | names_bad)
+want=$(awk 'BEGIN { ok = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/+-"
+	for (i = 32; i < 127; i++) { c = sprintf("%c", i); if (!index(ok, c) || c == "-") print c }
+	print "c\\nd"; print "e?f"; print "a/-b" }')
+[ -n "$want" ] && [ "$ctl" = "$want" ] || {
+	printf '  FAIL control: the name check refused %s name(s) and the second spelling %s, and the two lists differ\n' \
+	    "$(printf '%s\n' "$ctl" | wc -l | tr -d ' ')" "$(printf '%s\n' "$want" | wc -l | tr -d ' ')"
 	fail=$((fail + 1)); }
 
 for f in $srcs $hdrs; do

@@ -25476,22 +25476,26 @@ that holds this text (`p7-notes/r14fix/fastgates-20261115-2340.out`).
 
 `test-inventory.sh` now lists every tracked name with `git ls-files -z`,
 record by record, and fails on a name holding any byte outside
-`[A-Za-z0-9._/+-]`. The entry above fixed one reader of such a name; this
-refuses the name for every reader. On the tree it reads 318 names and
-exits 0 under bash, dash and busybox ash. In clones of `183e74ed` with
-the gate copied in (`p7-notes/r14fix/names-fixture-20261116.out`, made by
-the script of the same name beside it), a name `a b` added at the root
-fails with the refusal naming it and exit 1, and so does a name holding
-a newline, printed as `c\nd`; with the refusal's count removed both exit
-0, and the unmodified clone exits 0. The gate runs a control of its own on
-every run: each printable ASCII byte as a name, of which the set must
-refuse exactly 28, and a name holding a newline and one holding a byte
-above 0x7f. Widening the set by a space or by a tilde, or leaving a
-newline in a name unmapped, fails that control and exits 1. A tree with
-no `.git`, which is what a `git archive` extracts to, has its files'
-names read from the disk instead, so the gate's other checks still run
-there: the clone without `.git` reads 318 and exits 0, and with a file
-whose name holds a newline added on disk, exits 1.
+`[A-Za-z0-9._/+-]` or with a path component beginning with `-`, which a
+tool given the name reads as an option. The entry above fixed one reader
+of such a name; this refuses the name for every reader. On the tree it
+reads 318 names and exits 0 under bash, dash and busybox ash. In clones
+of `79f528c3` with the gate copied in
+(`p7-notes/r14fix/names-fixture-20261116.out`, made by the script of the
+same name beside it), a name `a b`, one holding a newline (printed
+`c\nd`) and one named `--x.md`, each added at the root, fail with the
+refusal naming them and exit 1; with the refusal's count removed the
+first two exit 0, and the unmodified clone exits 0. The gate's own
+control, run every time, offers each printable ASCII byte as a name and
+compares what the check refuses with what a second spelling of the rule
+refuses, the set's 67 bytes written out one by one. Widening the set by
+a space or a tilde, swapping its `+` for a comma, or leaving a newline in
+a name unmapped each fail it and exit 1. A tree with no `.git`, which is
+what a `git archive` extracts to, has its files' names read from the disk
+instead, so the gate's other checks still run: the clone without `.git`
+reads 318 and exits 0, exits 1 with a file whose name holds a newline
+added, and exits 1 when `find` cannot read a directory, since the
+listing's status is read.
 
 Correction to the entry of 2026-09-26 on what `fsync` costs. Its sentence
 that `hammer2_dev_cache_flush()` "has no callers, and neither does its
