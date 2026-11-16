@@ -1265,6 +1265,9 @@ struct hammer2_pfs {
 	uint32_t		inmem_dirty_chains;	/* XXX Linux: upstream's, dropped by the BSD ports */
 	hammer2_lkc_t		memory_cv;	/* Linux: the wakeup for hammer2_pfs_memory_wait() */
 	struct delayed_work	sync_work;	/* Linux: the syncer, trigger_syncer() upstream */
+	hammer2_lk_t		fsync_lock;	/* Linux: one fsync commit at a time */
+	atomic64_t		fsync_ticket;	/* Linux: fsyncs ready for a commit */
+	uint64_t		fsync_done;	/* Linux: tickets the last commit covered */
 	/* note: inumhash not applicable to spmp */
 	hammer2_inum_hash_t	inumhash[HAMMER2_INUMHASH_SIZE];
 };

@@ -1422,6 +1422,43 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 }
 
 /*
+ * Linux: the commit fsync(2) runs, shared between concurrent callers.  A
+ * caller takes a ticket once its own data and chains are flushed, and the
+ * caller holding fsync_lock reads the newest ticket before it starts the
+ * sync: every ticket at or below that one belongs to a flush that ended
+ * before the sync began, so the sync commits it, and a caller whose
+ * ticket a finished commit covered returns without running another.
+ * Without this each fsync ran its own sync behind the others, and sixteen
+ * writers committed no faster than one.  A commit that fails covers
+ * nothing, so each waiter then tries its own.  Returns the VFS's negative
+ * errno; a commit's error is on the superblock as well, where a caller
+ * whose ticket was covered reads it.
+ */
+static int
+hammer2_fsync_commit(hammer2_pfs_t *pmp)
+{
+	uint64_t ticket, covered;
+	int error = 0;
+
+	ticket = atomic64_inc_return(&pmp->fsync_ticket);
+	hammer2_lk_ex(&pmp->fsync_lock);
+	if (pmp->fsync_done < ticket) {
+		covered = atomic64_read(&pmp->fsync_ticket);
+		if (!READ_ONCE(hammer2_device_error))
+			error = hammer2_vfs_errno(
+			    hammer2_vfs_sync_pmp(pmp, MNT_WAIT));
+		if (error == 0)
+			error = hammer2_vfs_sync_devs(pmp);
+		if (READ_ONCE(hammer2_device_error))
+			error = -EIO;
+		if (error == 0)
+			pmp->fsync_done = covered;
+	}
+	hammer2_lk_unlock(&pmp->fsync_lock);
+	return (error);
+}
+
+/*
  * fsync, which is upstream's hammer2_fsync(): write the file's dirty
  * data first, so the strategy XOPs have assigned its blocks, then sync
  * the inode's meta-data if it changed and flush the chains under it.
@@ -1436,8 +1473,8 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
  * acknowledged.  DragonFly 6.4.2 loses an fsync'ed file across a power
  * cut the same way, and its comment above says so; the BSD ports carry
  * upstream's body unchanged.  The commit is the one ->sync_fs runs, the
- * PFS sync and then the devices, so its cost is a sync's (1.6 ms median
- * on the release guest against 84 us for the flush alone).  It is a
+ * PFS sync and then the devices, shared by concurrent callers in
+ * hammer2_fsync_commit(), so its cost is a sync's.  It is a
  * filesystem-internal write, held off by a freeze as ext4's and btrfs's
  * commits are, since hammer2_freeze_fs() stops only the syncer.  A
  * commit's error is the superblock's (hammer2_sync_error()), and each
@@ -1480,13 +1517,7 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 	 */
 	if (error1 == 0) {
 		sb_start_intwrite(sb);
-		if (!READ_ONCE(hammer2_device_error))
-			error1 = hammer2_vfs_errno(
-			    hammer2_vfs_sync_pmp(ip->pmp, MNT_WAIT));
-		if (error1 == 0)
-			error1 = hammer2_vfs_sync_devs(ip->pmp);
-		if (READ_ONCE(hammer2_device_error))
-			error1 = -EIO;
+		error1 = hammer2_fsync_commit(ip->pmp);
 		sb_end_intwrite(sb);
 		if (error1)
 			mapping_set_error(inode->i_mapping, error1);

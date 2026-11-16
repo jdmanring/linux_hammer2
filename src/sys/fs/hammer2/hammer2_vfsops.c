@@ -459,6 +459,7 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		hammer2_lk_init(&pmp->trans_lock, "h2mp_tx");
 		hammer2_lkc_init(&pmp->trans_cv, "h2mp_tx_cv");
 		hammer2_lkc_init(&pmp->memory_cv, "h2memw");	/* Linux */
+		hammer2_lk_init(&pmp->fsync_lock, "h2mp_fsync");	/* Linux */
 		INIT_DELAYED_WORK(&pmp->sync_work, hammer2_sync_work);	/* Linux */
 		TAILQ_INIT(&pmp->syncq);
 		TAILQ_INIT(&pmp->depq);
@@ -813,6 +814,7 @@ hammer2_pfsfree(hammer2_pfs_t *pmp)
 		hammer2_lk_destroy(&pmp->trans_lock);
 		hammer2_lkc_destroy(&pmp->trans_cv);
 		hammer2_lkc_destroy(&pmp->memory_cv);	/* Linux */
+		hammer2_lk_destroy(&pmp->fsync_lock);	/* Linux */
 		hammer2_inum_hash_destroy(pmp);
 		hammer2_ipdep_destroy(pmp); /* XXX Linux: hashdestroy(9) */
 		hammer2_dbg_pmp_died(pmp);
