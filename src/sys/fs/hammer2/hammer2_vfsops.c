@@ -3461,10 +3461,11 @@ restart:
  * written and the test had restored it by the time it was.  Returns
  * the VFS's negative errno.
  *
- * DEFER(randwrite4k_fsync's median reads above ext4's in latency.sh):
  * sync_blockdev() writes every dirty block of the device, where vfsync()
- * wrote the vnode's own buffers; the DIO layer keeps no per-inode set of
- * device ranges, and sync_blockdev_range() over one would write less.
+ * wrote the vnode's own buffers.  That cost fsync nothing it would not
+ * pay anyway once fsync committed the PFS: the volume flush writes every
+ * dirty block of the device back before it writes the header, so a range
+ * per inode would leave nothing out.
  */
 int
 hammer2_vfs_sync_devs(hammer2_pfs_t *pmp)
