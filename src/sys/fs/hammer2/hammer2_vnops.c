@@ -86,6 +86,7 @@
 static int hammer2_vop_setattr(struct mnt_idmap *, struct dentry *,
     struct iattr *);
 static int hammer2_zero_tail(struct inode *, loff_t);	/* Linux */
+static int hammer2_vop_fsync(struct file *, loff_t, loff_t, int);
 
 /*
  * Resolve one name in a directory.
@@ -1018,6 +1019,7 @@ const struct file_operations hammer2_dir_fops = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
 	.iterate_shared	= hammer2_vop_readdir,
+	.fsync		= hammer2_vop_fsync,
 	.unlocked_ioctl	= hammer2_ioctl,		/* Linux */
 	.setlease	= generic_setlease,		/* Linux */
 };
