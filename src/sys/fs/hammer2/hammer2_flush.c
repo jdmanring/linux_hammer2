@@ -1340,6 +1340,12 @@ hammer2_xop_inode_flush(hammer2_xop_t *arg, void *scratch, int clindex)
 		 * image panicked there.  bwrite() is synchronous, so this
 		 * waits for the write.  The folio covers the whole header
 		 * because the mapping's minimum folio order is the block's.
+		 * The cache flush above orders everything the header points
+		 * at; a second one after it makes the header itself durable,
+		 * since a write the drive has acknowledged may still sit in
+		 * its volatile cache, and fsync(2) returns on this commit.
+		 * On a device with no write cache the block layer completes
+		 * the flush at once (block/blk-core.c, submit_bio_noacct()).
 		 */
 		blkoff = (loff_t)j * HAMMER2_ZONE_BYTES64;
 		folio = read_mapping_folio(hmp->bdev_file->f_mapping,
@@ -1363,6 +1369,9 @@ hammer2_xop_inode_flush(hammer2_xop_t *arg, void *scratch, int clindex)
 			vol_error = -filemap_write_and_wait_range(
 			    hmp->bdev_file->f_mapping, blkoff,
 			    blkoff + HAMMER2_VOLUME_BYTES - 1);
+			if (vol_error == 0)	/* Linux */
+				vol_error = hammer2_dev_cache_flush(
+				    hmp->bdev_file);
 		}
 		hmp->volhdrno = j;
 		if (vol_error)
