@@ -324,9 +324,11 @@ one command: the volume flush writes back the device's page cache
 (`hammer2_dev_writeback()`, `sync_blockdev()`), then asks the drive to
 empty its cache (`hammer2_dev_cache_flush()`, `blkdev_issue_flush()`), then
 writes the header. DragonFly's `BUF_CMD_FLUSH` is the second of those;
-`hammer2_os.h` says which BSD port each follows. `fsync(2)` writes the
-device's dirty pages and issues no cache flush, as DragonFly's and the
-FreeBSD port's do not.
+`hammer2_os.h` says which BSD port each follows. `fsync(2)` runs the
+PFS sync, which ends in this flush, so it issues both cache flushes and
+writes a header; DragonFly's and the FreeBSD port's flush the inode alone
+and leave the header to the next sync (`README.porting.md`, "fsync
+commits the PFS").
 
 The cluster's synchronization thread is the one writer outside this
 scheme. Its copies have no `hammer2_inode` on any queue, so nothing above

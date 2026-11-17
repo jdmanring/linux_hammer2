@@ -550,8 +550,8 @@ disk, where it cost 84 us when it committed nothing
 The directory's `fsync` came with it. `hammer2_dir_fops` had none, so the
 VFS answered `EINVAL`, where DragonFly's one vop table serves directories
 with the same function. Added alone it is a false acknowledgment: with
-the directory `fsync` and not the commit, xfstests generic/065 read three
-links and a file missing after the power cut where it had stopped on
+the directory `fsync` and not the commit, xfstests generic/065 read five
+links and two files missing after the power cut where it had stopped on
 `EINVAL` before.
 
 ## Reading the kernel, not guessing at it

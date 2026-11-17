@@ -26006,7 +26006,8 @@ each output naming its module's hash: the skip arm lost 30 of 30 marked
 records, the alternate arm 23 of 30, and the late arm 0 of 23 while 333
 callers in 48 commits were marked covered by a commit that read their
 ticket too late (`conc-replay-{skip,alternate,late}-e8864cb8.out`). The
-late ordering is as invisible to this reading as it was at `ffdb11db`.
+replay's marks cannot see the late ordering, as at `ffdb11db`; only the
+mutant's own count of wrongly covered callers shows it.
 A first attempt on `h2release-7.3tls` ended in the guest's OOM killer
 five seconds into the skip arm: dm-log-writes keeps a page per logged
 write until a flush (`drivers/md/dm-log-writes.c:228`, `:284`), the
