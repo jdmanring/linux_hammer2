@@ -25950,3 +25950,97 @@ reading is retaken at the next tip below with make's own lines kept;
 the `neighbour.h` assertion, the same sets by file, function and message
 as at `4e3509d3` (`final-instruments-compare-2e366c82.out`); the compile
 database holds 24 entries, as `hammer2-y` names 24 objects.
+
+## fsync commits the volume, review round 2, 2026-11-17
+
+The series to `f37633e3` went to a second review on a fresh brief
+(`p7-notes/crash-instrument/review-fsync-round2.md`, FIX-FIRST: 3
+defects, 3 gaps, 6 nits); the first dispatch of that round ended when its
+model chain failed and left no file. Each finding was read at its line;
+`review-fsync-round2-dispositions.md` beside it records what was applied,
+what was refused and why. Outputs below are in `p7-notes/crash-instrument/`
+and were taken on `h2release-7.3tls` unless named otherwise.
+
+The buffer path. `7f60cd99` offered a dio held in the port's own buffer
+back to the page cache at every drop of a dirty dio, which copies the
+whole block, and when the page cache refuses it, as it always does under
+`io_buf_only=1`, writes it synchronously, under the dio's lock and on a
+reader's drop as on a writer's. `e8864cb8` keeps the folio mark at every
+drop and moves the buffer's push to the volume flush: before its
+writeback it pushes each dio still referenced, dirty and held in a
+buffer, once, gated on a per-device count of such dios, so the walk is
+skipped unless the page cache refused a block or `io_buf_only` is set.
+
+What the probe could not separate, and the reading that does.
+`sroot-probe.sh` read the block after the writeback only; it now also
+reads the super-root dio before the writeback and counts the hazard,
+referenced and `DIO_DIRTY` with its folio clean. On the control
+`4e3509d3`, three runs: 11 mismatches and 11 hazards, every mismatch's
+earlier state 1 reference, `DIO_DIRTY` set and the folio clean, each
+run's hazards equal to its mismatches, and every run left a flush
+boundary that did not mount (`sroot-probe-control-4e3509d3-snap.out`).
+On `e8864cb8`, six runs, three of them with the `sync` loop: 0 and 0 in
+at least 8448 checks, 17330 flush boundaries mounted
+(`sroot-probe-fix-e8864cb8.out`, `-fix-syncloop-e8864cb8.out`). In
+buffer mode the control read 0 hazards in at least 2176 checks
+(`sroot-probe-control-bufonly-4e3509d3.out`): that mode could not fail
+in the window, and its fix arm's zero is not a reading. So the probe
+gained a mode that drives the state instead of waiting for it:
+`H2_PROBE_HOLD=1` keeps a reference on each commit's super-root block
+until the next commit, which gives a commit landing in the same block
+another holder across its writeback. Two runs per arm: the control
+2322 mismatches in at least 2496 checks in folio mode and 1746 in at
+least 1920 in buffer mode, every mismatch a commit in the held block;
+the fix 0 in at least 2880 checks with at least 2607 commits in the held
+block, and 0 in at least 1856 with at least 1669 in buffer mode
+(`sroot-probe-hold-{control,fix}-*`). In one buffer-mode control run the
+replays still mounted, since the probe's own release of the held block
+was its last drop and wrote the buffer before the header; the probe's
+count is the reading there, not the replay. The hazard count is not a
+reading in buffer mode, since the push writes the block and leaves the
+dio dirty and held in its buffer.
+
+The ticket order at the tip. The controls `conc-replay.sh` reads them by
+were last run at `ffdb11db`. Rerun at `e8864cb8` on `h2debug-7.3tls`,
+each output naming its module's hash: the skip arm lost 30 of 30 marked
+records, the alternate arm 23 of 30, and the late arm 0 of 23 while 333
+callers in 48 commits were marked covered by a commit that read their
+ticket too late (`conc-replay-{skip,alternate,late}-e8864cb8.out`). The
+late ordering is as invisible to this reading as it was at `ffdb11db`.
+A first attempt on `h2release-7.3tls` ended in the guest's OOM killer
+five seconds into the skip arm: dm-log-writes keeps a page per logged
+write until a flush (`drivers/md/dm-log-writes.c:228`, `:284`), the
+skip arm issues none after its first commit, and the release build's
+writers outran 3.7 GB; the report put about 3.4 GB in neither slab nor
+page cache. The guest boots with an 8 MiB kernel ring since this round
+(it was 128 KiB), which every log count after it reads.
+
+Without the guest, at `e8864cb8` against `linux-7.3-tls`: `make W=1`
+compiled 24 objects with no warning, make's own lines kept in the file
+(`final-w1-e8864cb8.out`); `analyze.sh` 8 candidates and `smatch.sh` 15,
+the same sets by file, function and message as at `4e3509d3`
+(`final-instruments-compare-e8864cb8.out`, by `instruments-compare.py`);
+the compile database 24 entries. `test-checkpatch.sh` moved from 1679
+to 1680 at `7ea5758b`, which the commit before it had not run: the
+prototype `e8864cb8` added leaves its argument unnamed as every
+prototype in `hammer2.h` does, and the baseline records it.
+
+The closing readings at `7ea5758b`, whose module source is that of
+`e8864cb8`, each in `final-<build>-<reading>-7ea5758b.out`, the tree
+line reading 0 uncommitted paths and the guest's ring 8 MiB. On
+`h2debug-7.3tls`: the flakey tests, 51 of 51 executed passed, 13 not run
+for a feature, generic/483 expunged; the freeze probe blocked in 5 of 5
+rounds; `conc-crash.sh` 3 rounds, 25850 records checked, 0 missing;
+`storm.sh`, `test-enospc.sh` as root and as a user, and
+`test-fixtures.sh` with 0 failures; `fuzz-mount.sh` with
+`H2_FUZZ_WRITE=1` over 50 images, 40 mounted, 10 refused, 0 faulted, 0
+with a kernel report; `cluster-sync.sh` 60 of 60, kmemleak reporting
+nothing of hammer2's; `conc-replay.sh` three runs, 90 marks with no
+record missing and 6812 flush boundaries all mounted;
+`hpanic-contain.sh` knob 2, 5 of 5, its knob 0 control, 4 of 4, and knob
+3, 9 of 9. On `h2kasan-7.3tls`: the flakey tests, 51 of 51;
+`conc-crash.sh` 16638 records checked, 0 missing; `storm.sh`,
+`test-enospc.sh` both ways and `test-fixtures.sh` clean;
+`conc-replay.sh` 90 marks with no record missing and 3372 flush
+boundaries mounted. The guest's log after each batch held no KASAN,
+UBSAN, `BUG:`, `WARNING:`, lockdep or hung-task line.
