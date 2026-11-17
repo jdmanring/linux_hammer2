@@ -292,8 +292,8 @@ echo "lockdep ceiling \$(dmesg | grep -c 'BUG: MAX_LOCKDEP')"
 dmesg | sed -n '/possible circular locking\|held lock freed\|MAX_LOCKDEP\|unlock balance\|possible recursive locking\|inconsistent lock state/,+160p' | head -170 | sed 's/^/lockdep: /'
 grep -E 'lock-classes|direct dependencies|dependency chains|stack-trace entries' /proc/lockdep_stats | sed 's/^ */lockdep_stats: /'
 echo "kmsg lines \$(dmesg | wc -l)"
-echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
-dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
+echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure\|BUG: KASAN')"
+dmesg | grep -m1 -A30 'cut here\|page allocation failure\|BUG: KASAN' | head -32
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST
 echo "  built from $built, $N files under $FAN directories on a $SIZE volume"

@@ -342,8 +342,8 @@ echo "hammer2 folio_changed \$(cat /sys/module/hammer2/parameters/folio_changed 
 # for.  Printed, not judged: it is a measurement, not a threshold.
 echo "hammer2 iohash_waits \$(cat /sys/module/hammer2/parameters/iohash_waits 2>/dev/null || echo unavailable)"
 umount /mnt/h2; echo "second umount exit \$?"; umount /mnt/e4; umount /mnt/bt
-echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
-dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
+echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure\|BUG: KASAN')"
+dmesg | grep -m1 -A30 'cut here\|page allocation failure\|BUG: KASAN' | head -32
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST
 echo "  built from $built, a $MIB MiB file on a ${vol} MiB volume, ext4 beside it"

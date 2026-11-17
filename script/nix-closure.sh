@@ -268,9 +268,9 @@ umount /mnt/h2; echo "second umount exit \$?"
 umount /mnt/sq; [ $erofs = 1 ] && umount /mnt/er
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
 echo "lockdep ceiling \$(dmesg | grep -c 'MAX_LOCKDEP')"
-echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')"
+echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure\|BUG: KASAN')"
 dmesg | grep -n 'cut here\|page allocation failure\|MAX_LOCKDEP\|lockdep is turned off\|^\[.*\] WARNING:\|BUG:' | sed 's/^/warning at /'
-dmesg | grep -m1 -A30 'cut here\|page allocation failure' | head -32
+dmesg | grep -m1 -A30 'cut here\|page allocation failure\|BUG: KASAN' | head -32
 dmesg > /tmp/closure-dmesg.txt
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST

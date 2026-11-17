@@ -99,6 +99,11 @@ make -s KDIR="$KDIR" >/dev/null 2>&1 || {
 	echo "latency: COULD-NOT-RUN: the module did not build" >&2; exit 2; }
 KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "latency: COULD-NOT-RUN: no $KO" >&2; exit 2; }
+# Which source the numbers are of, as million-tree.sh prints it, with the
+# module's own hash beside it: a reading with no tree line names nothing.
+built=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+[ -z "$(git status --porcelain -- src 2>/dev/null)" ] || built="$built-dirty"
+echo "built from $built, module $(sha256sum < "$KO" | cut -c1-16), against $KDIR"
 
 # The exerciser, compiled on the host and run on the guest.  Static, since
 # the guest need not carry a matching libc.
@@ -246,7 +251,7 @@ while [ "$n" -lt "$REPEAT" ]; do
 				sync; echo 3 > /proc/sys/vm/drop_caches
 				dmesg -C
 				/tmp/h2lat /mnt/$fs $fs $MIB $OPS 2>&1
-				echo \"kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure')\"
+				echo \"kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure\|BUG: KASAN')\"
 			else
 				echo \"SKIP /mnt/$fs is not a mount point, so no reading was taken\"
 			fi
