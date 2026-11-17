@@ -1429,10 +1429,10 @@ hammer2_vop_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
  * before the sync began, so the sync commits it, and a caller whose
  * ticket a finished commit covered returns without running another.
  * Without this each fsync ran its own sync behind the others, and sixteen
- * writers committed no faster than one.  A commit that fails covers
- * nothing, so each waiter then tries its own.  Returns the VFS's negative
- * errno; a commit's error is on the superblock as well, where a caller
- * whose ticket was covered reads it.
+ * writers committed no faster than one.  A commit that returns an error
+ * covers nothing, so each waiter then tries its own; the PFS sync returns
+ * none of its flushes' errors, which reach a covered caller through the
+ * superblock.  Returns the VFS's negative errno.
  */
 static int
 hammer2_fsync_commit(hammer2_pfs_t *pmp)
@@ -1469,7 +1469,7 @@ hammer2_fsync_commit(hammer2_pfs_t *pmp)
  * Linux: and then this commits the PFS, because fsync(2) on Linux means
  * the file survives a crash once the call returns, and upstream's flush
  * leaves the inode unreachable from the volume header until the next
- * sync.  xfstests' dm-flakey tests read it: 28 lost state fsync had
+ * sync.  xfstests' dm-flakey tests read it, losing state fsync had
  * acknowledged.  DragonFly 6.4.2 loses an fsync'ed file across a power
  * cut the same way, and its comment above says so; the BSD ports carry
  * upstream's body unchanged.  The commit is the one ->sync_fs runs, the

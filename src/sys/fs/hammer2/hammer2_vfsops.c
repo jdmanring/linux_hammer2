@@ -3102,11 +3102,11 @@ again:
  * metadata side.  A flush that cannot make room for a PFS root's update
  * on a full volume fails there and nowhere a user reads, so the error is
  * recorded where the kernel's own callers look for it: on the inode's
- * mapping when it has one, on the superblock otherwise.  The PFS root's
- * flush is the commit itself, the one that writes the volume header, so
- * its error goes to the superblock as well: on the root directory's
- * mapping alone it reached neither syncfs(2) nor an fsync of any other
- * file.
+ * mapping when it has one, on the superblock otherwise.  The kernel's
+ * mapping_set_error() records it on the superblock in either case, and
+ * the superblock's sequence is what syncfs(2) reads and what fsync(2)
+ * reads for the commit it runs, since hammer2_vfs_sync_pmp() returns no
+ * error of its own.
  */
 static void
 hammer2_sync_error(hammer2_pfs_t *pmp, hammer2_inode_t *ip, int error)
@@ -3118,7 +3118,7 @@ hammer2_sync_error(hammer2_pfs_t *pmp, hammer2_inode_t *ip, int error)
 	err = hammer2_vfs_errno(hammer2_error_to_errno(error));
 	if (ip->vp)
 		mapping_set_error(ip->vp->i_mapping, err);
-	if ((ip->vp == NULL || ip == pmp->iroot) && pmp->mp)
+	else if (pmp->mp)
 		errseq_set(&pmp->mp->s_wb_err, err);
 }
 
