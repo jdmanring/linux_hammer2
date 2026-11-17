@@ -25555,9 +25555,10 @@ header already relied on.
 The changes. `28424c54` gives directories `hammer2_vop_fsync()`.
 `6cbde3dc` has `fsync` run `hammer2_vfs_sync_pmp()` and
 `hammer2_vfs_sync_devs()` after its own flush, under
-`sb_start_intwrite()`, sets the PFS root's sync error on the superblock as
-well as its mapping, and has `fsync` read the superblock's error sequence
-through the descriptor's cursor. `6e0eab75` issues a cache flush after the
+`sb_start_intwrite()`, adds a leg to `hammer2_sync_error()` setting the
+PFS root's sync error on the superblock, which did nothing (below), and
+has `fsync` read the superblock's error sequence through the descriptor's
+cursor. `6e0eab75` issues a cache flush after the
 header write. `10578ac3` shares one commit among concurrent callers.
 `7ae7bcb8` retires the `DEFER` over `hammer2_vfs_sync_devs()`, whose
 trigger the latency run below met and whose premise the commit removed.
@@ -25569,8 +25570,8 @@ The directory `fsync` alone, at `28424c54` on `h2debug-7.3tls`
 generic/557 passed, and no `.out.bad` holds `Invalid argument` where run 2
 had 19. The 18 others now fail on the state, which is the review's point
 that a directory `fsync` without the commit is a false acknowledgment:
-generic/056's file is absent, and generic/065 reads three links and a
-file missing.
+generic/056's file is absent, and generic/065 reads five links and two
+files missing (its `.out.bad`, lines 11 to 17).
 
 With the commit and the header flush, at `6e0eab75`: 52 ran and 51 passed
 on `h2debug-7.3tls` (`flakey-run4-commit-20261116.out`, results
@@ -25617,12 +25618,15 @@ other work, and its I/O pressure is printed beside each run; a run under
 with it, against ext4's 3387 and 3403 in the same runs
 (`fsync-cost-nogroup-20261116.out` at `6e0eab75`,
 `fsync-cost-group-20261116.out` built from the source committed as
-`10578ac3`, whose tree line reads the commit beneath it). Before the
+`10578ac3`, whose tree line reads the commit beneath it, since
+`fsync-cost.sh` then printed no mark for an uncommitted source). Before the
 commit it was 84 us (`fsync-cost-20261116.out` at `2d97223e`). Writers
 on their own files, each writing 4 KiB and calling `fsync`, committed 263,
 273 and 254 times a second at 1, 4 and 16 threads without the shared
 commit, and 272, 528 and 1344 with it; ext4 beside them 289, 1079 and
-2036. `latency.sh` at `10578ac3` (`latency-group-20261116.out`): median
+2036. `latency.sh` on the source committed as `10578ac3`
+(`latency-group-20261116.out`, which carries no tree line, since
+`latency.sh` printed none; the reading is retaken below with one): median
 write-and-`fsync` 3755 us against ext4's 3653 and btrfs's 4092, a batch of
 eight writes and one `fsync` 4371 us against 4201 and 4374, `randread4k`
 8 us against 2 and 3.
@@ -25643,10 +25647,13 @@ A citation left stale. The comment at the top of
 document has held no such entry since its rewrite as a status page
 (`ff6a8e61`). Not changed here.
 
-The closing readings, on the final source at `7ae7bcb8`, each in
+The first closing readings, on `7ae7bcb8`'s source, each in
 `p7-notes/crash-instrument/final-<build>-<reading>-20261116.out` and
-driven by `final-batch.sh` beside them. The 65 tests ran with generic/483
-expunged by the exclude list, so 64 were named: on `h2debug-7.3tls` and on
+driven by `final-batch.sh` beside them, are superseded by those of the
+section after this one. The 65 tests ran with generic/483 expunged by an
+exclude-list entry that was not yet committed (it went into `ffdb11db`);
+the batch's tree line read `src/` alone, so its output names `7ae7bcb8`
+without the edit. 64 were named: on `h2debug-7.3tls` and on
 `h2kasan-7.3tls` alike, 51 ran, 51 passed and 13 were not run for a
 feature the port lacks, and the harness's log line, which now counts
 sanitizer reports, read zero; the guest's log read directly after each
@@ -25668,3 +25675,161 @@ the same 15 findings as `p7-notes/h1-smatch-head-c38433d.log`, compared
 by file, function and message with line numbers stripped, beside the same
 44 copies of the `include/net/neighbour.h` assertion its sparse layer
 fails on.
+
+The shared commit under a power cut. No reading above runs concurrent
+`fsync` callers into a cut, so the path where a caller returns on a
+commit another ran was untested. `conc-crash.sh` (with `fsync-crash.c`,
+both in `p7-notes/crash-instrument/`) puts a fresh volume under
+dm-flakey, runs writers that each append numbered 4 KiB records to their
+own file and log a record to tmpfs once its `fsync` returns, reads the
+log's length after a set time, switches the table to drop every write
+with `suspend --nolockfs` as xfstests' `_load_flakey_table` does, and
+after a remount requires every record logged before the read. On
+`h2debug-7.3tls` at `ffdb11db`, 3 rounds of 8 writers for 10 s: 7889,
+9018 and 8120 records checked, 0 missing, the guest's log clean
+(`conc-crash-final-debug-20261116.out`). The control is a build whose
+shared commit, once it has run, marks every later caller covered: 88738
+of 88745, 95359 of 95367 and 99811 of 99818 records missing
+(`conc-crash-control-skip-20261116.out`). A second build reads the newest
+ticket after the sync instead of before it, which covers callers whose
+flush ended while the sync ran; it lost nothing in 5 rounds of 16 writers
+over 83236 records (`conc-crash-control-late-20261116.out`), so this test
+does not resolve that ordering, and the reason it does not is unread. The
+shipped code reads the ticket before the sync starts.
+
+## fsync commits the volume, review round 1, 2026-11-16
+
+The series to `ffdb11db` went to review on a brief that withheld the
+author's conclusions (`p7-notes/crash-instrument/review-fsync-round1.md`,
+FIX-FIRST: 3 defects, 6 gaps, 4 nits). Each finding was read at its line
+before it was applied. Outputs below are in `p7-notes/crash-instrument/`.
+
+The superblock leg. `6cbde3dc` made `hammer2_sync_error()` call
+`errseq_set()` on the superblock for the PFS root, on the stated ground
+that the root's error reached only the root directory's mapping. The
+kernel's `mapping_set_error()` records every error on the superblock as
+well (`include/linux/pagemap.h:238-255`), so the leg did nothing and the
+ground was false. `db03a805` removes it, and the comments and
+`README.porting.md` now name the route that was missing, `fsync` reading
+the superblock's sequence, which is the only one a failed commit has,
+since `hammer2_vfs_sync_pmp()` returns no error.
+
+The freeze window. The write reference `fsync` took covered the commit
+alone. Upstream's inode flush before it runs in a normal transaction,
+which a freeze's own sync does not wait for, so a freeze could reach
+`->freeze_fs` with that flush still writing. `freeze-window.sh` holds the
+flush open with a 3 s `msleep()` after the transaction opens, in a scratch
+copy of the module, and starts `fsfreeze -f` 1 s into the `fsync`. With
+the reference around the commit only, the control, the freeze completed
+during the held flush in 5 of 5 rounds, at 1036 to 1060 ms
+(`freeze-window-control-13e22c95.out`); with it spanning the whole of
+`fsync`, `13e22c95`, the freeze waited out the flush in 5 of 5, at 3016
+to 3067 ms (`freeze-window-fix-13e22c95.out`). A first version compared
+the freeze's return with the `fsync`'s, which race to the millisecond once
+the reference is released, and is kept as `-v1-ordering`.
+
+What each descriptor is told. `fsync-errseq.sh` (with `fsync-errseq.c`)
+writes files, opens descriptors, makes dm-flakey fail every write for one
+`fsync`, and reads every later call, on HAMMER2 and on ext4 on the same
+target, on `h2kasan-7.3tls` at `5e010f9d`
+(`fsync-errseq-kasan-5e010f9d.out`). Both report `EIO` to the failing
+`fsync`, to the first `syncfs` on a descriptor opened before it, and to
+nothing after. HAMMER2 also reports it once to an `fsync` of an unrelated
+file on a descriptor opened before the failure, where ext4 reports 0, and
+reports 0 to a `syncfs` on the failing `fsync`'s own descriptor, where
+ext4 reports `EIO`, because that `fsync` has already advanced the
+descriptor's cursor. No descriptor misses a failure it has not been told
+of. The cursor is kept over a commit-scoped error: by a reading of
+`hammer2_vfs_sync_devs()`, a waiter whose commit failed hears of it this
+way and no other, since the failed commit leaves `fsync_done` unmoved and
+the waiter's own commit finds the device's error already consumed. The
+log held the block layer's lost async page writes and the inode flush's
+`fsync_error 5` line, and no KASAN, `BUG:` or `WARNING:` line.
+
+The sanitizer counts. A KASAN report prints no cut-here marker
+(`mm/kasan/report.c:247` prints `BUG: KASAN:` first; `CUT_HERE` occurs
+nowhere under `mm/kasan/`), and UBSAN prints one (`lib/ubsan.c:223`).
+`nix-closure.sh`, `throughput.sh`, `million-tree.sh` and `latency.sh`
+counted cut-here lines and page allocation failures only, the class
+`205498cc` fixed in four others; `1a915d1d` adds `BUG: KASAN` to theirs.
+`log-count-control.sh` takes each of the eight scripts' count line out of
+the shipped text, runs it over a planted log, and reads the result through
+the script's own clean-log pattern: a benign log passes, a KASAN report
+and a UBSAN report each fail, all eight at `4e3509d3`
+(`log-count-control-4e3509d3.out`, 30 cells); at `ffdb11db` the
+four siblings pass over the KASAN report
+(`log-count-control-head-ffdb11db-20261116.out`), which is the defect
+read where it executes.
+
+The export reaches `fsync`. `nfsd-export.sh` counted the decode members
+and nothing of the commit; `5e010f9d` traces `hammer2_vop_fsync` as well
+and requires a call on each export. On an nfsd build of the kernel of
+record (`h2debug-7.3tls`'s configuration with nfsd and the NFS client
+added, `build-nfsd-kernel.sh`, booted as `h2nfsd-7.3tls` by
+`install-nfsd-kernel.sh`), both exports reached it once, 12 checks passed
+and the log was clean (`final-nfsd-export-5e010f9d.out`).
+
+Two readings, not runs. A read-only remount (`hammer2_reconfigure()`)
+syncs and then sets `rdonly`, which `fsync` tests without a lock, so an
+`fsync` can pass the test and commit after the remount; the remount's
+sync has left nothing dirty, so that commit writes nothing, and the race
+predates this series. The candidate deadlock in `README.status.md`'s
+`hammer2_inode.c` row, the synchronization pass holding a slave chain
+while it waits for an inode lock, gains no new order from `fsync`'s
+commit: `hammer2_vop_fsync()` drops the inode lock before it, and
+`generic_write_sync()` runs after `inode_unlock()`. The commit runs the
+PFS sync more often, which is more exposure to the candidate and not a new
+shape of it; `cluster-sync.sh` passed below.
+
+The closing readings, on the module source of `13e22c95`, which is also
+that of `5e010f9d` and `4e3509d3` (the commits after it change scripts and
+documents), each in `final-<build>-<reading>-<tree>.out` and driven by
+`final-batch.sh`, whose tree line now counts uncommitted and untracked
+paths under `src/`, `test/` and `script/` and read 0 on every batch. On
+`h2debug-7.3tls` at `13e22c95`: the 64 flakey tests, 51 ran and 51 passed,
+13 not run for a feature, generic/483 expunged; the freeze probe blocked
+in 5 of 5 rounds and returned 0 after the thaw; the block trace reads a
+flush after the header in both cases; the preallocation probe reads no
+extent past the HAMMER2 file's end where ext4 reads one; `conc-crash.sh`
+3 rounds of 8 writers, 23268 records checked, 0 missing; `storm.sh` every
+cell whole and `fsck_hammer2` clean; `test-enospc.sh` as root and with
+`H2_ENOSPC_USER=1`, a 2 GiB fill with 0 failures each; `test-fixtures.sh`
+11 images, 0 failures; `fuzz-mount.sh` with `H2_FUZZ_WRITE=1` over 50
+images, 40 mounted, 10 refused, 0 faulted, 0 with a kernel report;
+`cluster-sync.sh` 60 of 60, kmemleak reporting nothing of hammer2's. The
+guest's log after the batch held no KASAN, UBSAN, `BUG:`, `WARNING:`,
+lockdep or hung-task line. On `h2kasan-7.3tls` at `4e3509d3`: the flakey
+tests the same, 51 of 51; `conc-crash.sh` 7305 records, 0 missing;
+`storm.sh`, `test-enospc.sh` both ways and `test-fixtures.sh` clean; the
+log after the batch the same. A first KASAN batch at `5e010f9d` was
+stopped during its flakey tests to read the error reporting first, and
+is kept as `-stopped`. Without the guest, at `4e3509d3` against
+`linux-7.3-tls`: `make W=1` printed no warning; `analyze.sh` printed 8
+candidates and `smatch.sh` 15 findings outside the `neighbour.h`
+assertion, each the same set by file, function and message as the
+2026-11-16 runs (`final-instruments-compare-4e3509d3.out`); the compile
+database holds 24 entries, as `hammer2-y` names 24 objects.
+
+Cost on `h2release-7.3tls` at `4e3509d3`, three runs of `fsync-cost.sh`,
+which now also times `fdatasync` and writes through an `O_DSYNC`
+descriptor, with the host's I/O pressure printed beside each
+(`fsync-cost-4e3509d3.out`, `-r2`, `-r3`). One write and `fsync`: 3719,
+2895 and 2990 us at the median, ext4 3468, 2849 and 21932. HAMMER2's
+`fdatasync` and `O_DSYNC` write cost what its `fsync` does (3562 and
+3615, 2915 and 2715, 2949 and 2940), since `datasync` is ignored and an
+`O_DSYNC` write ends in `generic_write_sync()`; ext4's overwrite under
+`fdatasync` skips its journal commit, and read 1236 and 1978 us in the
+two runs where its tail was quiet, about half HAMMER2's. ext4
+overwrites the block in place; HAMMER2 writes the new data elsewhere, so
+the pointer to it is metadata the data cannot be found without, and
+`fdatasync` there needs the commit too. Whether a narrower commit than
+the whole PFS could serve it is the performance survey's question. The concurrent rates
+moved with the host's disk more than with the module: one writer 129, 40
+and 266 a second, ext4 245, 294 and 264; sixteen 1156, 1410 and 1572,
+ext4 1688, 2157 and 2196, under `full avg10` between 0.01 and 7.45. They
+are read as a range and no single figure from them is written into a
+document. `latency.sh`, now printing its tree and module hash
+(`latency-4e3509d3.out`; a first attempt with the guest running exited 2
+and is kept as `-guest-up`): median `randread4k` 11 us against ext4's 2
+and btrfs's 2, write-and-`fsync` 3017 us against 3515 and 4045, a batch
+of eight writes and one `fsync` 4114 us against 4242 and 4065.
