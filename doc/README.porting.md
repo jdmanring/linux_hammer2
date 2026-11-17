@@ -506,7 +506,20 @@ descriptor opened before any failure reports it once on its next `fsync`,
 whichever file it names and whichever commit failed; no other in-tree
 filesystem reads the superblock's sequence from `->fsync`, and this
 over-reporting is the port's choice, since a commit covers the whole PFS.
-No run here drives a failed commit through a second descriptor.
+Measured with a device that fails every write for one `fsync`, against
+ext4 on the same target (`fsync-errseq.sh`; the record, "fsync commits
+the volume, review round 1"): both report `EIO` to the failing `fsync`,
+to the first `syncfs` on a descriptor opened before it and to nothing
+after; the port also reports it once to an `fsync` of an unrelated file
+on an older descriptor, where ext4 reports nothing, and does not report it
+to a `syncfs` on the failing `fsync`'s own descriptor, which ext4 does,
+because that `fsync` has already advanced the cursor. Neither drops a
+failure on a descriptor that has not been told of it. The cursor is kept
+over a commit-scoped error because a waiter whose commit failed hears of
+it this way and no other: the failed commit leaves `fsync_done` where it
+was, and the waiter's own commit then finds the device's error already
+consumed by `hammer2_vfs_sync_devs()`, which is a reading of that
+function, not a run.
 And the volume header is followed by a second device cache flush, since
 the flush before it orders only what the header points at, and a drive
 with a volatile cache holds the header itself until a later flush. On a
