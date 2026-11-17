@@ -448,6 +448,11 @@ is flagged once `sb_end_intwrite()` does, which running the recorded
 checker on both versions of the file shows. No category is new and
 nothing was fixed rather than baselined.
 
+1,679 to 1,680 when the volume flush came to push dios held in the
+port's own buffer: the prototype of `hammer2_io_push_bufs()` in
+`hammer2.h` leaves its argument unnamed, as every prototype in that file
+does by the BSD style the tree keeps. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

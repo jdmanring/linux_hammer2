@@ -307,6 +307,9 @@
 # sb_end_intwrite() sits above it where a closing brace did (read by
 # running the checker on both versions of the file). No category is new.
 # See README.kernel-style.md.
+# 1,679 to 1,680: the prototype of hammer2_io_push_bufs() in hammer2.h
+# leaves its argument unnamed, as every prototype there does. No category
+# is new. See README.kernel-style.md.
 23 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -332,7 +335,7 @@
 1 do not initialise statics to 0
 25 do not use assignment in if condition
 3 else is not generally useful after a break or return
-527 function definition argument 'X' should also have an identifier name
+528 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
 252 please, no spaces at the start of a line
