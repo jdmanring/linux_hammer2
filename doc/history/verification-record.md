@@ -26045,3 +26045,97 @@ record missing and 6812 flush boundaries all mounted;
 `conc-replay.sh` 90 marks with no record missing and 3372 flush
 boundaries mounted. The guest's log after each batch held no KASAN,
 UBSAN, `BUG:`, `WARNING:`, lockdep or hung-task line.
+
+## Counts from a kernel ring that wrapped, 2026-11-17
+
+Twenty-one fleet scripts cleared the guest's kernel ring, ran, and
+counted reports (`WARNING`, `BUG:`, KASAN, UBSAN, lockdep) from what the
+ring held afterwards. The ring drops its oldest records first and
+nothing says it did, so a run that printed more than the ring holds
+counted its own tail and read clean over whatever had scrolled off. The
+guest's ring was the configs' 128 KiB, about 1,260 lines, until
+2026-11-16, when `conc-replay.sh`'s replay mounts wrapped it and a probe
+read 0 from nothing (the section on the volume header above); the guest
+has booted with `log_buf_len=8M` since.
+
+`8e7102aa` gives each of the twenty-one the same two lines on the
+guest: `echo h2ring-start > /dev/kmsg` on the line of every `dmesg -C`,
+and before each count `dmesg | grep -q h2ring-start && echo ring whole
+|| echo ring COULD-NOT-READ`. Since the ring drops oldest first, a
+marker still present means nothing written after it was lost. A
+missing `ring whole` ends the run with exit 2 after any failure the
+surviving lines showed, so a report the tail still holds is a failure
+and a wrap is never a pass. The text has no `$` and no quote, because
+the count sites sit in quoted heredocs, unquoted ones and single-quoted
+`ssh` arguments, and one literal reads the same in all three.
+`test-inventory.sh` holds every script that clears the ring or counts a
+report to that literal, refuses a clear without the marker, a script
+without the check and one without the refusal, and carries six mutant
+controls of the first ring reader, each failing for its own reason; at
+`8e7102aa^` the same rule refuses all twenty-one.
+
+Five scripts count from a stream of `/dev/kmsg` (`cluster-sync.sh`,
+`cluster-wire.sh`, `cluster-dmsg.sh`, `sync-empty-base.sh`,
+`test-enospc.sh`) and are exempt under a ledger row. A run of theirs
+outgrows any ring many times over (the kept `cluster-run-*.klog` files
+since 2026-10-15 run from 39 to 144 MB), so a marker in the ring cannot
+speak for the stream, and the stream has its own loss: `dmesg -w`
+retries the read the kernel refuses when records were overwritten
+before it read them (util-linux 2.42.4 `sys-utils/dmesg.c`,
+`read_kmsg_one()`), and `cat`, which `test-enospc.sh` uses, stops there
+with its error discarded. A reader that falls a whole ring behind loses
+records and no line says so. `cluster-wire.sh` also counts KASAN and
+two refusal lines from the ring itself at `:598`, `:836` and `:848`.
+
+Found beside it:
+
+- `test-fixtures.sh`, a gate, failed on the kernel log only when lockdep
+  had turned itself off. A WARN leaves lockdep on (`kernel/panic.c`,
+  `__warn()`: "Just a warning, don't kill lockdep") and UBSAN taints
+  nothing, so a `WARN_ONCE` provoked by a fixture read, which is the
+  OS half's own rule for a recoverable error, passed the gate. It now
+  counts cut-here lines (a WARN's and UBSAN's) and KASAN reports after
+  the last unmount, and an unread count fails.
+- `bulkfree.sh` cleared the ring at each bulkfree pass, so the run's
+  one report count, after the second pass, never saw the first write
+  set or the first pass. `sync-alloc-fault.sh` and `sync-io-fault.sh`
+  clear the ring to scope a fault window and erased the base setup's
+  reports (and in `sync-io-fault.sh` the arming's) before any count.
+  Each phase is now counted before the clear that ends it, and
+  `bulkfree.sh` scopes each pass by a marker in place of a clear.
+- `crash-matrix.sh`, `cut-flush.sh`, `f4-roundtrip.sh`,
+  `pfs-domains.sh`, `bulkfree.sh` and `fuzz-mount.sh` counted
+  `WARNING\|BUG\|hung task`, `root-boot.sh` `warn\|bug\|oops` and
+  `ccms-lockdep.sh` `BUG: KASAN`, none of which a UBSAN report matches
+  (`lib/ubsan.c`, `ubsan_prologue()`, prints a cut-here line and
+  `UBSAN:`). Each now does.
+- `cluster-quorum.sh` wrote its own start marker and, when it was gone
+  from the kept log, printed that the counts "may be short" and could
+  still exit 0. That is now a could-not-read.
+
+What this reaches back to: a clean count from one of these scripts
+before 2026-11-16 read a ring of about 1,260 lines, and whether a given
+run printed more than that is recorded only where the run printed its
+`kmsg lines`, which the recorded ones did at 17 or fewer. The quick
+group's `xfstests.sh` runs counted the whole run's log, every test's,
+and are the readings most likely to have read a wrapped ring; the next
+quick-group run reads its marker. `test-fixtures.sh` readings before
+`8e7102aa` say nothing about WARN or UBSAN reports; the fsync series'
+closing batches read the guest's log for them separately, as the
+section above says.
+
+The control, `ring-flood.sh` (`ace0ec68`), on `h2debug-7.3tls` through
+`xfstests.sh generic/001`, each arm in `ring-flood-<arm>-ace0ec68.out`:
+the module `1c0e6d00` built against `linux-7.3-tls`, the tree line
+reading `ace0ec68` clean over `src`, `test` and `script`, the guest's
+ring 8 MiB (`printk: log buffer data + meta data: 8388608`). Without the
+file, `generic/001` passed, `ring whole`, the log line all zeros,
+exit 0. With the plant alone: `ring whole`, `kasan 1`, exit 1, one
+planted line in the ring after the run. With the plant and the flood:
+`ring COULD-NOT-READ`, the log line all zeros, the refusal printed,
+exit 2, and no planted line left in the ring. With the plant and the
+flood on a copy of `xfstests.sh` without its refusal line: the same
+zeros and exit 0, which is the run the marker exists to stop, the
+planted report erased and the run passing. Each arm read that the file
+fired once. The other twenty scripts carry the same literal, which the
+inventory gate holds them to; each is read on its next run.
