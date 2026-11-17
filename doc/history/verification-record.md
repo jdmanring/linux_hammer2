@@ -26157,3 +26157,34 @@ zeros and exit 0, which is the run the marker exists to stop, the
 planted report erased and the run passing. Each arm read that the file
 fired once. The other twenty scripts carry the same literal, which the
 inventory gate holds them to; each is read on its next run.
+
+A second review found that twenty of the scripts exited 1 on a failure
+before their exit 2 for a lost marker, so a check that reads a line's
+absence from the ring (the fault harnesses' landing proofs,
+`bulkfree.sh`'s pass statistics, `hpanic-contain.sh`'s device-in-error
+line, `seek-matrix.sh`'s held lines) would report a wrap as a defect
+the run never had. A marker still present at the last check means every
+count before it read a whole ring, so `3e2da8f2` puts the refusal
+first: a run whose ring wrapped exits 2, and the failures it printed are
+shown and are not its verdict. `cluster-quorum.sh`'s kept log missing
+its marker is a could-not-read there too. The same commit has the ring
+rule fail a clear after the first with no report count since the one
+before, the phase erasure fixed by hand in three scripts, and read
+`dmesg --clear` as a clear; a ninth control places a marked clear before
+the first check. Two findings were refused at their lines: that a ring
+verdict line ending in `|| true` discards the verdict (the assignment
+still runs, read in a shell), and that the rule wrongly fails a clear
+spelled other than `dmesg -C; echo h2ring-start > /dev/kmsg`, which is
+the one spelling it asks for. Four `kernel warnings` counters
+(`million-tree.sh`, `nix-closure.sh`, `throughput.sh`, `latency.sh`)
+read UBSAN through its cut-here line and needed no change; the six
+counters `8e7102aa` names as matching no UBSAN report are the ones that
+read neither.
+
+The control again at `3e2da8f2`, each arm in
+`ring-flood-<arm>-3e2da8f2.out` and the driver's log in
+`ring-flood-run-3e2da8f2.log`, the same module and the 8 MiB ring by its
+boot line: no file, exit 0, `ring whole`; the plant, exit 1, `kasan 1`,
+one planted line left; the plant and the flood, exit 2 with the refusal
+and no planted line left; the same on a copy without its refusal, exit
+0 over the erased plant.
