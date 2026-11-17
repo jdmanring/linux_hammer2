@@ -441,6 +441,13 @@ category is new and nothing was fixed rather than baselined.
 callers share, `hammer2_fsync_commit()`, returns `return (error);`. No
 category is new and nothing was fixed rather than baselined.
 
+1,678 to 1,679 when the freeze protection in `fsync` came to cover
+upstream's inode flush as well as the commit: `hammer2_vop_fsync()`'s
+closing `return (error1);`, unflagged while a closing brace sat above it,
+is flagged once `sb_end_intwrite()` does, which running the recorded
+checker on both versions of the file shows. No category is new and
+nothing was fixed rather than baselined.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

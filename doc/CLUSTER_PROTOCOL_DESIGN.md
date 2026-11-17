@@ -1324,7 +1324,7 @@ rather than from the design document alone.
   rewrites (`hammer2_vfsops.c:1926`, `:2811`, `:2841`);
   with it set, `fsync` returns 0 before the sync without reading the
   mapping's error (`hammer2_vnops.c:1494-1495`), and with it clear
-  `fsync` syncs and flushes the inode's chain (`:1500-1505`). ext4 sets
+  `fsync` syncs and flushes the inode's chain (`:1501-1506`). ext4 sets
   no `SB_RDONLY` at run time for this reason, keeping its own flag
   (`fs/ext4/super.c:742-749`); the port's one run-time flip sits inside
   `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3528`).

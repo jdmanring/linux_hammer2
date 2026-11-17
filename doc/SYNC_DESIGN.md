@@ -928,7 +928,7 @@ source before it was applied, and no lever-2 code precedes it.
    both read inside the root chain's lock, which is the lock the flush
    holds when it refreshes the slot (`hammer2_flush.c:1170-1177`). The
    slot can still be refreshed between the cut and the copy, by an
-   `fsync` of the PFS root directory (`hammer2_vnops.c:1504`) or any
+   `fsync` of the PFS root directory (`hammer2_vnops.c:1505`) or any
    other flush of the root; what that brings into the copy was written
    after the cut, stamped `G + 1`, and harmless to the proof. These are
    absolute readings, not deltas. The body's own work all follows the cut (the source root's

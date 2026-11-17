@@ -1474,11 +1474,11 @@ hammer2_fsync_commit(hammer2_pfs_t *pmp)
  * cut the same way, and its comment above says so; the BSD ports carry
  * upstream's body unchanged.  The commit is the one ->sync_fs runs, the
  * PFS sync and then the devices, shared by concurrent callers in
- * hammer2_fsync_commit(), so its cost is a sync's.  It is a
- * filesystem-internal write, held off by a freeze as ext4's and btrfs's
- * commits are, since hammer2_freeze_fs() stops only the syncer.  A
- * commit's error is the superblock's (hammer2_sync_error()), and each
- * descriptor reads it once, as syncfs(2) does.
+ * hammer2_fsync_commit(), so its cost is a sync's.  All of it, upstream's
+ * flush too, is a filesystem-internal write held off by a freeze, since
+ * hammer2_freeze_fs() stops only the syncer and a freeze's sync does not
+ * wait for a normal transaction.  A commit's error is the superblock's
+ * (hammer2_sync_error()); each descriptor reads it once, as syncfs(2) does.
  */
 static int
 hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
@@ -1493,6 +1493,7 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 		return (-EIO);
 	if (ip->pmp->rdonly)
 		return (0);
+	sb_start_intwrite(sb);	/* Linux */
 	hammer2_trans_init(ip->pmp, 0);
 
 	error1 = file_write_and_wait_range(file, start, end);	/* Linux */
@@ -1516,9 +1517,7 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 	 * own.
 	 */
 	if (error1 == 0) {
-		sb_start_intwrite(sb);
 		error1 = hammer2_fsync_commit(ip->pmp);
-		sb_end_intwrite(sb);
 		if (error1)
 			mapping_set_error(inode->i_mapping, error1);
 		error1 = file_check_and_advance_wb_err(file);
@@ -1527,6 +1526,7 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
 		if (error1 == 0)
 			error1 = error2;
 	}
+	sb_end_intwrite(sb);	/* Linux */
 	return (error1);
 }
 

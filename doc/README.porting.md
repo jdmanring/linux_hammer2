@@ -489,9 +489,13 @@ commit of one inode's path to the root would need the flush to confine
 itself to that path, which the carried flush has no means to do.
 
 Three things come with it. The commit is a filesystem-internal write, so
-it runs under `sb_start_intwrite()`, as ext4's and btrfs's commits do:
-`hammer2_freeze_fs()` stops only the syncer, and without the protection an
-`fsync` on a frozen volume committed under the freeze. A flush error in
+`fsync` runs under `sb_start_intwrite()`, as ext4's and btrfs's commits
+do: `hammer2_freeze_fs()` stops only the syncer, and without the
+protection an `fsync` on a frozen volume committed under the freeze. The
+protection starts before upstream's inode flush and not at the commit,
+because that flush runs in a normal transaction, which a freeze's own
+sync does not wait for, so a freeze arriving during it could complete and
+leave the flush writing to a frozen volume. A flush error in
 the commit is recorded by `hammer2_sync_error()` on the inode that failed,
 and the kernel's `mapping_set_error()` records it on the superblock too;
 `hammer2_vfs_sync_pmp()` itself returns no error (`error = 0; /* XXX */`,
