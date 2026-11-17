@@ -25652,7 +25652,7 @@ The first closing readings, on `7ae7bcb8`'s source, each in
 driven by `final-batch.sh` beside them, are superseded by those of the
 section after this one. The 65 tests ran with generic/483 expunged by an
 exclude-list entry that was not yet committed (it went into `ffdb11db`);
-the batch's tree line read `src/` alone, so its output names `7ae7bcb8`
+that batch's tree line read `src/` alone, so its output names `7ae7bcb8`
 without the edit. 64 were named: on `h2debug-7.3tls` and on
 `h2kasan-7.3tls` alike, 51 ran, 51 passed and 13 were not run for a
 feature the port lacks, and the harness's log line, which now counts
@@ -25845,12 +25845,20 @@ the super-root and `hammer2_get_tree` gave up reading it
 `2d97223e`, with a `sync` loop running beside the writers to supply the
 commits its `fsync` did not make, failed 3 of 3
 (`conc-flush-pre-2d97223e-r{1,2,3}.out`), so the defect is older than
-the series and the series reached it more often. One failing run's log
-and images are kept in `fixtures/lw-nomount-20261116-183147/`, and a
-decode of that log (`diagnosis-sroot-nomount.md`, read from the log and
-the source and not a run) found the header naming a 1 KiB super-root
+the series and the series reached it more often. The first log decoded
+(`diagnosis-sroot-nomount.md`, read from the log and the source and not a
+run) is not the shipped tree's: `fixtures/lw-nomount-20261116-183147/`
+is the run `conc-replay-alternate-4e3509d3-r6.out` records, the
+`conc-window.sh` alternate arm, in which every odd ticket's `fsync`
+returns without a commit. It found the header naming a 1 KiB super-root
 record whose block the log had written once, with zeros in that slot,
-before the header and not again.
+before the header and not again, which is a shape and not evidence about
+the shipped `fsync`. The shipped tree's own kept case is
+`fixtures/lw-nomount-20261116-194238/`, from the first probe control
+below (`4e3509d3` with the read-only probe placed), and the probe's
+readings are what this entry rests on. Of the other kept directories,
+`-184359` and `-184530` are the pre-series runs and `-183003` another
+alternate-arm run.
 
 The reading at the operation. `sroot-probe.sh <rev>` builds `<rev>` in a
 detached worktree with a probe in `hammer2_flush.c`'s VOLHDR stage, after
@@ -25934,8 +25942,11 @@ unload. On `h2kasan-7.3tls` at `2e366c82`: the flakey tests, 51 of 51;
 `test-enospc.sh` both ways and `test-fixtures.sh` clean;
 `conc-replay.sh` three runs, 90 marks with no record missing and 2776
 flush boundaries all mounted; the log after the batch the same. Without
-the guest, at `2e366c82` against `linux-7.3-tls`: `make W=1` printed no
-warning; `analyze.sh` 8 candidates and `smatch.sh` 15 findings outside
+the guest, at `2e366c82` against `linux-7.3-tls`: `make W=1` was run with
+`-s` into `final-w1-2e366c82.out`, which is empty and so cannot show the
+build took place, and its count was printed to the terminal only; the
+reading is retaken at the next tip below with make's own lines kept;
+`analyze.sh` 8 candidates and `smatch.sh` 15 findings outside
 the `neighbour.h` assertion, the same sets by file, function and message
 as at `4e3509d3` (`final-instruments-compare-2e366c82.out`); the compile
 database holds 24 entries, as `hammer2-y` names 24 objects.
