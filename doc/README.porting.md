@@ -491,12 +491,18 @@ itself to that path, which the carried flush has no means to do.
 Three things come with it. The commit is a filesystem-internal write, so
 it runs under `sb_start_intwrite()`, as ext4's and btrfs's commits do:
 `hammer2_freeze_fs()` stops only the syncer, and without the protection an
-`fsync` on a frozen volume committed under the freeze. The PFS root's
-flush error, which is the commit's, went to the root directory's mapping
-alone, where neither `syncfs(2)` nor an `fsync` of another file reads it;
-`hammer2_sync_error()` now sets it on the superblock as well, and `fsync`
-reads the superblock's error sequence through the descriptor's own
-cursor, so each descriptor reports a failed commit once, as `syncfs` does.
+`fsync` on a frozen volume committed under the freeze. A flush error in
+the commit is recorded by `hammer2_sync_error()` on the inode that failed,
+and the kernel's `mapping_set_error()` records it on the superblock too;
+`hammer2_vfs_sync_pmp()` itself returns no error (`error = 0; /* XXX */`,
+carried). So `fsync` reads the superblock's error sequence through the
+descriptor's own cursor, as `syncfs(2)` does, and that is the only route
+by which a failed commit reaches it. The cursor is sampled at open, so a
+descriptor opened before any failure reports it once on its next `fsync`,
+whichever file it names and whichever commit failed; no other in-tree
+filesystem reads the superblock's sequence from `->fsync`, and this
+over-reporting is the port's choice, since a commit covers the whole PFS.
+No run here drives a failed commit through a second descriptor.
 And the volume header is followed by a second device cache flush, since
 the flush before it orders only what the header points at, and a drive
 with a volatile cache holds the header itself until a later flush. On a
@@ -517,7 +523,7 @@ On the release guest, sixteen threads each writing 4 KiB and calling
 after, one thread 263 and 272, ext4 beside them 2036 and 289; one
 `fsync` costs a median of 3.4 ms, as ext4's does on the same virtual
 disk, where it cost 84 us when it committed nothing
-(`doc/history/verification-record.md`, "fsync commits").
+(`doc/history/verification-record.md`, "fsync commits the volume").
 
 The directory's `fsync` came with it. `hammer2_dir_fops` had none, so the
 VFS answered `EINVAL`, where DragonFly's one vop table serves directories

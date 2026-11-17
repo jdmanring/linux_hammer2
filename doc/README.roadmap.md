@@ -191,8 +191,10 @@ milestone's exit criteria had ever asked for: random 4 KiB reads and
 write-then-`fsync` on this port and on ext4 and btrfs in the same guest,
 where reads are 2 to 4 times btrfs's at the median and a durable write
 commits in 384 us against ext4's 7119, checked rather than published
-because the port's `fsync`, like DragonFly's own, issues no device cache
-flush and takes durability from the device layer's ordering. 0.9.27 is
+because the port's `fsync` then, like DragonFly's own, issued no device
+cache flush and left the file unreachable from the volume header until
+the next sync; it commits the volume and flushes the device since 1.0.102
+(`doc/README.porting.md`, "fsync commits the PFS"). 0.9.27 is
 the same class again, found while running
 the gates after a build: `kbuild`'s `.o.d` dependency file was named by
 neither `.gitignore` nor the four gates excluding build output, and a
