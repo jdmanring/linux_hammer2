@@ -260,8 +260,9 @@ which reaches
 `mapping_set_folio_min_order()` on the block device's mapping, so every
 folio in that mapping is a 64KB folio and one `hammer2_io` holds exactly
 one. Caching, writeback and reclaim belong to the page cache; this file
-holds a folio reference for the life of `DIO_GOOD`, dirties it on a
-dirty last drop, and kicks writeback on `DIO_FLUSH`. The DIO hash
+holds a folio reference for the life of `DIO_GOOD`, dirties it on
+every drop of a dirty dio, and kicks writeback on `DIO_FLUSH` at the
+last. The DIO hash
 therefore caches metadata and no longer owns memory.
 
 Read-ahead does not come with the mapping. `read_cache_folio()` and

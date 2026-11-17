@@ -42,7 +42,15 @@ Lifetime, in the order it happens:
    `folio_address()` plus the block's offset in its folio plus the
    offset the core asked for.
 4. The last drop with `DIO_DIRTY` marks the folio dirty; with `DIO_FLUSH` it
-   kicks writeback.
+   kicks writeback. Every earlier drop of a dirty dio marks the folio
+   dirty too, if writeback has cleaned it meanwhile. DragonFly's dio
+   holds its buffer locked until the last drop, so nothing writes the
+   buffer while a chain may change it; nothing holds a folio that way,
+   and a block modified after a writeback cleaned it would otherwise
+   wait for the last holder. The volume flush's writeback before the
+   header then skipped it while the header named it, and a power cut
+   there left a super-root failing its check (`hammer2_io_putblk()`,
+   the reading in the verification record).
 
 When step 2's grab returns `ENOMEM`, memory holding no free run of
 sixteen pages and the mapping refusing any smaller order, the dio takes
@@ -51,8 +59,8 @@ and not a run of them, read through a bio of the block's pages, and
 `hammer2_io_data()` returns that buffer plus the offset. The page cache
 holds no folio for the block while the dio does, since the grab looked
 before it allocated and one dio covers one block, so the media is the
-truth for the read. On a dirty last drop the block is offered back to
-the page cache first, copied into a folio and dirtied as step 4 would
+truth for the read. On every drop of a dirty dio the block is offered
+back to the page cache first, copied into a folio and dirtied as step 4 would
 have; only when the cache still cannot hold it is it written with a
 bio, and the range is invalidated afterwards, since a folio read ahead
 into the cache in the meantime would be stale. This is the one thing a

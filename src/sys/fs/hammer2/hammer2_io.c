@@ -778,6 +778,27 @@ hammer2_io_putblk(hammer2_io_t **diop)
 		dio->refs &= ~(HAMMER2_DIO_GOOD | HAMMER2_DIO_DIRTY);
 	} else {
 		dio->refs--;
+		/*
+		 * Linux: DragonFly's dio holds its buffer locked until the
+		 * last drop, so nothing writes the buffer while a chain may
+		 * still change it.  A page cache folio is not held that way:
+		 * writeback can clean it while the dio is referenced, and a
+		 * chain modified afterwards then reaches the page cache's
+		 * dirty set only on the last drop, which another chain in
+		 * the same block can hold off past a volume header naming
+		 * the modified chain.  A dirty dio's folio is therefore
+		 * marked again on every drop, when the holder's changes are
+		 * complete, so the writeback before a volume header writes
+		 * every block a released chain modified.
+		 */
+		if ((orefs & (HAMMER2_DIO_GOOD | HAMMER2_DIO_DIRTY)) ==
+		    (HAMMER2_DIO_GOOD | HAMMER2_DIO_DIRTY) &&
+		    !READ_ONCE(hammer2_device_error)) {
+			if (dio->folio && !folio_test_dirty(dio->folio))
+				folio_mark_dirty_lock(dio->folio);
+			else if (dio->buf && !dio->hmp->rconn)
+				hammer2_io_buf_put(dio, dio->buf);
+		}
 		hammer2_mtx_unlock(&dio->lock);
 		return;
 	}

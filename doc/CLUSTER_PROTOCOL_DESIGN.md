@@ -77,9 +77,9 @@ property the remote element depends on was read:
 | `hammer2_chain.c:849` | `hammer2_chain_drop_data()` panics "data not NULL" for a chain with data and no `dio`, every type but VOLUME and FREEMAP |
 | `hammer2_chain.c:1164` | `hammer2_chain_unlock()` calls it on every last unlock |
 | `hammer2_chain.c:1027` | `hammer2_chain_load_data()` returns before touching the device when `chain->data` is set or the block part of `data_off` is zero, and reads through `hammer2_io_bread()` otherwise, an I/O error becoming the chain's `EIO` |
-| `hammer2_io.c:923` | `hammer2_io_bread()` is the read path from a chain to its device; `hammer2_io_new()` is the path for a chain being created, and `load_data` takes it for an `INITIAL` chain |
+| `hammer2_io.c:944` | `hammer2_io_bread()` is the read path from a chain to its device; `hammer2_io_new()` is the path for a chain being created, and `load_data` takes it for an `INITIAL` chain |
 | `hammer2_io.c:243` | `hammer2_get_volume()` is reached on a dio-hash miss before the dio is allocated, and panics with no volume for the offset; `hpanic` sets the host-wide `hammer2_device_error` |
-| `hammer2_io.c:841` | `buf`, the no-folio block, is freed at the dio's last drop, and a dirty one is written through `bdev_file`'s mapping first |
+| `hammer2_io.c:862` | `buf`, the no-folio block, is freed at the dio's last drop, and a dirty one is written through `bdev_file`'s mapping first |
 | `hammer2_synchro.c:2156` | `hammer2_xop_start_except()` with the pass's own index excludes the target element from the source scan |
 | `hammer2_synchro.c:2246` | a pass ends on any collect error but `ENOENT` |
 | `hammer2_vfsops.c:420` | `hammer2_pfsalloc()` merges every PFS root sharing a `pfs_clid` into one `pmp`, and a later mount joins an existing one |
@@ -487,7 +487,7 @@ entry, which returns early for a chain that keeps children), two marked
 lines, the link's own, dropped by its teardown, and the registration
 item's, taken only while it runs.
 The device's dios are not counted: a dio stays in the hash at its last
-release (`hammer2_io.c:841-860`) and is freed by
+release (`hammer2_io.c:862-881`) and is freed by
 `hammer2_io_hash_cleanup_all()` in the device's own free, as the block
 device's are at `hammer2_vfsops.c:3036`, so a count on them would hold
 the device forever.
@@ -776,7 +776,7 @@ takes the stash, so the first load costs no round trip. The block then
 lives in a `hammer2_io_t` whose `buf` field, the form the port already
 has for "the block when the page cache had no folio for it", holds it,
 served by `hammer2_io_data()`. `hammer2_io_putblk()` frees `buf` at the
-dio's last drop (`hammer2_io.c:841-855`), so a proxy kept past its XOP
+dio's last drop (`hammer2_io.c:862-876`), so a proxy kept past its XOP
 (the retire's ccache, `ip->cluster` through `hammer2_inode_repoint()`,
 the registered root) has no data, and **every later load refetches**: the
 device's read looks the handle up and issues one request under the
