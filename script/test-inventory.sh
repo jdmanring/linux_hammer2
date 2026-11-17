@@ -716,16 +716,37 @@ done
 RING_MARK='echo h2ring-start > /dev/kmsg'
 RING_CHECK='test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ'
 RING_REFUSE="the guest's kernel ring lost its start marker"
+RING_COUNT='grep( +-[A-Za-z]+)* +-[A-Za-z]*c[A-Za-z]*( |$).*(WARNING|BUG:|KASAN|circular|cut here)'
 ring_rule() {	# ring_rule <harness>: prints why it fails the rule, nothing when it passes
-	rcode=$(command grep -v '^[[:space:]]*#' "$1")
-	rbare=$(printf '%s\n' "$rcode" | command grep 'dmesg -C' |
-	    command grep -vcF "dmesg -C; $RING_MARK") || :
-	[ "$rbare" = 0 ] || echo "$rbare ring clear(s) with no start marker after them"
-	printf '%s\n' "$rcode" | command grep -qF "$RING_MARK" ||
-		echo "no start marker written"
-	printf '%s\n' "$rcode" | command grep -qF "$RING_CHECK" ||
-		echo "no check of the marker"
-	printf '%s\n' "$rcode" | command grep -qF "$RING_REFUSE" ||
+	# Read in file order: every clear, `dmesg -c` among them, carries the
+	# marker, counted by occurrence so a second clear on a marked line is
+	# seen; and a report count needs a check after the last clear and
+	# before it, on an earlier line or earlier on its own. What this
+	# cannot read is whether the refusal is reachable: it holds the text
+	# to the order, and a refusal behind a condition that never holds is
+	# outside it.
+	command grep -v '^[[:space:]]*#' "$1" | awk -v mk="$RING_MARK" -v ck="$RING_CHECK" \
+	    -v cnt="$RING_COUNT" '
+	{
+		l = $0; nc = gsub(/dmesg -[cC]/, "&", l)
+		l = $0; nm = 0
+		while ((i = index(l, "dmesg -C; " mk)) > 0) { nm++; l = substr(l, i + 1) }
+		bare += nc - nm
+		if (index($0, mk)) marks++
+		ip = index($0, ck)
+		if (ip) checks++
+		cp = match($0, cnt)
+		if (cp && !(ip && ip < cp) && !(checked && !nc)) early++
+		if (nc) checked = 0
+		if (ip) checked = 1
+	}
+	END {
+		if (bare) print bare " ring clear(s) with no start marker after them"
+		if (!marks) print "no start marker written"
+		if (!checks) print "no check of the marker"
+		if (early) print early " report count(s) with no check since the last clear"
+	}'
+	command grep -v '^[[:space:]]*#' "$1" | command grep -qF "$RING_REFUSE" ||
 		echo "no refusal when the marker is gone"
 }
 nring=0; nringskip=0; ring_first=
@@ -733,7 +754,7 @@ for s in script/*.sh; do
 	case "$s" in
 	script/test-inventory.sh) continue ;;
 	esac
-	rclear=$(command grep -v '^[[:space:]]*#' "$s" | command grep -c 'dmesg -C') || :
+	rclear=$(command grep -v '^[[:space:]]*#' "$s" | command grep -c 'dmesg -[cC]') || :
 	[ "$rclear" -gt 0 ] ||
 	    command grep -q -E 'grep( +-[A-Za-z]+)* +-[A-Za-z]*c[A-Za-z]*( |$).*(WARNING|BUG:|KASAN|circular|cut here)' "$s" ||
 	    continue
@@ -768,7 +789,9 @@ if [ -n "$ring_first" ]; then
 	    'index($0, ck) { next } { print }::no check of the marker::the check dropped' \
 	    'index($0, ck) { $0 = "# " $0 } { print }::no check of the marker::the check made a comment' \
 	    'index($0, rf) { next } { print }::no refusal when the marker is gone::the refusal dropped' \
-	    '{ print } END { print "dmesg -C" }::with no start marker after them::a bare clear appended'; do
+	    '{ print } END { print "dmesg -C" }::with no start marker after them::a bare clear appended' \
+	    '!d && index($0, "dmesg -C; " mk) { $0 = $0 "; dmesg -C"; d = 1 } { print }::with no start marker after them::a second clear on a marked line' \
+	    'index($0, ck) && !h { h = $0; next } { print } END { print h }::with no check since the last clear::the first check moved past the end'; do
 		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
 		nringctl=$((nringctl + 1))
 		awk -v mk="$RING_MARK" -v ck="$RING_CHECK" -v rf="$RING_REFUSE" "$prog" \
@@ -782,8 +805,8 @@ if [ -n "$ring_first" ]; then
 	done
 	rm -rf "$ring_tmp"
 fi
-[ "$nringctl" = 6 ] || {
-	echo "  FAIL $nringctl ring control(s) ran, not the 6 the gate lists"
+[ "$nringctl" = 8 ] || {
+	echo "  FAIL $nringctl ring control(s) ran, not the 8 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it

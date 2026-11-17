@@ -14,9 +14,10 @@
 # planted", and in the flood arm then writes 100000 records of about a
 # hundred bytes each, well past the guest's 8 MiB ring, at level 7 with the
 # console level lowered so the serial console does not carry them. Each
-# record is its own open of /dev/kmsg, because the kernel limits a writer
-# to ten records per five seconds per open (kernel/printk/printk.c,
-# devkmsg_open(), devkmsg_write()).
+# record is its own open of /dev/kmsg, because in its default mode,
+# printk.devkmsg=ratelimit, the kernel limits a writer to ten records per
+# five seconds per open (kernel/printk/printk.c, devkmsg_open(),
+# devkmsg_write()); printk.devkmsg=on lifts it.
 #
 #   script/ring-flood.sh plant  <fleet script> [args]   must fail: the count reads the plant
 #   script/ring-flood.sh flood  <fleet script> [args]   must exit 2: the plant is erased
