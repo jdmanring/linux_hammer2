@@ -85,7 +85,7 @@ T=/sys/kernel/tracing
 mountpoint -q $T || mount -t tracefs tracefs $T
 echo 0 > $T/tracing_on; echo > $T/trace
 echo nop > $T/current_tracer
-printf "%s\n" hammer2_fh_to_dentry hammer2_fh_to_parent hammer2_get_parent > $T/set_ftrace_filter || { echo "SETUP the decode functions cannot be traced"; exit 0; }
+printf "%s\n" hammer2_fh_to_dentry hammer2_fh_to_parent hammer2_get_parent hammer2_vop_fsync > $T/set_ftrace_filter || { echo "SETUP the decode functions cannot be traced"; exit 0; }
 echo function > $T/current_tracer
 count() { grep -c "$1" $T/trace; }
 modprobe nfsd || { echo "SETUP no nfsd module"; exit 0; }
@@ -150,6 +150,7 @@ for mode in no_subtree_check subtree_check; do
 	exportfs -u 127.0.0.1:$S
 	echo 0 > $T/tracing_on
 	echo "decode $mode fh_to_dentry $(count hammer2_fh_to_dentry) fh_to_parent $(count hammer2_fh_to_parent) get_parent $(count hammer2_get_parent)"
+	echo "commit $mode fsync $(count hammer2_vop_fsync)"
 done
 echo nop > $T/current_tracer; echo > $T/set_ftrace_filter
 exportfs -ua
@@ -207,6 +208,14 @@ for mode in no_subtree_check subtree_check; do
 	n=$(printf '%s\n' "$out" | sed -n "s/^decode $mode fh_to_dentry \([0-9]*\) .*/\1/p")
 	[ "${n:-0}" -gt 0 ] && echo "  ok    $mode decoded $n handle(s) through fh_to_dentry" || {
 		echo "  FAIL  $mode never called fh_to_dentry, so no handle was decoded"; fail=$((fail + 1)); }
+done
+# Both exports are sync, so nfsd commits the client's create through
+# ->fsync; a run where it never did read nothing of the commit an export
+# relies on.
+for mode in no_subtree_check subtree_check; do
+	n=$(printf '%s\n' "$out" | sed -n "s/^commit $mode fsync \([0-9]*\)$/\1/p")
+	[ "${n:-0}" -gt 0 ] && echo "  ok    $mode reached fsync $n time(s)" || {
+		echo "  FAIL  $mode never reached fsync, so no commit through the export was read"; fail=$((fail + 1)); }
 done
 # The subtree-checked export is the only one here that reaches fh_to_parent,
 # and reaching it is the whole reason this run exists: the syscall gate
