@@ -26146,8 +26146,9 @@ size and the flood file are the guest's own, `log_buf_len=8M` in
 `artix-s6-kde`'s `GRUB_CMDLINE_LINUX`, which every kernel it boots
 inherits, and `/var/lib/h2ring-flood` installed on it by the control and
 deleted when it fires; neither is in this tree, and a guest built
-without the first has the 128 KiB ring. The DragonFly and FreeBSD
-guests run no ring reader. Without the file, `generic/001` passed, `ring whole`, the log line all zeros,
+without the first has the 128 KiB ring. The FreeBSD guest runs no
+ring reader, and `dfly-enospc.sh` prints the DragonFly guest's messages
+since a line-count mark and judges nothing by them. Without the file, `generic/001` passed, `ring whole`, the log line all zeros,
 exit 0. With the plant alone: `ring whole`, `kasan 1`, exit 1, one
 planted line in the ring after the run. With the plant and the flood:
 `ring COULD-NOT-READ`, the log line all zeros, the refusal printed,
@@ -26188,3 +26189,21 @@ boot line: no file, exit 0, `ring whole`; the plant, exit 1, `kasan 1`,
 one planted line left; the plant and the flood, exit 2 with the refusal
 and no planted line left; the same on a copy without its refusal, exit
 0 over the erased plant.
+
+A third review, the last this series is given, found two paths that
+counted the ring and read no verdict from it, fixed in `d2f7b2aa`:
+`throughput.sh` read its ring line only in the single-writer branch, so
+a run with `H2_TP_WRITERS` above one passed over a lost marker, and
+`cluster-quorum.sh` read its scrap counts from the ring after its only
+check. Neither fix has had a fleet run or a review; both scripts are
+read on their next run. Its finding that the fault harnesses read their
+window's counts after their only check does not hold: each count in
+`sync-io-fault.sh` and `sync-alloc-fault.sh` comes before that file's
+final check, and a marker present at a later check was present at every
+earlier count. Left open, on the record: the ring rule's population is
+the report patterns `WARNING`, `BUG:`, `KASAN`, a circular lock and a
+cut-here line, so a count of `kernel BUG` without its colon, a count
+through a helper function or one split by a line continuation is
+outside what it reads, as is a check inside a branch that never runs;
+each of the twenty-one was read by hand, and the rule claims order on
+the counts it can see and nothing more.
