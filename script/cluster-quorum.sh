@@ -728,6 +728,7 @@ elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kern
 fi
 # The per-chain scrap line is rate-limited and caps at its burst; each
 # teardown's unlimited summary is the count, and a run with none read nothing.
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "scrapped $(dmesg | grep -o 'unmount scrapped [0-9]* chain' | awk '{s += $3} END {print s + 0}')"
 echo "scrap-summaries $(dmesg | grep -c 'unmount scrapped [0-9]* chain')"
 dmesg | tail -40 > /tmp/q.log

@@ -422,8 +422,8 @@ else
 	for want in "^h2 write [0-9]* MiB/s (run 0)" "^e4 write [0-9]* MiB/s (run 0)" "^h2 buffered_write [0-9]* MiB/s (run 0)" "^h2 syncfs [0-9.]* s (run 0)" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s (run 0)" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
 		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 	done
-	printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 fi
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
