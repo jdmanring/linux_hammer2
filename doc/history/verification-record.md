@@ -26048,7 +26048,8 @@ UBSAN, `BUG:`, `WARNING:`, lockdep or hung-task line.
 
 ## Counts from a kernel ring that wrapped, 2026-11-17
 
-Twenty-one fleet scripts cleared the guest's kernel ring, ran, and
+Twenty-one fleet scripts read the guest's kernel ring after a run, twenty
+of them after clearing it (`xfstests.sh` reads the whole boot's), and
 counted reports (`WARNING`, `BUG:`, KASAN, UBSAN, lockdep) from what the
 ring held afterwards. The ring drops its oldest records first and
 nothing says it did, so a run that printed more than the ring holds
@@ -26059,7 +26060,8 @@ read 0 from nothing (the section on the volume header above); the guest
 has booted with `log_buf_len=8M` since.
 
 `8e7102aa` gives each of the twenty-one the same two lines on the
-guest: `echo h2ring-start > /dev/kmsg` on the line of every `dmesg -C`,
+guest: `echo h2ring-start > /dev/kmsg` on the line of every `dmesg -C`
+(at the start of the run in `xfstests.sh`),
 and before each count `dmesg | grep -q h2ring-start && echo ring whole
 || echo ring COULD-NOT-READ`. Since the ring drops oldest first, a
 marker still present means nothing written after it was lost. A
@@ -26069,10 +26071,17 @@ and a wrap is never a pass. The text has no `$` and no quote, because
 the count sites sit in quoted heredocs, unquoted ones and single-quoted
 `ssh` arguments, and one literal reads the same in all three.
 `test-inventory.sh` holds every script that clears the ring or counts a
-report to that literal, refuses a clear without the marker, a script
-without the check and one without the refusal, and carries six mutant
-controls of the first ring reader, each failing for its own reason; at
-`8e7102aa^` the same rule refuses all twenty-one.
+report to that literal. At `8e7102aa` it read text only: a clear without
+the marker, a script without the check and one without the refusal,
+with six mutant controls of the first ring reader. A review found it
+blind to order: a check placed after the count it guards passed it,
+though every one of the twenty-one has its checks first, read by hand.
+`944e5dce` reads each file in order, so a report count needs a check
+since the last clear, and counts clears by occurrence, `dmesg -c` among
+them, so a second clear on a marked line fails; eight controls. Whether
+a refusal is reachable is beyond a text rule, and the gate does not
+claim it. At `8e7102aa^` the rule refuses all twenty-one, each on
+missing text before any control is read.
 
 Five scripts count from a stream of `/dev/kmsg` (`cluster-sync.sh`,
 `cluster-wire.sh`, `cluster-dmsg.sh`, `sync-empty-base.sh`,
@@ -26125,11 +26134,20 @@ closing batches read the guest's log for them separately, as the
 section above says.
 
 The control, `ring-flood.sh` (`ace0ec68`), on `h2debug-7.3tls` through
-`xfstests.sh generic/001`, each arm in `ring-flood-<arm>-ace0ec68.out`:
-the module `1c0e6d00` built against `linux-7.3-tls`, the tree line
-reading `ace0ec68` clean over `src`, `test` and `script`, the guest's
-ring 8 MiB (`printk: log buffer data + meta data: 8388608`). Without the
-file, `generic/001` passed, `ring whole`, the log line all zeros,
+`xfstests.sh generic/001`, each arm in `ring-flood-<arm>-ace0ec68.out`,
+driven by `ring-flood-run.sh`, which wrote each file's header line and
+ran the `plain` arm, `xfstests.sh` with no file installed; its log is
+`ring-flood-run-ace0ec68.log`. The tree line read `ace0ec68` clean over
+`src`, `test` and `script`; the module (`1c0e6d00` by its sha256) was
+built by `make -s KDIR=linux-7.3-tls`, which exits 0 and prints nothing,
+so the build file is empty; the guest's ring was 8 MiB by its boot line
+in the log (`printk: log buffer data + meta data: 8388608`). That ring
+size and the flood file are the guest's own, `log_buf_len=8M` in
+`artix-s6-kde`'s `GRUB_CMDLINE_LINUX`, which every kernel it boots
+inherits, and `/var/lib/h2ring-flood` installed on it by the control and
+deleted when it fires; neither is in this tree, and a guest built
+without the first has the 128 KiB ring. The DragonFly and FreeBSD
+guests run no ring reader. Without the file, `generic/001` passed, `ring whole`, the log line all zeros,
 exit 0. With the plant alone: `ring whole`, `kasan 1`, exit 1, one
 planted line in the ring after the run. With the plant and the flood:
 `ring COULD-NOT-READ`, the log line all zeros, the refusal printed,
