@@ -695,6 +695,97 @@ done
 	echo "       debug_locks check above read nothing"
 	fail=$((fail + 1)); }
 
+# A harness that reads the guest's kernel ring after a run must know the
+# ring still holds the whole run. The ring drops its oldest records first
+# and says nothing when it does, so a count taken after a loud run counts
+# what survived: at 128 KiB a ring held about 1,260 lines, and a run that
+# wrote 6,500 read a clean count from its tail. Each clear writes a start
+# marker on its own line, the marker is read before each count, and a
+# marker that is gone is a refusal, never a count. Since the ring drops
+# oldest first, a marker still present means nothing written after it was
+# lost. The population is every script that clears the ring and every
+# report counter above; comment lines are not code. The guest's text is
+# literal, with no `$` and no quote, so it reads the same in a quoted
+# heredoc, an unquoted one and a single-quoted ssh argument.
+# DEFER(the next change to a streaming harness's capture): the five
+# harnesses below count from a stream of /dev/kmsg, which a run outgrows
+# many times over (a cluster-sync.sh log runs 39 to 144 MB), so a marker
+# in the ring says nothing about them. dmesg -w retries a read the kernel
+# refuses for lost records (util-linux dmesg.c, read_kmsg_one()), and cat
+# stops there unseen; the upgrade reads sequence numbers from the stream.
+RING_MARK='echo h2ring-start > /dev/kmsg'
+RING_CHECK='test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ'
+RING_REFUSE="the guest's kernel ring lost its start marker"
+ring_rule() {	# ring_rule <harness>: prints why it fails the rule, nothing when it passes
+	rcode=$(command grep -v '^[[:space:]]*#' "$1")
+	rbare=$(printf '%s\n' "$rcode" | command grep 'dmesg -C' |
+	    command grep -vcF "dmesg -C; $RING_MARK") || :
+	[ "$rbare" = 0 ] || echo "$rbare ring clear(s) with no start marker after them"
+	printf '%s\n' "$rcode" | command grep -qF "$RING_MARK" ||
+		echo "no start marker written"
+	printf '%s\n' "$rcode" | command grep -qF "$RING_CHECK" ||
+		echo "no check of the marker"
+	printf '%s\n' "$rcode" | command grep -qF "$RING_REFUSE" ||
+		echo "no refusal when the marker is gone"
+}
+nring=0; nringskip=0; ring_first=
+for s in script/*.sh; do
+	case "$s" in
+	script/test-inventory.sh) continue ;;
+	esac
+	rclear=$(command grep -v '^[[:space:]]*#' "$s" | command grep -c 'dmesg -C') || :
+	[ "$rclear" -gt 0 ] ||
+	    command grep -q -E 'grep( +-[A-Za-z]+)* +-[A-Za-z]*c[A-Za-z]*( |$).*(WARNING|BUG:|KASAN|circular|cut here)' "$s" ||
+	    continue
+	case "$s" in
+	script/cluster-sync.sh|script/cluster-wire.sh|script/cluster-dmsg.sh|\
+	script/sync-empty-base.sh|script/test-enospc.sh)
+		nringskip=$((nringskip + 1)); continue ;;
+	esac
+	nring=$((nring + 1)); ring_first=${ring_first:-$s}
+	why=$(ring_rule "$s")
+	[ -z "$why" ] || {
+		printf '%s\n' "$why" | sed "s|^|  FAIL $s: reads the kernel ring with |"
+		fail=$((fail + 1)); }
+done
+[ "$nring" -gt 0 ] || {
+	echo "  FAIL no script under script/ reads the kernel ring, so the"
+	echo "       marker check above read nothing"
+	fail=$((fail + 1)); }
+[ "$nringskip" = 5 ] || {
+	echo "  FAIL $nringskip streaming harness(es) matched the exemption, not the"
+	echo "       five it names, so a name in it is stale"
+	fail=$((fail + 1)); }
+# The controls: copies of the first ring reader, each with one part of the
+# rule broken, each failing for its own reason. Their number is asserted.
+nringctl=0
+if [ -n "$ring_first" ]; then
+	ring_tmp=$(mktemp -d) || exit 2
+	# awk with index(), since the check holds `|` and `.` and a sed
+	# address would read them as syntax.
+	for m in '!d && (i = index($0, "dmesg -C; " mk)) { $0 = substr($0, 1, i + 7) substr($0, i + 10 + length(mk)); d = 1 } { print }::with no start marker after them::the first clear'"'"'s marker dropped' \
+	    '{ while ((i = index($0, mk)) > 0) $0 = substr($0, 1, i - 1) substr($0, i + length(mk)); print }::no start marker written::every marker dropped' \
+	    'index($0, ck) { next } { print }::no check of the marker::the check dropped' \
+	    'index($0, ck) { $0 = "# " $0 } { print }::no check of the marker::the check made a comment' \
+	    'index($0, rf) { next } { print }::no refusal when the marker is gone::the refusal dropped' \
+	    '{ print } END { print "dmesg -C" }::with no start marker after them::a bare clear appended'; do
+		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
+		nringctl=$((nringctl + 1))
+		awk -v mk="$RING_MARK" -v ck="$RING_CHECK" -v rf="$RING_REFUSE" "$prog" \
+		    "$ring_first" > "$ring_tmp/changed.sh"
+		why=$(ring_rule "$ring_tmp/changed.sh")
+		case "$why" in
+		*"$want"*) ;;
+		*) echo "  FAIL control: $ring_first with $how read as ${why:-passing the ring rule}, not as $want"
+		   fail=$((fail + 1)) ;;
+		esac
+	done
+	rm -rf "$ring_tmp"
+fi
+[ "$nringctl" = 6 ] || {
+	echo "  FAIL $nringctl ring control(s) ran, not the 6 the gate lists"
+	fail=$((fail + 1)); }
+
 # A harness that scans kmemleak must clear it before the load and scan it
 # again after the unload, and every reading scans twice. Uncleared, the
 # list carries an earlier run's leaks, which the count names "hammer2"
@@ -1153,5 +1244,5 @@ done
 	echo "  FAIL only $ntlsdocs document(s) read for a TLS claim, so the sweep matched far less than doc/ holds"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nnames $names_from, $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
+echo "inventory: $nnames $names_from, $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nring ring reader(s) ($nringskip streaming, deferred), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1

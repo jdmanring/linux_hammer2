@@ -73,7 +73,7 @@ run='
 set -u
 i=0; while [ ! -b /dev/vdb ] && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done
 S=/mnt/h2nfs-srv; C=/mnt/h2nfs-cli
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 umount -f $C 2>/dev/null; exportfs -ua 2>/dev/null; umount $S 2>/dev/null
 rmmod hammer2 2>/dev/null
 insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
@@ -157,6 +157,7 @@ exportfs -ua
 rpc.nfsd 0
 umount $S; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 '
 # The output is written to a file beside the image as well as read
@@ -197,7 +198,7 @@ case $out in *SETUP*) echo "nfsd: COULD-NOT-RUN: $(printf '%s\n' "$out" | comman
 
 ok=$(printf '%s\n' "$out" | command grep -c '^check .* ok$')
 bad=$(printf '%s\n' "$out" | command grep -cE '^check .*(wrong|refused|failed)$')
-fail=$bad
+fail=$bad; ringcnr=
 # Two exports of six checks each (root file, readdir, create, deep file by
 # handle, renamed file, removed file); fewer is a run that asked less than
 # it says.
@@ -227,7 +228,9 @@ fp=$(printf '%s\n' "$out" | sed -n 's/^decode subtree_check .*fh_to_parent \([0-
 for want in '^umount exit 0$' '^rmmod exit 0$' '^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0$'; do
 	printf '%s\n' "$out" | command grep -q "$want" || { echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 done
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    fsck_hammer2 clean after the exports" || {
 	echo "  FAIL  fsck_hammer2 after the exports"; fail=$((fail + 1)); }
 echo "nfsd: $ok check(s) passed, $fail failure(s)"
-[ "$fail" -eq 0 ]
+[ "$fail" -eq 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "nfsd: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

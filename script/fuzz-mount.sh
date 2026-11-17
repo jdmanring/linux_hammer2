@@ -99,7 +99,7 @@ dl=$(ssh -o BatchMode=yes "$GUEST_SSH" "awk '/debug_locks:/ {print \$2}' /proc/l
 # report one line. Written here so the guest carries nothing between runs.
 cat > "$WORK/one.sh" <<'GUEST'
 #!/bin/sh
-dev=$(ls /dev/vd? | tail -1); mkdir -p /mnt/fz; dmesg -C
+dev=$(ls /dev/vd? | tail -1); mkdir -p /mnt/fz; dmesg -C; echo h2ring-start > /dev/kmsg
 n=0; until [ -b "$dev" ]; do sleep 1; n=$((n + 1)); [ $n -gt 15 ] && { echo "no device"; exit 0; }; done
 opt=ro; [ "@WRITE" = 1 ] && opt=rw
 if mount -t hammer2 -o $opt "$dev@LABEL" /mnt/fz 2>/dev/null; then
@@ -124,13 +124,14 @@ if mount -t hammer2 -o $opt "$dev@LABEL" /mnt/fz 2>/dev/null; then
 else
 	v="refused"
 fi
+g=$(test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ)
 h=$(dmesg | grep -c "device in error, see")
-w=$(dmesg | grep -v "device in error" | grep -c -i "WARNING\|BUG\|Oops\|hung task\|panic\|lockdep\|circular")
+w=$(dmesg | grep -v "device in error" | grep -c -i "WARNING\|BUG\|UBSAN\|Oops\|hung task\|panic\|lockdep\|circular")
 r=""
 if [ "$opt" = rw ]; then
 	timeout 60 rmmod hammer2 2>/dev/null; r=" rmmod=$?"; insmod /tmp/hammer2.ko 2>/dev/null
 fi
-echo "$v hpanic=$h$r warn=$w"
+echo "$v $g hpanic=$h$r warn=$w"
 [ "$w" -gt 0 ] && dmesg | grep -v "device in error" | grep -i -A12 "WARNING\|BUG\|Oops\|hung task\|panic\|circular" | head -40
 exit 0
 GUEST
@@ -154,12 +155,13 @@ one() {
 	printf '%s\n' "$v"
 }
 
-fail=0
+fail=0; ringcnr=
 : > "$LOG"
 
 # Control 1: the seed itself, every file readable.
 rm -f "$WORK/fz.img"; cp "$SEEDIMG" "$WORK/fz.img"
 v=$(one "$WORK/fz.img")
+printf '%s\n' "$v" | grep -q 'ring whole' && ! printf '%s\n' "$v" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr control-seed"
 case "$v" in
 mounted*" eio=0 "*"warn=0") echo "  ok    control: the seed mounts and every file reads ($v)";;
 *) echo "  FAIL  control: the seed did not read clean: $v"; fail=$((fail + 1));;
@@ -170,6 +172,7 @@ echo "control seed :: $v" >> "$LOG"
 rm -f "$WORK/fz.img"; cp "$SEEDIMG" "$WORK/fz.img"
 printf '\001' | dd of="$WORK/fz.img" bs=1 seek=64 conv=notrunc 2>/dev/null
 v=$(one "$WORK/fz.img")
+printf '%s\n' "$v" | grep -q 'ring whole' && ! printf '%s\n' "$v" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr control-header"
 case "$v" in
 refused*" warn=0") echo "  ok    control: a volume header crc change is refused";;
 *) echo "  FAIL  control: the damaged header was not refused: $v"; fail=$((fail + 1));;
@@ -210,6 +213,7 @@ PY
 )
 	v=$(one "$WORK/fz.img")
 	ran=$((ran + 1))
+	printf '%s\n' "$v" | grep -q 'ring whole' && ! printf '%s\n' "$v" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr $i"
 	printf '%s %s :: %s\n' "$i" "$mut" "$v" >> "$LOG"
 	case "$v" in
 	*"warn=0") ;;
@@ -248,4 +252,5 @@ rm -f "$WORK/fz.img"
 
 [ "$ran" = "$N" ] || { echo "  FAIL  ran $ran of $N images"; fail=$((fail + 1)); }
 echo "fuzz: seed $SEED, $ran image(s): $mounted mounted, $refused refused, $faulted faulted, $wrefused mounted but refused a write, $warned with a kernel report, $hung hung, $stuck stuck at umount or rmmod; write $WRITE; built from $built; log $LOG"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "fuzz: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

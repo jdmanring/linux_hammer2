@@ -57,7 +57,7 @@ KO=src/sys/fs/hammer2/hammer2.ko
 [ -f "$KO" ] || { echo "root-boot: FAIL: $KO was not produced"; exit 1; }
 
 W=$(mktemp -d) || exit 2
-fail=0
+fail=0; ringcnr=
 
 cc -static -O2 -o "$W/init" test/rootfs/h2root-init.c 2>/dev/null || {
 	echo "root-boot: COULD-NOT-RUN: the init does not build static" >&2; exit 2; }
@@ -113,7 +113,7 @@ scp -q -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/h2.ko" >/dev/null 2>&1
 scp -q -o ConnectTimeout=5 "$W/init" "$W/mmaptest" "$GUEST_SSH:/tmp/" >/dev/null 2>&1
 
 out=$(ssh "$GUEST_SSH" '
-	dmesg -C
+	dmesg -C; echo h2ring-start > /dev/kmsg
 	rmmod hammer2 2>/dev/null
 	insmod /tmp/h2.ko || exit 1
 	mkdir -p /mnt/h2root
@@ -132,7 +132,8 @@ out=$(ssh "$GUEST_SSH" '
 	echo "mapped sum after remount $(md5sum /mnt/h2root/mapped | cut -d" " -f1)"
 	umount /mnt/h2root
 	echo "debug_locks $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
-	echo "reports $(dmesg | grep -ci "warn\|bug\|oops")"
+	test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+	echo "reports $(dmesg | grep -ci "warn\|bug\|ubsan\|oops")"
 	rmmod hammer2
 ' 2>&1)
 printf '%s\n' "$out" | sed 's/^/  guest  /'
@@ -158,6 +159,7 @@ if [ -z "$a" ] || [ "$a" != "$b" ]; then
 fi
 printf '%s\n' "$out" | grep -q '^reports 0$' ||
 	{ echo "  FAIL  the guest logged a kernel report"; fail=$((fail + 1)); }
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 printf '%s\n' "$out" | grep -q '^debug_locks 1$' ||
 	echo "  note lockdep was not enabled on $GUEST, so lock order was not validated"
 
@@ -215,4 +217,5 @@ fi
 
 make -s clean >/dev/null 2>&1
 echo "root-boot: 2 boot(s), 1 control, $fail failure(s)"
-[ "$fail" -eq 0 ]
+[ "$fail" -eq 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "root-boot: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

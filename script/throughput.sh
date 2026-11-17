@@ -120,7 +120,7 @@ truncate -s "${vol}M" "$EXT4" && mkfs.ext4 -q -F "$EXT4" >/dev/null 2>&1 || {
 truncate -s "${vol}M" "$BTRFS" && mkfs.btrfs -q -f "$BTRFS" >/dev/null 2>&1 || {
 	echo "throughput: COULD-NOT-RUN: mkfs.btrfs failed on $BTRFS" >&2; exit 2; }
 
-fail=0
+fail=0; ringcnr=
 boot() {	# boot <guest> <ssh> [ext4 image] [btrfs image]; the images are attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
 	[ -n "${3:-}" ] && $VIRSH attach-disk "$1" "$3" vdc --targetbus virtio --config >/dev/null 2>&1
@@ -166,7 +166,7 @@ fsck_control() {	# image; the negative control every host fsck verdict carries
 # Rates are MiB per second from /proc/uptime, which has centiseconds.
 cat > "$W/linux.sh" <<GUEST
 set -u
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg
 mkdir -p /mnt/h2 /mnt/e4 /mnt/bt
 mount -t hammer2 /dev/vdb@ROOT /mnt/h2 || { echo "hammer2 mount failed"; exit 1; }
 mount -t ext4 /dev/vdc /mnt/e4 || { echo "ext4 mount failed"; exit 1; }
@@ -342,6 +342,7 @@ echo "hammer2 folio_changed \$(cat /sys/module/hammer2/parameters/folio_changed 
 # for.  Printed, not judged: it is a measurement, not a threshold.
 echo "hammer2 iohash_waits \$(cat /sys/module/hammer2/parameters/iohash_waits 2>/dev/null || echo unavailable)"
 umount /mnt/h2; echo "second umount exit \$?"; umount /mnt/e4; umount /mnt/bt
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure\|BUG: KASAN')"
 dmesg | grep -m1 -A30 'cut here\|page allocation failure\|BUG: KASAN' | head -32
 rmmod hammer2; echo "rmmod exit \$?"
@@ -421,6 +422,7 @@ else
 	for want in "^h2 write [0-9]* MiB/s (run 0)" "^e4 write [0-9]* MiB/s (run 0)" "^h2 buffered_write [0-9]* MiB/s (run 0)" "^h2 syncfs [0-9.]* s (run 0)" "^h2 read 1M [0-9]* MiB/s" "^h2 read 64k [0-9]* MiB/s" "^e4 read 1M [0-9]* MiB/s" "^e4 read 64k [0-9]* MiB/s" "^bt write [0-9]* MiB/s (run 0)" "^bt read 1M [0-9]* MiB/s" "^bt read 64k [0-9]* MiB/s" "^hammer2 umount exit 0$" "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^kernel [0-9].* lockdep [01]$"; do
 		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 	done
+	printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 fi
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
@@ -492,4 +494,5 @@ echo "  layout  big.dfly: $1 data blocks, $2 contiguous steps, $3 forward jumps,
 
 rm -f "$EXT4" "$BTRFS"
 echo "throughput: a $MIB MiB file written both ways and read back, $fail failure(s)"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "throughput: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

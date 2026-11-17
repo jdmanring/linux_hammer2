@@ -29,7 +29,10 @@ want() {	# description, extended regex that a line of the run must match
 	nc=$((nc + 1))
 	grep -Eq -- "$2" "$T" && echo "  ok    $1" || { echo "  FAIL  $1"; nf=$((nf + 1)); }
 }
-verdict() { echo "hpanic: knob $KNOB, $nc check(s), $nf failed"; [ $nf = 0 ] || exit 1; exit 0; }
+verdict() { echo "hpanic: knob $KNOB, $nc check(s), $nf failed"; [ $nf = 0 ] || exit 1
+	grep -q 'ring whole' "$T" && ! grep -q 'ring COULD-NOT-READ' "$T" || {
+		echo "hpanic: COULD-NOT-READ: the guest's kernel ring lost its start marker" >&2; exit 2; }
+	exit 0; }
 rm -f "$IMG" "$IMG.pre"; truncate -s 1G "$IMG"; "$NEWFS" -L HP "$IMG" >/dev/null 2>&1 || { echo "COULD-NOT-RUN: newfs"; exit 2; }
 waitssh() { i=0; while [ $i -lt 60 ]; do ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && return 0; sleep 5; i=$((i+1)); done; return 1; }
 [ "$(virsh domstate $GUEST)" = "shut off" ] || { echo "COULD-NOT-RUN: $GUEST is $(virsh domstate $GUEST)"; exit 2; }
@@ -54,7 +57,7 @@ ssh "$GUEST_SSH" rm -f /tmp/h2pre
 (until ssh "$GUEST_SSH" test -e /tmp/h2pre; do sleep 2; done
  cp "$IMG" "$IMG.pre"; ssh "$GUEST_SSH" rm -f /tmp/h2pre) &
 ssh "$GUEST_SSH" sh <<"REMOTE" 2>&1 | sed "s/^/  guest /" | tee -a "$T"
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 insmod /tmp/h2.ko || exit 9
 mkdir -p /mnt/hp; mount -t hammer2 /dev/vdb@HP /mnt/hp || exit 9
 i=0; while [ $i -lt 20 ]; do echo before > /mnt/hp/before-$i; i=$((i+1)); done
@@ -72,6 +75,7 @@ timeout 60 umount /mnt/hp; echo "umount $?"
 timeout 60 rmmod hammer2; echo "rmmod $?"
 sha_after=$(dd if=/dev/vdb bs=1M iflag=direct 2>/dev/null | sha256sum | cut -c1-16)
 [ "$sha_before" = "$sha_after" ] && echo "device identical $sha_before" || echo "device CHANGED $sha_before $sha_after"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") hpanic $(dmesg | grep -c "insert stops here") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 REMOTE
 virsh detach-disk $GUEST vdb >/dev/null 2>&1; virsh shutdown $GUEST >/dev/null 2>&1
@@ -95,7 +99,7 @@ fi
 verdict
 fi
 ssh "$GUEST_SSH" '
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 insmod /tmp/h2.ko || exit 9
 mkdir -p /mnt/hp; mount -t hammer2 /dev/vdb@HP /mnt/hp || exit 9
 i=0; while [ $i -lt 20 ]; do echo before > /mnt/hp/before-$i; i=$((i+1)); done
@@ -105,6 +109,7 @@ timeout 60 sync -f /mnt/hp; echo "armed sync $?"
 i=0; while [ $i -lt 20 ]; do echo after > /mnt/hp/after-$i; i=$((i+1)); done
 echo "after-files written: $(ls /mnt/hp | grep -c after)"
 timeout 60 sync -f /mnt/hp; echo "second sync $?"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 dmesg | grep -E "hammer2|BUG|device in error" | grep -v "Modules linked" | head -12
 ' 2>&1 | sed 's/^/  guest /' | tee -a "$T"
 echo "hard stop"; virsh destroy $GUEST >/dev/null 2>&1; sleep 3

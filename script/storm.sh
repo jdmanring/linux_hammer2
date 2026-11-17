@@ -124,7 +124,7 @@ scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko" && scp -q "$W/storm" "$GUEST_SSH:/tmp/h2sto
 run='
 i=0; while [ ! -b /dev/vdb ] && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done
 mem() { echo "mem available $(awk "/MemAvailable/{print \$2}" /proc/meminfo) kB, unreclaimable slab $(awk "/SUnreclaim/{print \$2}" /proc/meminfo) kB"; }
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 rmmod hammer2 2>/dev/null
 lsmod | command grep -q "^hammer2 " && { echo "SETUP a hammer2 module is in use on the guest"; exit 0; }
 insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
@@ -211,6 +211,7 @@ for cyc in $(seq 1 NCYC); do
 done
 rmmod hammer2; echo "rmmod exit $?"
 echo "after unload: $(mem)"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:") lockdep $(dmesg | grep -c "possible circular locking")"
 '
 run=$(printf '%s' "$run" | sed "s/SECS/$SECS/; s/FILES/$FILES/g; s/NCYC/$CYCLES/g; s/PROBESEC/$PROBE/g; s/BUDGET/$BUDGET/g")
@@ -269,7 +270,7 @@ fi
 detach
 case $out in *SETUP*) echo "storm: COULD-NOT-RUN: $(printf '%s\n' "$out" | command grep -m1 SETUP)" >&2; exit 2 ;; esac
 
-fail=0
+fail=0; ringcnr=
 # A worker that died is named with its role and signal by the exerciser.
 printf '%s\n' "$out" | command grep '^storm-fail worker ' | sed 's/^/  FAIL  /'
 # Each per-cycle line has to appear once per cycle and every one of them
@@ -286,6 +287,7 @@ for want in '^rmmod exit 0$' '^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0 lockdep 
 	printf '%s\n' "$out" | command grep -q "$want" || {
 		echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 done
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 printf '%s\n' "$out" | command grep '^cost after cycle ' | sed 's/^/  note  /'
 # Each cycle has to have spent bytes: a cycle that allocated nothing is a
 # cycle whose clean checks are a reading about an idle filesystem.  The
@@ -303,5 +305,5 @@ printf '%s\n' "$out" | command grep -q '^storm-ops .* 0$' && {
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    fsck_hammer2 clean after the run" || {
 	echo "  FAIL  fsck_hammer2 after the run"; fail=$((fail + 1)); }
 echo "storm: $CYCLES cycles over $FILES files, $fail failures"
-[ "$fail" -eq 0 ]
-
+[ "$fail" -eq 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "storm: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

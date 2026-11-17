@@ -68,7 +68,7 @@ dl() { awk '/debug_locks:/{print $2}' /proc/lockdep_stats; }
 lsmod | grep -q '^hammer2 ' && { echo "busy"; exit 0; }
 echo "debug-locks-before $(dl)"
 rm -f /tmp/h2-rmmod-rc
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 insmod /tmp/hammer2.ko || { echo "insmod-failed"; exit 0; }
 sleep "$secs"
 # Read the report BEFORE the unload. A lock the run broke wedges its
@@ -77,8 +77,9 @@ sleep "$secs"
 # first control run never got past the unload. Everything lockdep says is
 # already in the log by now, so it is read here and the unload is only
 # attempted afterwards, in the background, with its own verdict.
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "lockdep-reports $(dmesg | grep -cE 'possible circular locking|possible recursive locking|inconsistent lock state|bad unlock balance|held lock freed|BUG: sleeping function called|WARNING: .*lock|DEBUG_RWSEMS_WARN_ON')"
-echo "kasan $(dmesg | grep -c 'BUG: KASAN')"
+echo "kasan $(dmesg | grep -c 'BUG: KASAN\|UBSAN:')"
 echo "bug $(dmesg | grep -cE '^\[[ 0-9.]*\] (BUG|kernel BUG):')"
 echo "debug-locks-mid $(dl)"
 echo "---report---"
@@ -137,7 +138,7 @@ check "lockdep still on after the run: debug_locks ${mid:-?}" $r
 [ "${reports:-1}" = 0 ] && r=ok || r=no
 check "lockdep reports: ${reports:-?}" $r
 [ "${kasan:-1}" = 0 ] && r=ok || r=no
-check "KASAN reports: ${kasan:-?}" $r
+check "KASAN and UBSAN reports: ${kasan:-?}" $r
 [ "${bug:-1}" = 0 ] && r=ok || r=no
 check "BUG lines: ${bug:-?}" $r
 check "the module unloaded, so the threads stopped" $unload
@@ -147,5 +148,8 @@ if [ $bad -ne 0 ]; then
 	echo "ccms-lockdep: $bad failed"
 	exit 1
 fi
+ringcnr=
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr=" linux"
+[ -z "$ringcnr" ] || { echo "ccms-lockdep: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 echo "ccms-lockdep: 7 check(s), 0 failed, $SECS s on $grel"
 exit 0

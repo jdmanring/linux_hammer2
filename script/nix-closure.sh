@@ -132,7 +132,7 @@ if [ $ext4 = 1 ]; then
 		echo "closure: COULD-NOT-RUN: mkfs.ext4 failed on $EXT4" >&2; exit 2; }
 fi
 
-fail=0
+fail=0; ringcnr=
 boot() {	# boot <guest> <ssh> [squashfs] [erofs] [ext4]; the images are attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
 	[ -n "${3:-}" ] && $VIRSH attach-disk "$1" "$3" vdc --targetbus virtio --config >/dev/null 2>&1
@@ -181,7 +181,7 @@ cat > "$W/linux.sh" <<GUEST
 set -u
 trap 'dmesg > /tmp/closure-dmesg.txt' EXIT
 $GUESTPRE
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg
 modprobe squashfs || { echo "no squashfs in the guest kernel"; exit 3; }
 mkdir -p /mnt/h2 /mnt/sq /mnt/er
 mount -t squashfs -o ro /dev/vdc /mnt/sq || { echo "squashfs mount failed"; exit 1; }
@@ -267,6 +267,7 @@ fi
 umount /mnt/h2; echo "second umount exit \$?"
 umount /mnt/sq; [ $erofs = 1 ] && umount /mnt/er
 echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "lockdep ceiling \$(dmesg | grep -c 'MAX_LOCKDEP')"
 echo "kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure\|BUG: KASAN')"
 dmesg | grep -n 'cut here\|page allocation failure\|MAX_LOCKDEP\|lockdep is turned off\|^\[.*\] WARNING:\|BUG:' | sed 's/^/warning at /'
@@ -315,6 +316,7 @@ nfiles=$(printf '%s\n' "$out" | sed -n 's/^source \([0-9]*\) files.*/\1/p')
 for want in "^cp -a exit 0 in [0-9]* s" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kernel warnings 0$" "^h2 walk [1-9][0-9]* entries" "^sq walk [1-9][0-9]* entries" "^h2 read in [0-9]* s" "^sq read in [0-9]* s"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 if [ $erofs = 1 ]; then
 	for want in "^er walk [1-9][0-9]* entries" "^er read in [0-9]* s"; do
 		printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
@@ -376,4 +378,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "closure: $npaths store paths, copied in and read cold on both sides, $nfiles files after the collection, $fail failure(s)"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "closure: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

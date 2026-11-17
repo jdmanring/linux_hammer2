@@ -173,10 +173,10 @@ set -u
 # An earlier run's sums would be copied back if this one stopped before
 # writing its own, so a comparison could pass on files it never made.
 rm -f /tmp/q.want /tmp/q.sums
-rmmod hammer2 2>/dev/null; dmesg -C
-# The marker the host looks for at the head of the kept log: a ring that
-# wrapped during the run has lost it, and the counts read from it are short.
-echo "h2quorum: start" > /dev/kmsg
+# The marker the ring check and the head of the kept log are read for: a
+# ring that wrapped during the run has lost it, and the counts read from
+# it are short.
+rmmod hammer2 2>/dev/null; dmesg -C; echo h2ring-start > /dev/kmsg
 echo "guest-kernel $(uname -r) $(uname -v)"
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod failed"; exit 1; }
@@ -680,6 +680,7 @@ sync
 umount /mnt/h2q && echo "cluster-umount ok" || exit 1
 umount /mnt/h2b && umount /mnt/h2a || exit 1
 echo "threads-after $(ps -eo comm | grep -c '^h2nod')"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "kernel-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive')"
 echo "hung-task $(dmesg | grep -c 'blocked for more than') timeout $(cat /proc/sys/kernel/hung_task_timeout_secs 2>/dev/null || echo absent)"
 echo "debug-locks-after $(awk '/debug_locks:/ {print $2}' /proc/lockdep_stats 2>/dev/null)"
@@ -1089,6 +1090,7 @@ else
 	check "the module carries no instrumentation, its kernel tree configuring none" $? "${have_asan:-0} __asan import(s); the KASAN and UBSAN patterns below cannot report on this kernel, and say nothing here"
 fi
 a=$(val kernel-warnings); [ "${a:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${a:-none}"
+grep -q 'ring whole' "$W/out" && ! grep -q 'ring COULD-NOT-READ' "$W/out" || cnr "the guest's kernel ring lost its start marker"
 # A scan that refused is not an empty report. An earlier control run can
 # switch kmemleak off, after which it reports nothing and stays off until a
 # reboot, so a refusal fails here rather than reading as a clean scan. A
@@ -1153,7 +1155,7 @@ d=$(diff "$W/fp.a" "$W/fp.b" 2>/dev/null | grep -c '^[<>]' || true)
 K="$FIXDIR/quorum-run-$STAMP.klog"
 echo "  read  $(val guest-kernel), lockdep debug_locks ${dl:-absent}"
 if [ -r "$K" ]; then
-	head -1 "$K" | grep -q 'h2quorum: start' && echo "  read  the kept log starts at the run's marker" ||
+	head -1 "$K" | grep -q 'h2ring-start' && echo "  read  the kept log starts at the run's marker" ||
 		echo "  read  the kept log does not start at the run's marker: the ring wrapped or the marker was never written, and the counts below may be short"
 	for i in 0 1; do
 		kc() { grep -c "$1 clindex $i" "$K"; }

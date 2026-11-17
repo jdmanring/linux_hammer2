@@ -241,7 +241,7 @@ fi
 # prints the report that caused it. Without lockdep the file is absent and
 # the check is skipped by name.
 locks_before=$(ssh "$GUEST_SSH" 'sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats' 2>/dev/null)
-ssh "$GUEST_SSH" 'dmesg -C' >/dev/null 2>&1
+ssh "$GUEST_SSH" 'dmesg -C; echo h2ring-start > /dev/kmsg' >/dev/null 2>&1
 
 scp -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/hammer2.ko" >/dev/null 2>&1 || {
 	echo "fixtures: COULD-NOT-RUN: could not copy the module" >&2; exit 2; }
@@ -334,7 +334,7 @@ unpriv-pfs-get -1
 unpriv-inode-set -1
 unpriv-bulkfree -1'
 
-fail=0
+fail=0; ringcnr=
 images=0
 files=0
 blocks=0
@@ -710,6 +710,22 @@ if [ "${locks_before:-}" = 1 ]; then
 else
 	echo "  note lockdep is not built into $guest_rel, so lock order was not validated"
 fi
+# A WARN leaves lockdep on ("Just a warning, don't kill lockdep",
+# kernel/panic.c, __warn()) and UBSAN taints nothing, so the check above
+# passes over both; the OS half's own rule is WARN_ONCE and recover, which
+# is exactly what it cannot see. Both print a cut-here line, a KASAN
+# report its own. Counted after the last unmount, from a ring whose start
+# marker must still be there, and an unread count is a failure.
+rep=$(ssh "$GUEST_SSH" 'test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ; echo "kernel reports $(dmesg | grep -c "cut here\|BUG: KASAN")"' 2>/dev/null)
+printf '%s\n' "$rep" | grep -q 'ring whole' && ! printf '%s\n' "$rep" | grep -q 'ring COULD-NOT-READ' || ringcnr=" fixtures"
+nrep=$(printf '%s\n' "$rep" | sed -n 's/^kernel reports \([0-9]*\)$/\1/p')
+if [ "${nrep:-x}" = 0 ]; then
+	echo "  ok   no kernel report (a WARN, UBSAN or KASAN) during the reads"
+else
+	echo "  FAIL kernel reports during the reads: ${nrep:-unread}"
+	ssh "$GUEST_SSH" 'dmesg | grep -m1 -A12 "cut here\|BUG: KASAN"' 2>/dev/null | sed 's/^/        /'
+	fail=$((fail + 1))
+fi
 
 echo "fixtures: $images image(s), $files file(s), $blocks block count(s), $stats stat row(s), $statfss statfs, $links symlink(s), $corrupts corrupt file(s) refused and seeked, $ioctls ioctl result(s), $getdents getdents resume check(s), $fail failure(s)"
 echo "fixtures: not read here: which compressor an image used, the counts"
@@ -718,4 +734,5 @@ echo "          same device would show, and the writing ioctls: snapshot,"
 echo "          PFS create and delete, growfs and bulkfree need a writable"
 echo "          mount and are verified by hand"
 [ "$fail" -eq 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "fixtures: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 exit 0

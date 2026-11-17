@@ -87,7 +87,7 @@ KO=src/sys/fs/hammer2/hammer2.ko
 rm -f "$IMG" "$IMG2"
 cp "$BASE" "$IMG" || { echo "cut: COULD-NOT-RUN: cannot copy $BASE" >&2; exit 2; }
 
-fail=0
+fail=0; ringcnr=
 tids() {	# print header tids of an image
 	"$SHOW" show "$1" 2>/dev/null | grep -m1 'freemap_tid' | sed 's/.*mirror_tid=\([0-9a-f]*\) freemap_tid=\([0-9a-f]*\).*/mirror_tid \1 freemap_tid \2/'
 }
@@ -134,7 +134,7 @@ fsck_control "$IMG" || fail=$((fail + 1))
 # 2. This port recovers one copy.
 cat > "$W/recover.sh" <<GUEST
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/c
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo 8 > /proc/sys/kernel/printk
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg; echo 8 > /proc/sys/kernel/printk
 mount -t hammer2 \$dev@$LABEL /mnt/c || { echo "rw mount failed"; exit 1; }
 dmesg | grep -i 'recovery' | sed 's/^\[[^]]*\] //'
 n=\$(ls /mnt/c/crash | wc -l); echo "crash entries \$n last \$(cat /mnt/c/crash/last)"
@@ -143,7 +143,8 @@ if echo "after the cut, by linux" > /mnt/c/crash/linux-after; then wst=0; else w
 sync; echo "write after recovery exit \$wst"
 df -h /mnt/c | tail -1 | sed 's/^/free /'
 umount /mnt/c
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|UBSAN\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" "$IMG" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -159,6 +160,7 @@ printf '%s\n' "$out" | grep -q "write after recovery exit 0" || fail=$((fail + 1
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 down "$GUEST" "$GUEST_SSH"
 echo "  linux $(tids "$IMG")"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
@@ -219,6 +221,7 @@ printf '%s\n' "$out" | grep -q "^unreadable 0$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux-lagged-header"
 down "$GUEST" "$GUEST_SSH"
 echo "  linux $(tids "$IMG2")"
 "$FSCK" "$IMG2" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after the replay" || { echo "  FAIL  host fsck_hammer2 after the replay"; fail=$((fail + 1)); }
@@ -232,4 +235,5 @@ down "$DFLY" "$DFLY_SSH"
 
 make -s clean >/dev/null 2>&1
 echo "cut: ${SECONDS_WRITING}s of writing, lag $LAG, $fail failure(s)"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "cut: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

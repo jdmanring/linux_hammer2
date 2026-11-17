@@ -152,7 +152,7 @@ out=$($RUN "$GUEST_SSH" sh -s "$TEXT_OFF" "$TEXT_SIZE" <<'GUEST'
 set -u
 rmmod hammer2 2>/dev/null
 mkdir -p /mnt/h2a
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod-failed"; exit 0; }
 
@@ -164,7 +164,10 @@ mkdir -p /mnt/h2a/set
 i=0; while [ $i -lt 200 ]; do head -c 4096 /dev/urandom > /mnt/h2a/set/f$i; i=$((i + 1)); done
 sync
 echo "base-files $(ls /mnt/h2a/set | wc -l)"
-dmesg -C
+# Each clear below erases what came before it, so that phase is counted first.
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "base-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN')"
+dmesg -C; echo h2ring-start > /dev/kmsg
 
 # The fault.  fail_make_request needs the per-device make-it-fail flag AND the
 # attributes; setting only one injects nothing, which is the fake pass this
@@ -250,7 +253,9 @@ echo 2 > $fs/verbose
 # only this window.  Measured 2026-08-26 in the sibling: a run that counted an
 # injection without either the trace or the module's own log line had not
 # reached the code it named.
-dmesg -C
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "arm-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN')"
+dmesg -C; echo h2ring-start > /dev/kmsg
 before=$(cat $fs/times)
 echo "io-range $lo $hi"
 echo "require-readback $(cat $fs/require-start) $(cat $fs/require-end)"
@@ -290,6 +295,7 @@ i=0; while [ $i -lt 200 ]; do
 	i=$((i + 1))
 done
 echo "unreadable-base $bad"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN')"
 umount /mnt/h2a && echo "umount-ok" || echo "umount-failed"
 sync
@@ -394,9 +400,13 @@ esac
 check "the volume unmounts after the fault rather than wedging" $r "$(printf '%s\n' "$out" | sed -n '/umount-/p' | head -1)"
 grep -q '^rmmod ok' "$W/out"
 check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
-w=$(val warnings)
-[ "${w:-1}" = 0 ]
-check "no kernel warning, KASAN or UBSAN report" $? "${w:-none}"
+for ph in base-warnings arm-warnings warnings; do
+	w=$(val $ph)
+	[ "${w:-1}" = 0 ]
+	check "no kernel warning, KASAN or UBSAN report ($ph)" $? "${w:-none}"
+done
+ringcnr=
+[ "$(grep -c 'ring whole' "$W/out")" = 3 ] && ! grep -q 'ring COULD-NOT-READ' "$W/out" || ringcnr=" linux"
 c=$(grep -o kmemleak-cleared "$W/out" | wc -l); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 case "$l" in
 0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
@@ -407,4 +417,5 @@ esac
 
 echo "sync-io: $checks check(s), $fail failed"
 [ "$fail" = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "sync-io: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 exit 0

@@ -226,7 +226,7 @@ scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko" && scp -q /tmp/h2seekprobe.$$ "$GUEST_SSH:/
 
 # The two modes: one mounted volume, no stop, then the verdict and exit.
 mode_open='
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
 mkdir -p /mnt/sm
 mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP mount failed"; exit 0; }
@@ -234,6 +234,7 @@ mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP mount failed"; exit 0; }
 mode_close='
 umount /mnt/sm; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 echo "debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null || echo none)"
 '
@@ -277,7 +278,7 @@ head -c 4194304 /dev/urandom > /mnt/sm/ind && sync -f /mnt/sm && echo "ind inum 
 # device before the module loads, and the device's buffers dropped, so
 # the mount reads what the device holds.
 corrupt_body='
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 v=$(dd if=/dev/vdb bs=1 skip=$OFF count=1 2>/dev/null | od -An -tu1 | tr -d " ")
 printf "\\$(printf %o $((v ^ 255)))" | dd of=/dev/vdb bs=1 seek=$OFF count=1 conv=notrunc,fsync 2>/dev/null
 blockdev --flushbufs /dev/vdb
@@ -290,6 +291,7 @@ e=$(dd if=/mnt/sm/ind of=/dev/null bs=65536 2>&1); s=$?
 echo "corrupt read exit $s eio $(printf "%s\n" "$e" | grep -c "Input/output error")"
 umount /mnt/sm; echo "corrupt umount exit $?"
 rmmod hammer2; echo "corrupt rmmod exit $?"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "corrupt log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 echo "corrupt debug_locks $(awk "/debug_locks:/ {print \$2}" /proc/lockdep_stats 2>/dev/null || echo none)"
 '
@@ -345,6 +347,7 @@ echo "window kernel $(uname -r) lockdep $(zcat /proc/config.gz 2>/dev/null | gre
 /tmp/h2seek /mnt/sm/.h2seek 2>&1 | sed -n /seek-/p
 rm -f /mnt/sm/.h2seek
 '
+ringcnr=
 if [ "$RACE$TIME$CONTEND$COLD$WINDOW" != 00000 ]; then
 	if [ "$COLD" = 1 ]; then
 		out=$(ssh "$GUEST_SSH" "$mode_open /tmp/h2seekprobe cold /mnt/sm/c ${DMB:-64}" 2>&1)
@@ -404,6 +407,7 @@ SETUP cold reattach failed"
 		printf '%s\n' "$out" | command grep -q "$want" || {
 			echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 	done
+	printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr modes"
 	# A kernel without lockdep has no lockdep_stats and prints none, which
 	# reads nothing; 0 is lockdep turned off by a report, and fails above.
 	bad=$(printf '%s\n' "$out" | command grep -c '^seekm-fail')
@@ -577,8 +581,9 @@ SETUP cold reattach failed"
 		echo "  FAIL  fsck_hammer2 exit $fsck_rc"; fail=$((fail + 1)); }
 	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || { [ "$TIME" = 1 ] && echo time || { [ "$COLD" = 1 ] && echo cold || { [ "$WINDOW" != 0 ] && echo "window $WINDOW" || echo contend; }; }; }), $REPEAT repeat(s), $fail failure(s)"
 	rm -f "$IMG"
-	[ "$fail" -eq 0 ]
-	exit
+	[ "$fail" -eq 0 ] || exit 1
+	[ -z "$ringcnr" ] || { echo "seek-matrix: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+	exit 0
 fi
 
 # Phase one, on the running guest: snapshot and dedup, then the crash
@@ -592,7 +597,7 @@ fi
 # keeps each block a single-quoted string with no quote of its own inside
 # it, which is the property that gate is there to check.
 pre_stop='
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
 mkdir -p /mnt/sm
 mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP mount failed"; exit 0; }
@@ -636,6 +641,7 @@ guest_up || { echo "seek-matrix: COULD-NOT-RUN: $GUEST did not come back after t
 attach || { echo "seek-matrix: COULD-NOT-RUN: could not reattach $IMG" >&2; exit 2; }
 scp -q "$KO" "$GUEST_SSH:/tmp/h2.ko" && scp -q /tmp/h2seekprobe.$$ "$GUEST_SSH:/tmp/h2seekprobe"
 post_stop='
+echo h2ring-start > /dev/kmsg
 insmod /tmp/h2.ko || { echo "SETUP insmod failed"; exit 0; }
 mkdir -p /mnt/sm
 mount -t hammer2 /dev/vdb@SM /mnt/sm || { echo "SETUP remount failed"; exit 0; }
@@ -650,6 +656,7 @@ fi
 $P check /mnt/sm/live "live after recovery"
 umount /mnt/sm; echo "umount exit $?"
 rmmod hammer2; echo "rmmod exit $?"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "log: bug $(dmesg | grep -c "kernel BUG") oops $(dmesg | grep -ci oops) warn $(dmesg | grep -c "WARNING:") kasan $(dmesg | grep -c "BUG: KASAN") ubsan $(dmesg | grep -c "UBSAN:")"
 '
 out2=$(ssh "$GUEST_SSH" "$post_stop" 2>&1)
@@ -665,6 +672,7 @@ for want in "^snapshot exit 0$" "^umount exit 0$" "^rmmod exit 0$" "^log: bug 0 
 	printf '%s\n' "$all" | command grep -q "$want" || {
 		echo "  FAIL  no line matching $want"; fail=$((fail + 1)); }
 done
+printf '%s\n' "$all" | grep -q 'ring whole' && ! printf '%s\n' "$all" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr hard-stop"
 case $all in *SETUP*failed*) echo "  FAIL  $(printf '%s\n' "$all" | command grep -m1 'SETUP.*failed')"; fail=$((fail + 1)) ;; esac
 # A check prints six lines and an agree one: the live file twice, the
 # snapshot and the synced crash file are four checks, the shared-sibling
@@ -685,4 +693,5 @@ fi
 	echo "  FAIL  fsck_hammer2 exit $fsck_rc after the hard stop"; fail=$((fail + 1)); }
 echo "seek-matrix: $ok probe check(s), $fail failure(s)"
 rm -f "$IMG"
-[ "$fail" -eq 0 ]
+[ "$fail" -eq 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "seek-matrix: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

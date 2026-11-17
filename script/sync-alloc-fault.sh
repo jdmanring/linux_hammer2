@@ -144,7 +144,7 @@ out=$($RUN "$GUEST_SSH" sh -s "$THR_OFF" "$THR_SIZE" <<'GUEST'
 set -u
 rmmod hammer2 2>/dev/null
 mkdir -p /mnt/h2a
-dmesg -C
+dmesg -C; echo h2ring-start > /dev/kmsg
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=0x8000 || { echo "insmod-failed"; exit 0; }
 
@@ -159,8 +159,11 @@ mount -t hammer2 /dev/vdb@ROOT /mnt/h2a || { echo "base-mount-failed"; exit 0; }
 hammer2 -s /mnt/h2a pfs-create BASE >/dev/null 2>&1 || { echo "pfs-create-failed"; exit 0; }
 clid=$(hammer2 -s /mnt/h2a pfs-list | awk '$3=="BASE"{print $2}')
 [ -n "$clid" ] || { echo "pfs-create-failed"; exit 0; }
-# The base noise leaves the log; the fault window below is read on its own.
-dmesg -C
+# The base noise leaves the log; the fault window below is read on its own,
+# so what the base setup printed is counted before the clear erases it.
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "base-warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
+dmesg -C; echo h2ring-start > /dev/kmsg
 
 # Inject one slab allocation failure into the process that mounts, with
 # direct-reclaim allocations INCLUDED, which is what kthread_create()
@@ -328,6 +331,7 @@ elif echo scan > /sys/kernel/debug/kmemleak 2>/dev/null && echo scan > /sys/kern
 	echo "kmemleak-unloaded $h2n"
 	[ "$h2n" = 0 ] || sed 's/^/kmemleak-unloaded-report /' /sys/kernel/debug/kmemleak | head -200
 fi
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "warnings $(dmesg | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
 echo "done"
 GUEST
@@ -426,7 +430,10 @@ case "$out" in
 esac
 
 grep -q '^rmmod ok' "$W/out"; check "the module unloads" $? "$(grep -c '^rmmod ok' "$W/out") of 1"
+k=$(val base-warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report in the base setup" $? "${k:-none}"
 k=$(val warnings); [ "${k:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${k:-none}"
+ringcnr=
+[ "$(grep -c 'ring whole' "$W/out")" = 2 ] && ! grep -q 'ring COULD-NOT-READ' "$W/out" || ringcnr=" linux"
 c=$(grep -o kmemleak-cleared "$W/out" | wc -l); l=$(val kmemleak); m=$(nval kmemleak); u=$(val kmemleak-unloaded); n=$(nval kmemleak-unloaded); r=$(nval kmemleak-unloaded-range)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
 case "$l" in
 0) [ "$c" = 1 ] && [ "$m" = 1 ] && [ "$n" = 1 ] && [ "$r" = 1 ] && [ "${u:-1}" = 0 ]; check "kmemleak reports nothing of hammer2's" $? "cleared $c time(s), $l printed $m time(s), after the unload ${u:-unread}, printed $n time(s) after $r range line(s)" ;;
@@ -437,4 +444,5 @@ esac
 
 echo "sync-alloc: $checks check(s), $fail failed"
 [ "$fail" = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "sync-alloc: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 exit 0

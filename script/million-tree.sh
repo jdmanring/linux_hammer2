@@ -133,7 +133,7 @@ rm -f "$IMG"
 truncate -s "$SIZE" "$IMG" && "$NEWFS" -L ROOT "$IMG" >/dev/null 2>&1 || {
 	echo "tree: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
 
-fail=0
+fail=0; ringcnr=
 boot() {	# boot <guest> <ssh>; the image is attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
 	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  COULD-NOT-RUN  $1 did not start"; return 1; }
@@ -161,7 +161,7 @@ per=$((N / FAN)); [ $per -gt 0 ] || per=1
 cat > "$W/linux.sh" <<GUEST
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/tree
 $GUESTPRE
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko $MODARGS || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg
 mem() { awk '/MemAvailable/{print \$2}' /proc/meminfo; }
 mount -t hammer2 \$dev@ROOT /mnt/tree || { echo "mount failed"; exit 1; }
 echo "memtotal \$(awk '/MemTotal/{print \$2}' /proc/meminfo) kB, kmemleak \$(echo stack=on > /sys/kernel/debug/kmemleak 2>/dev/null && echo on || echo off)"
@@ -281,6 +281,7 @@ echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"
 # A lockdep ceiling is the guest kernel's configuration running out, not
 # a report about the driver, and it reads as neither pass nor failure
 # for the lock question; the host tells them apart by this line.
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "lockdep ceiling \$(dmesg | grep -c 'BUG: MAX_LOCKDEP')"
 # What turned lockdep off, when it is off: a ceiling prints no cut-here
 # line and reads as nothing without this. The lockdep_stats counters
@@ -329,6 +330,7 @@ fi
 for want in "^walk errors 0$" "^spot check 200 files, 0 wrong" "^umount exit 0 " "^second umount exit 0$" "^rmmod exit 0$" "^kmsg lines [1-9]" "^kernel warnings 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 if printf '%s\n' "$out" | grep -q "^debug_locks 0$"; then
 	if printf '%s\n' "$out" | grep -q "^lockdep ceiling [1-9]"; then
 		echo "  note  lockdep hit a ceiling of the guest kernel's configuration, so the"
@@ -410,4 +412,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "tree: $N files written here and counted on both sides, $fail failure(s)"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "tree: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

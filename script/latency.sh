@@ -66,7 +66,7 @@ W=$(mktemp -d) || exit 2
 # kernel is not read as a hang.
 RUNSECS=3600; grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
 RUN="timeout ${H2_RUN_TIMEOUT:-$RUNSECS} ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
-fail=0
+fail=0; ringcnr=
 
 # The numbers are compared between filesystems, so the guest and its
 # memory are part of the reading: a latency taken on a guest whose page
@@ -249,8 +249,9 @@ while [ "$n" -lt "$REPEAT" ]; do
 				# random read reaches the media.  It is not dropped before
 				# the write passes, where it would only add noise.
 				sync; echo 3 > /proc/sys/vm/drop_caches
-				dmesg -C
+				dmesg -C; echo h2ring-start > /dev/kmsg
 				/tmp/h2lat /mnt/$fs $fs $MIB $OPS 2>&1
+				test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 				echo \"kernel warnings \$(dmesg | grep -c 'cut here\|page allocation failure\|BUG: KASAN')\"
 			else
 				echo \"SKIP /mnt/$fs is not a mount point, so no reading was taken\"
@@ -279,6 +280,7 @@ while [ "$n" -lt "$REPEAT" ]; do
 			echo "  FAIL  $fs reported a failed check"; fail=$((fail + 1)); }
 		printf '%s\n' "$out" | grep -q "^kernel warnings 0" || {
 			echo "  FAIL  $fs run left a kernel warning"; fail=$((fail + 1)); }
+		printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr $fs"
 		i=$((i + 1))
 	done
 	n=$((n + 1))
@@ -290,4 +292,5 @@ done
 down
 rm -rf "$W"
 echo "latency: $REPEAT pass(es) at $OPS op(s) over a $MIB MiB file, $fail failure(s)"
-[ "$fail" = 0 ]
+[ "$fail" = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "latency: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

@@ -83,7 +83,7 @@ else
 	truncate -s 2G "$IMG" && "$NEWFS" -L "$ROOT" "$IMG" >/dev/null 2>&1
 fi || { echo "pfs: COULD-NOT-RUN: newfs_hammer2 failed on $SET" >&2; exit 2; }
 
-fail=0
+fail=0; ringcnr=
 ndom=$(printf '%s\n' $DOMAINS | grep -c .)
 boot() {	# boot <guest> <ssh>; the image is attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
@@ -109,7 +109,7 @@ down() {	# down <guest> <ssh>
 cat > "$W/linux.sh" <<GUEST
 command -v hammer2 >/dev/null 2>&1 || { echo "no hammer2 utility on the guest"; exit 3; }
 dev=\$(ls /dev/vd? | tail -$VOLUMES | paste -sd:); mkdir -p /mnt/root
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg
 mount -t hammer2 \$dev@$ROOT /mnt/root || { echo "root mount failed"; exit 1; }
 created=0
 for d in $DOMAINS; do hammer2 -s /mnt/root pfs-create \$d >/dev/null 2>&1 && created=\$((created+1)); done
@@ -147,7 +147,8 @@ fi
 sync
 for d in $DOMAINS; do umount /mnt/\$d 2>/dev/null; done
 umount /mnt/root; echo "umount exit \$?"
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|UBSAN\|hung task' | sed 's/^/reports /'
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -168,6 +169,7 @@ done
 for want in "^snapshot exit 0$" "^wrote $SNAP 2[0-9] files$" "^snapshot umount exit 0$" "^live f0 unchanged" "^umount exit 0$" "^rmmod exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
 	printf '%s\n' "$out" | grep -q "$want" || { echo "  FAIL  wanted $want"; fail=$((fail + 1)); }
 done
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 "$FSCK" "$SET" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
 
@@ -211,4 +213,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "pfs: $ndom PFS roots made here and a snapshot written into, on $VOLUMES volume(s), mounted by label by both sides, $fail failure(s)"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "pfs: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

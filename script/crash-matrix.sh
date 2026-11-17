@@ -202,7 +202,7 @@ done
 GUEST
 cat > "$W/recover-linux.sh" <<GUEST
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/c
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo 8 > /proc/sys/kernel/printk
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg; echo 8 > /proc/sys/kernel/printk
 echo 20 > /proc/sys/kernel/hung_task_timeout_secs
 mount -t hammer2 \$dev@$LABEL /mnt/c || { echo "mount failed"; exit 1; }
 dmesg | grep -i 'recovery' | sed 's/^\[[^]]*\] //'
@@ -212,7 +212,8 @@ if echo "after the cut, by linux" > /mnt/c/crash/linux-after; then wst=0; else w
 sync; echo "write after recovery exit \$wst"
 df -h /mnt/c | tail -1 | sed 's/^/free /'
 umount /mnt/c; echo "umount exit \$?"
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|UBSAN\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 cat > "$W/recover-fbsd.sh" <<GUEST
@@ -227,7 +228,7 @@ umount /mnt/c; echo "umount exit \$?"
 fsck_hammer2 /dev/vtbd1 > /dev/null 2>&1 && echo "freebsd fsck clean" || echo "freebsd fsck FAILED"
 GUEST
 
-fail=0; torn_zone=
+fail=0; torn_zone=; ringcnr=
 # The sync cell's detector, run on the guest in ONE ssh so a sample costs a
 # fork rather than an ssh round trip, and so the task it catches is printed
 # rather than reduced to a yes. `ps -eo stat=,comm=` is a D-state task in
@@ -296,6 +297,7 @@ verdict_linux() {	# image -> prints lines, returns failures
 	for want in "^entries [1-9]" "^unreadable 0$" "write after recovery exit 0" "^umount exit 0$" "^debug_locks 1$" "^kmsg lines [1-9]" "^reports 0$"; do
 		printf '%s\n' "$out" | grep -q "$want" || f=$((f + 1))
 	done
+	printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 	down "$GUEST" "$GUEST_SSH"
 	"$FSCK" "$1" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; f=$((f + 1)); }
 	return $f
@@ -383,3 +385,4 @@ done
 echo "crash: $fail failure(s), $missed cell(s) that never reached their condition"
 [ $fail = 0 ] || exit 1
 [ $missed = 0 ] || exit 2
+[ -z "$ringcnr" ] || { echo "crash: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

@@ -83,7 +83,7 @@ rm -f "$IMG"
 truncate -s 2G "$IMG" && "$NEWFS" -L "$ROOT" "$IMG" >/dev/null 2>&1 || {
 	echo "bulkfree: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
 
-fail=0
+fail=0; ringcnr=
 boot() {	# boot <guest> <ssh>; the image is attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
 	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  COULD-NOT-RUN  $1 did not start"; return 1; }
@@ -106,7 +106,7 @@ down() {	# down <guest> <ssh>
 cat > "$W/linux.sh" <<GUEST
 command -v hammer2 >/dev/null 2>&1 || { echo "no hammer2 utility on the guest"; exit 3; }
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/bf
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg
 mount -t hammer2 \$dev@$ROOT /mnt/bf || { echo "mount failed"; exit 1; }
 free() { stat -f -c %f /mnt/bf; }
 echo "free at mount \$(free)"
@@ -121,16 +121,17 @@ write_set first
 rm -f /mnt/bf/first.*; sync
 echo "after remove free \$(free)"
 for pass in 1 2; do
-	dmesg -C
+	echo h2bulkfree-pass-\$pass > /dev/kmsg
 	t0=\$(date +%s); hammer2 -s /mnt/bf bulkfree /mnt/bf > /tmp/bf.out 2>&1; bst=\$?; t1=\$(date +%s)
 	sync; echo "pass \$pass exit \$bst in \$((t1 - t0)) s, free \$(free)"
 	sed -n '1,4p' /tmp/bf.out
-	dmesg | sed -n 's/^\[[^]]*\] *//p' | grep -E 'bulkfree pass statistics|transition->|CRC|aborted' | sed "s/^/pass \$pass: /"
+	dmesg | awk "/h2bulkfree-pass-\$pass/ {on = 1} on" | sed -n 's/^\[[^]]*\] *//p' | grep -E 'bulkfree pass statistics|transition->|CRC|aborted' | sed "s/^/pass \$pass: /"
 done
 write_set second
 rm -f /mnt/bf/second.*; sync
 umount /mnt/bf; echo "umount exit \$?"
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|UBSAN\|hung task' | sed 's/^/reports /'
 rmmod hammer2; echo "rmmod exit \$?"
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -140,6 +141,7 @@ printf '%s\n' "$out" | sed 's/^/  linux   /'
 down "$GUEST" "$GUEST_SSH"
 [ $st = 3 ] && { echo "bulkfree: COULD-NOT-RUN: the Linux guest has no hammer2 utility" >&2; exit 2; }
 [ $st = 124 ] && { echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1)); }
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 f0=$(printf '%s\n' "$out" | sed -n 's/^free at mount //p')
 f1=$(printf '%s\n' "$out" | sed -n 's/^first wrote .* free //p')
 f2=$(printf '%s\n' "$out" | sed -n 's/^after remove free //p')
@@ -202,4 +204,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "bulkfree: $MB MB written, removed, scanned twice and written again, $fail failure(s)"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "bulkfree: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

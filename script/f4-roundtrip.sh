@@ -79,7 +79,7 @@ rm -f "$IMG"
 truncate -s 2G "$IMG" && "$NEWFS" -L "$LABEL" "$IMG" >/dev/null 2>&1 || {
 	echo "f4: COULD-NOT-RUN: newfs_hammer2 failed on $IMG" >&2; exit 2; }
 
-fail=0
+fail=0; ringcnr=
 boot() {	# boot <guest> <ssh>; the image is attached first
 	$VIRSH attach-disk "$1" "$IMG" vdb --targetbus virtio --config >/dev/null 2>&1
 	$VIRSH start "$1" >/dev/null 2>&1 || { echo "  COULD-NOT-RUN  $1 did not start"; return 1; }
@@ -101,7 +101,7 @@ down() {	# down <guest> <ssh>
 # 1. Linux writes.
 cat > "$W/linux-write.sh" <<GUEST
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/f4
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg
 mount -t hammer2 \$dev@$LABEL /mnt/f4 || { echo "mount failed"; exit 1; }
 cd /mnt/f4
 mkdir -p tree/sub; echo "made on linux" > tree/hello
@@ -113,7 +113,8 @@ echo "written \$(find tree -type f | wc -l) files"
 cd /; sync; umount /mnt/f4 || exit 1
 mount -t hammer2 -o ro \$dev@$LABEL /mnt/f4 || exit 1
 cd /mnt/f4 && md5sum -c --quiet tree/linux.md5 && echo "linux re-read: all match"; cd /; umount /mnt/f4
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|UBSAN\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -125,6 +126,7 @@ printf '%s\n' "$out" | grep -q "linux re-read: all match" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux-write"
 down "$GUEST" "$GUEST_SSH"
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    host fsck_hammer2 after linux" || { echo "  FAIL  host fsck_hammer2 after linux"; fail=$((fail + 1)); }
 fsck_control "$IMG" || fail=$((fail + 1))
@@ -160,14 +162,15 @@ down "$DFLY" "$DFLY_SSH"
 # 3. Linux reads DragonFly's.
 cat > "$W/linux-read.sh" <<GUEST
 dev=\$(ls /dev/vd? | tail -1); mkdir -p /mnt/f4
-rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C
+rmmod hammer2 2>/dev/null; insmod /tmp/hammer2.ko || exit 1; dmesg -C; echo h2ring-start > /dev/kmsg
 mount -t hammer2 -o ro \$dev@$LABEL /mnt/f4 || exit 1
 cd /mnt/f4
 md5sum -c --quiet back/dfly.md5 && echo "linux read dragonfly's \$(wc -l < back/dfly.md5) files: all match"
 sed '/sub\/f0\$/d;/sub\/f1\$/d' tree/linux.md5 | md5sum -c --quiet && echo "linux's own tree still matches"
 [ -e tree/sub/f1 ] || echo "removed file is gone"
 cd /; umount /mnt/f4
-echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|hung task' | sed 's/^/reports /'
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
+echo "debug_locks \$(awk '/debug_locks:/{print \$2}' /proc/lockdep_stats)"; echo "kmsg lines \$(dmesg | wc -l)"; dmesg | grep -c -i 'WARNING\|BUG\|UBSAN\|hung task' | sed 's/^/reports /'
 rmmod hammer2
 GUEST
 boot "$GUEST" "$GUEST_SSH" || { down "$GUEST" "$GUEST_SSH"; exit 2; }
@@ -180,8 +183,10 @@ printf '%s\n' "$out" | grep -q "own tree still matches" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^debug_locks 1$" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^kmsg lines [1-9]" || fail=$((fail + 1))
 printf '%s\n' "$out" | grep -q "^reports 0$" || fail=$((fail + 1))
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux-read"
 down "$GUEST" "$GUEST_SSH"
 
 make -s clean >/dev/null 2>&1
 echo "f4: both directions on $IMG, $fail failure(s)"
-[ $fail = 0 ]
+[ $fail = 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "f4: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

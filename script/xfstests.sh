@@ -162,7 +162,8 @@ eopt=
 # volume mounted again where check has unmounted it: the line says whether
 # that run finished. The remount's status is printed, and "fsxlog none"
 # when no log is there, so a failed remount does not read as no fsx run.
-out=$(ssh "$GUEST_SSH" "$run
+out=$(ssh "$GUEST_SSH" "echo h2ring-start > /dev/kmsg
+$run
 tests=\"$TESTS\"
 case \"\$tests\" in -g*) tests=\$(./check -n \$tests 2>/dev/null | grep -oE '^[a-z]+/[0-9]+' | tr '\\n' ' ') ;; esac
 [ -n \"\$tests\" ] || echo \"SETUP the test selection $TESTS expanded to no test\"
@@ -172,6 +173,7 @@ nf=0; for f in /mnt/h2xtest/*.fsxlog; do [ -f \"\$f\" ] && nf=\$((nf + 1)) && ec
 [ \$nf -gt 0 ] || echo \"fsxlog none\"
 umount /mnt/h2xtest /mnt/h2xscratch 2>/dev/null
 rmmod hammer2; echo \"rmmod exit \$?\"
+test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo \"log: bug \$(dmesg | grep -c \"kernel BUG\") oops \$(dmesg | grep -ci oops) warn \$(dmesg | grep -c \"WARNING:\") kasan \$(dmesg | grep -c \"BUG: KASAN\") ubsan \$(dmesg | grep -c \"UBSAN:\")\"" 2>&1)
 echo "  suite: $(git -C "$XFS" log -1 --format='%h %s' 2>/dev/null)"
 printf '%s\n' "$out" | sed 's/^/  /'
@@ -213,12 +215,14 @@ keep() {
 [ -n "$timedout" ] && { echo "  FAIL  timed out after ${PER}s: $timedout"; keep; echo "$summary"; exit 1; }
 [ -n "$ran" ] || [ -z "$expunged" ] || { echo "xfstests: COULD-NOT-RUN: every test named is expunged: $expunged" >&2; exit 2; }
 [ -n "$ran" ] || { echo "xfstests: COULD-NOT-RUN: check ran no test" >&2; exit 2; }
-fail=0
+fail=0; ringcnr=
 [ -n "$failed" ] && fail=1
 printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0 kasan 0 ubsan 0$' || {
 	echo "  FAIL  the kernel log is not clean"; fail=1; }
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 [ "$fail" -eq 0 ] || keep
 echo "$summary"
 [ "$fail" -eq 0 ] || exit 1
+[ -z "$ringcnr" ] || { echo "xfstests: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 [ "$nexec" -gt 0 ] || { echo "xfstests: COULD-NOT-RUN: every test named was skipped" >&2; exit 2; }
 exit 0
