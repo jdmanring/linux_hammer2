@@ -384,6 +384,7 @@ hammer2_io_buf_get(hammer2_io_t *dio, int read, int zero)
 	}
 	pr_debug("hammer2: block %llx held in a buffer of the port's own, %s\n",
 	    (unsigned long long)dio->pbase, read ? "read" : "new");
+	atomic_add_int(&dio->hmp->iobuf_count, 1);
 
 	return (0);
 }
@@ -789,16 +790,16 @@ hammer2_io_putblk(hammer2_io_t **diop)
 		 * the modified chain.  A dirty dio's folio is therefore
 		 * marked again on every drop, when the holder's changes are
 		 * complete, so the writeback before a volume header writes
-		 * every block a released chain modified.
+		 * every block a released chain modified.  A block in the
+		 * port's own buffer is pushed by the volume flush instead
+		 * (hammer2_io_push_bufs()), since offering it back costs a
+		 * copy of the whole block and can cost a write.
 		 */
 		if ((orefs & (HAMMER2_DIO_GOOD | HAMMER2_DIO_DIRTY)) ==
 		    (HAMMER2_DIO_GOOD | HAMMER2_DIO_DIRTY) &&
-		    !READ_ONCE(hammer2_device_error)) {
-			if (dio->folio && !folio_test_dirty(dio->folio))
-				folio_mark_dirty_lock(dio->folio);
-			else if (dio->buf && !dio->hmp->rconn)
-				hammer2_io_buf_put(dio, dio->buf);
-		}
+		    !READ_ONCE(hammer2_device_error) &&
+		    dio->folio && !folio_test_dirty(dio->folio))
+			folio_mark_dirty_lock(dio->folio);
 		hammer2_mtx_unlock(&dio->lock);
 		return;
 	}
@@ -873,6 +874,8 @@ hammer2_io_putblk(hammer2_io_t **diop)
 		}
 		if (hmp->rconn)
 			hammer2_remote_block_freed(hmp, 0);
+		else
+			atomic_add_int(&hmp->iobuf_count, -1);
 		kvfree(buf);	/* Linux: vmalloc here, kvmalloc on a connection device */
 	}
 
@@ -1260,6 +1263,44 @@ hammer2_io_hash_cleanup_all(hammer2_dev_t *hmp)
 			atomic_add_int(&hmp->iofree_count, -1);
 		}
 	}
+}
+
+/*
+ * Linux: a dirty dio held in the port's own buffer reaches the page cache
+ * or the media only when the buffer is offered back, which putblk does at
+ * the last drop, so another holder of the block can keep it from the
+ * writeback a volume flush issues before its header.  The flush pushes
+ * every such dio still referenced first, the buffer's counterpart of the
+ * folio mark putblk makes at every drop.  None exists unless the page
+ * cache refused a block or io_buf_only is set, and the walk is skipped
+ * then.
+ *
+ * DEFER(a commit stall measured under io_buf_only): the walk holds
+ * iohash_lock across hammer2_io_buf_put(), which writes synchronously when
+ * the page cache refuses the block; take a reference per dio and push it
+ * outside the lock instead.
+ */
+void
+hammer2_io_push_bufs(hammer2_dev_t *hmp)
+{
+	hammer2_io_t *dio;
+	int i;
+
+	if (hmp->rconn || READ_ONCE(hmp->iobuf_count) == 0 ||
+	    READ_ONCE(hammer2_device_error))
+		return;
+	hammer2_mtx_ex(&hmp->iohash_lock);
+	for (i = 0; i < HAMMER2_IOHASH_SIZE; ++i) {
+		for (dio = hmp->iohash[i].base; dio; dio = dio->next) {
+			hammer2_mtx_ex(&dio->lock);
+			if (dio->buf && (dio->refs & HAMMER2_DIO_MASK) &&
+			    (dio->refs & (HAMMER2_DIO_GOOD | HAMMER2_DIO_DIRTY)) ==
+			    (HAMMER2_DIO_GOOD | HAMMER2_DIO_DIRTY))
+				hammer2_io_buf_put(dio, dio->buf);
+			hammer2_mtx_unlock(&dio->lock);
+		}
+	}
+	hammer2_mtx_unlock(&hmp->iohash_lock);
 }
 
 #define HAMMER2_DEDUP_FRAG	(HAMMER2_PBUFSIZE / 64)

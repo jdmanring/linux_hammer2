@@ -262,7 +262,8 @@ folio in that mapping is a 64KB folio and one `hammer2_io` holds exactly
 one. Caching, writeback and reclaim belong to the page cache; this file
 holds a folio reference for the life of `DIO_GOOD`, dirties it on
 every drop of a dirty dio, and kicks writeback on `DIO_FLUSH` at the
-last. The DIO hash
+last; a block held in the dio's own buffer is pushed by the volume flush
+before its header (`doc/IO_MODEL.md`). The DIO hash
 therefore caches metadata and no longer owns memory.
 
 Read-ahead does not come with the mapping. `read_cache_folio()` and
@@ -504,7 +505,10 @@ carried). So `fsync` reads the superblock's error sequence through the
 descriptor's own cursor, as `syncfs(2)` does, and that is the only route
 by which a failed commit reaches it. The cursor is sampled at open, so a
 descriptor opened before any failure reports it once on its next `fsync`,
-whichever file it names and whichever commit failed; no other in-tree
+whichever file it names and whichever commit failed, and since `fsync`
+and `syncfs` advance that one cursor, a `syncfs` on the descriptor
+after the `fsync` that reported the failure reads 0, where ext4's reads
+`EIO`; no other in-tree
 filesystem reads the superblock's sequence from `->fsync`, and this
 over-reporting is the port's choice, since a commit covers the whole PFS.
 Measured with a device that fails every write for one `fsync`, against

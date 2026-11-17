@@ -1280,6 +1280,7 @@ hammer2_xop_inode_flush(hammer2_xop_t *arg, void *scratch, int clindex)
 	 *
 	 * XXX this isn't being incremental
 	 */
+	hammer2_io_push_bufs(hmp);	/* Linux */
 	TAILQ_FOREACH(e, &hmp->devvp_list, entry) {
 		/*
 		 * XXX Linux: VOP_FSYNC on a device vnode writes back the

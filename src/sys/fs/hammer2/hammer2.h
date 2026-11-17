@@ -1072,6 +1072,7 @@ struct hammer2_dev {
 	int			nvolumes;	/* total number of volumes */
 	int			volhdrno;	/* last volhdrno written */
 	int			iofree_count;
+	int			iobuf_count;	/* Linux: dios in the port's own buffer */
 	int			io_iterator;
 	hammer2_lk_t		vollk;		/* lockmgr lock */
 	hammer2_lk_t		bulklk;		/* bulkfree operation lock */
@@ -1554,6 +1555,7 @@ hammer2_io_t *hammer2_io_getblk(hammer2_dev_t *, int, hammer2_off_t, int, int);
 void hammer2_io_putblk(hammer2_io_t **);
 void hammer2_io_hash_cleanup_all(hammer2_dev_t *);
 void hammer2_io_discard(hammer2_dev_t *);	/* Linux */
+void hammer2_io_push_bufs(hammer2_dev_t *);	/* Linux */
 char *hammer2_io_data(hammer2_io_t *, hammer2_off_t);
 int hammer2_io_new(hammer2_dev_t *, int, hammer2_off_t, int, hammer2_io_t **);
 int hammer2_io_newnz(hammer2_dev_t *, int, hammer2_off_t, int, hammer2_io_t **);

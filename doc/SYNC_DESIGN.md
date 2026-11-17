@@ -877,7 +877,7 @@ change executes:
 
 **Status, 2026-11-01: amended and audited to SIGN-OFF; the tree
 carries only scaffolding (the `HAMMER2_LOOKUP_PRUNE` flag,
-`hammer2.h:366`, two unused thread fields, `hammer2.h:1133-1134`, and
+`hammer2.h:366`, two unused thread fields, `hammer2.h:1134-1135`, and
 scanall clearing the flag, `hammer2_xops.c:912`) and no prune
 predicate, and, under `HAMMER2_LOCKDEBUG` alone, an instrument that
 prints what the capture and the veto below would read on each snapshot
@@ -1229,7 +1229,7 @@ cut: the cut is the snapshot flush transaction's id, taken right after
 the PFS sync (`hammer2_ioctl.c:995-1016`), and a writer that took its tid before cut N
 can land in snapshot N+1 under blocks whose propagated `modify_tid` sits
 below cut N, with no fixed slack bounding a stalled writer
-(`hammer2_flush.c:118-121`, `hammer2.h:1123-1132`,
+(`hammer2_flush.c:118-121`, `hammer2.h:1124-1133`,
 `hammer2_chain.c:2396-2406, 2603-2610, 3283-3290, 3845-3856, 4399-4404`).
 `mirror_tid` is stamped at every modify from the device's flush generation
 (`hammer2_chain.c:1671`) and is monotone per device
@@ -1260,7 +1260,7 @@ before it: the candidate is the post-sync generation, and any inequality
 across the snapshot window proper, from whatever flusher, runs that pass
 unpruned. The check fails closed; its cost is availability (one unpruned
 pass per syncer volume flush in-window), not correctness. Each read takes
-the voldata lock (`hammer2_voldata_lock()`, `hammer2_vfsops.c:397`, declared at `hammer2.h:1728`) and is done
+the voldata lock (`hammer2_voldata_lock()`, `hammer2_vfsops.c:397`, declared at `hammer2.h:1730`) and is done
 twice requiring equal: the FREEMAP bump runs outside that lock (taken
 only in the VOLUME arm, `hammer2_flush.c:710`), so the reads rest on the counter's
 monotonicity and double-read equality, not on exclusion. A subtree prunes only when its root's

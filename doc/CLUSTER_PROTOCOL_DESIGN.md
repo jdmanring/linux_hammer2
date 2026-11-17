@@ -77,9 +77,9 @@ property the remote element depends on was read:
 | `hammer2_chain.c:849` | `hammer2_chain_drop_data()` panics "data not NULL" for a chain with data and no `dio`, every type but VOLUME and FREEMAP |
 | `hammer2_chain.c:1164` | `hammer2_chain_unlock()` calls it on every last unlock |
 | `hammer2_chain.c:1027` | `hammer2_chain_load_data()` returns before touching the device when `chain->data` is set or the block part of `data_off` is zero, and reads through `hammer2_io_bread()` otherwise, an I/O error becoming the chain's `EIO` |
-| `hammer2_io.c:944` | `hammer2_io_bread()` is the read path from a chain to its device; `hammer2_io_new()` is the path for a chain being created, and `load_data` takes it for an `INITIAL` chain |
+| `hammer2_io.c:947` | `hammer2_io_bread()` is the read path from a chain to its device; `hammer2_io_new()` is the path for a chain being created, and `load_data` takes it for an `INITIAL` chain |
 | `hammer2_io.c:243` | `hammer2_get_volume()` is reached on a dio-hash miss before the dio is allocated, and panics with no volume for the offset; `hpanic` sets the host-wide `hammer2_device_error` |
-| `hammer2_io.c:862` | `buf`, the no-folio block, is freed at the dio's last drop, and a dirty one is written through `bdev_file`'s mapping first |
+| `hammer2_io.c:863` | `buf`, the no-folio block, is freed at the dio's last drop, and a dirty one is written through `bdev_file`'s mapping first |
 | `hammer2_synchro.c:2156` | `hammer2_xop_start_except()` with the pass's own index excludes the target element from the source scan |
 | `hammer2_synchro.c:2246` | a pass ends on any collect error but `ENOENT` |
 | `hammer2_vfsops.c:420` | `hammer2_pfsalloc()` merges every PFS root sharing a `pfs_clid` into one `pmp`, and a later mount joins an existing one |
@@ -479,7 +479,7 @@ helper's `mount_count` accounting (`hammer2_vfsops.c:2909-2917`) skips
 it by the same test, its `devvp_list` is initialized empty because
 `hammer2_register_sb()` walks every slot's list
 (`hammer2_ondisk.c:139-143`), and it is freed by a reference count the connection device alone
-carries (`struct hammer2_dev` has none, `hammer2.h:1029-1085`, only
+carries (`struct hammer2_dev` has none, `hammer2.h:1029-1086`, only
 `mount_count` and `iofree_count`): one reference per chain allocated on
 it, taken in `hammer2_chain_alloc()` (`hammer2_chain.c:176`) and dropped
 where the chain is freed (`:837`, not at `hammer2_chain_lastdrop()`'s
@@ -487,7 +487,7 @@ entry, which returns early for a chain that keeps children), two marked
 lines, the link's own, dropped by its teardown, and the registration
 item's, taken only while it runs.
 The device's dios are not counted: a dio stays in the hash at its last
-release (`hammer2_io.c:862-881`) and is freed by
+release (`hammer2_io.c:863-884`) and is freed by
 `hammer2_io_hash_cleanup_all()` in the device's own free, as the block
 device's are at `hammer2_vfsops.c:3036`, so a count on them would hold
 the device forever.
@@ -776,7 +776,7 @@ takes the stash, so the first load costs no round trip. The block then
 lives in a `hammer2_io_t` whose `buf` field, the form the port already
 has for "the block when the page cache had no folio for it", holds it,
 served by `hammer2_io_data()`. `hammer2_io_putblk()` frees `buf` at the
-dio's last drop (`hammer2_io.c:862-876`), so a proxy kept past its XOP
+dio's last drop (`hammer2_io.c:863-879`), so a proxy kept past its XOP
 (the retire's ccache, `ip->cluster` through `hammer2_inode_repoint()`,
 the registered root) has no data, and **every later load refetches**: the
 device's read looks the handle up and issues one request under the
@@ -980,7 +980,7 @@ is a constraint on the write-capable pass of stage 3, which must either
 raise the bound with the size it asks for or ask in pieces, and stage
 2b's read-only pass never reaches it. A timed-out element feeds `HAMMER2_ERROR_ETIMEDOUT`
 (`hammer2.h:312`), which the errno map returns as `ETIMEDOUT`
-(`:1793-1794`), and retires normally; a connection that closes fails every
+(`:1795-1796`), and retires normally; a connection that closes fails every
 request pending on it at once with the same code. The aborted path at
 `hammer2_admin.c:674` is not reused for this: it passes the POSIX
 `ECONNABORTED` where `hammer2_xop_feed()` stores a `HAMMER2_ERROR_*`
@@ -1643,7 +1643,7 @@ issues it twice.
 ### C. The errno of fail-closed
 
 The three check codes map to `EINPROGRESS`, `ESRCH` and `EDEADLK`
-(`hammer2.h:1762-1806`), and the collect turned `ESRCH` and `EDEADLK` at
+(`hammer2.h:1764-1808`), and the collect turned `ESRCH` and `EDEADLK` at
 the end of a scan into `ENOENT` (C7). Since 1.0.92 `EDEADLK` fails the
 collect and reads as `EIO`, and only `ESRCH` still ends as `ENOENT`. With fewer than `nquorum` masters
 agreeing the check returns at `hammer2_cluster.c:369-402`, before pass 3,
@@ -1719,7 +1719,7 @@ state, read in the `quorum_loss` cell from `cat` and `ls` after the
 caches are dropped and from a `stat` of an uncached inode, which stage
 2's read-only remote element can already read. The `EIO` of disagreement
 depends on what disagreement is, which is decision A's protocol: the
-errno map has no `pmp` (`hammer2.h:1768-1769`), the collect's skip (C7)
+errno map has no `pmp` (`hammer2.h:1770-1771`), the collect's skip (C7)
 would hide a disputed key and `readdir` would end at it, so where the
 mapping lives and what it must never fire on is the protocol note's.
 **Taken: `ENOTCONN` for an uncached read with no quorum

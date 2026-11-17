@@ -50,7 +50,12 @@ Lifetime, in the order it happens:
    wait for the last holder. The volume flush's writeback before the
    header then skipped it while the header named it, and a power cut
    there left a super-root failing its check (`hammer2_io_putblk()`,
-   the reading in the verification record).
+   the reading in the verification record). A dio held in the port's
+   own buffer, below, is not offered back at an earlier drop, since that
+   costs a copy of the whole block and can cost a synchronous write;
+   the volume flush pushes every such dio still referenced and dirty
+   before its writeback instead (`hammer2_io_push_bufs()`), and skips
+   the walk when no dio holds a buffer.
 
 When step 2's grab returns `ENOMEM`, memory holding no free run of
 sixteen pages and the mapping refusing any smaller order, the dio takes
@@ -59,8 +64,8 @@ and not a run of them, read through a bio of the block's pages, and
 `hammer2_io_data()` returns that buffer plus the offset. The page cache
 holds no folio for the block while the dio does, since the grab looked
 before it allocated and one dio covers one block, so the media is the
-truth for the read. On every drop of a dirty dio the block is offered
-back to the page cache first, copied into a folio and dirtied as step 4 would
+truth for the read. On a dirty last drop the block is offered back to
+the page cache first, copied into a folio and dirtied as step 4 would
 have; only when the cache still cannot hold it is it written with a
 bio, and the range is invalidated afterwards, since a folio read ahead
 into the cache in the meantime would be stale. This is the one thing a
