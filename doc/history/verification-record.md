@@ -25833,3 +25833,109 @@ document. `latency.sh`, now printing its tree and module hash
 and is kept as `-guest-up`): median `randread4k` 11 us against ext4's 2
 and btrfs's 2, write-and-`fsync` 3017 us against 3515 and 4045, a batch
 of eight writes and one `fsync` 4114 us against 4242 and 4065.
+
+## A volume header named a block its writeback had not written, 2026-11-16
+
+`conc-replay.sh` puts the volume on dm-log-writes, runs eight writers
+doing `pwrite` and `fsync` for 5 s, then replays the log to every flush
+and mounts each replay read-only. At `4e3509d3`, 2 of 3 runs left a
+flush boundary that did not mount: `hammer2_chain_testcheck` failed on
+the super-root and `hammer2_get_tree` gave up reading it
+(`conc-flush-head-4e3509d3-r{1,2,3}.out`). The tree before the series,
+`2d97223e`, with a `sync` loop running beside the writers to supply the
+commits its `fsync` did not make, failed 3 of 3
+(`conc-flush-pre-2d97223e-r{1,2,3}.out`), so the defect is older than
+the series and the series reached it more often. One failing run's log
+and images are kept in `fixtures/lw-nomount-20261116-183147/`, and a
+decode of that log (`diagnosis-sroot-nomount.md`, read from the log and
+the source and not a run) found the header naming a 1 KiB super-root
+record whose block the log had written once, with zeros in that slot,
+before the header and not again.
+
+The reading at the operation. `sroot-probe.sh <rev>` builds `<rev>` in a
+detached worktree with a probe in `hammer2_flush.c`'s VOLHDR stage, after
+the device writeback and before the cache flush: it reads the block the
+super-root blockref in `volsync` names straight from the device, hashes
+it, and compares the hash with the stored check, the page cache copy, the
+folio's dirty and writeback bits and the dio's state, then runs
+`conc-replay.sh`. Its first fix arm printed no probe line at all,
+because the thousands of replay mounts after the writers had wrapped the
+guest's kernel ring before the count was read, and its zero meant
+nothing; `conc-replay.sh` now keeps the writer phase's log before the
+replays, and every arm below was run again with the count read from it
+and the number of checks printed beside the mismatches. On
+`h2release-7.3tls`, control `4e3509d3`, three runs: 2 left a boundary
+that did not mount, the probe read 4 mismatches in at least 4160 checks,
+and the `mir` each failing replay named is among them
+(`sroot-probe-control-4e3509d3-r2.out`; the first control,
+`sroot-probe-control-4e3509d3.out`, read the same shape, 2 of 3 and 4
+mismatches). At every mismatch the page cache copy matched the check,
+the folio was dirty, and the dio had no reference left: the block was
+marked dirty after the writeback had taken its pages, by a last drop
+that came too late.
+
+The cause. DragonFly's dio holds its buffer locked from the first
+reference to the last, so the buffer cache cannot write it while a chain
+may change it, and `DIO_DIRTY` becomes a delayed write only at the last
+drop. The port kept the flag and not the lock. A folio is not held by
+its dio: writeback cleans it while the dio is referenced, a chain
+modified afterwards sets `DIO_DIRTY` and nothing else, and when another
+chain in the same 64 KiB block holds the dio past the volume flush's
+`sync_blockdev()`, the header is written naming bytes that are only in
+memory. `7f60cd99` has `hammer2_io_putblk()` mark a dirty dio's folio
+dirty on every drop and offer a dio held in the port's own buffer back
+to the page cache the same way, so a chain's release puts its changes in
+the dirty set, and the flusher releases each chain before the writeback
+that precedes the header. A device in error refuses the mark at every
+drop as it does at the last. Whether DragonFly's `VOP_FSYNC` of the
+device skips a buffer a dio still holds, and so can name an unwritten
+block the same way, is a candidate read from its source and not
+measured.
+
+The fix at `7f60cd99`, run again with the current instrument after a
+first pair of fix arms, built from the same source before an amend added
+documents and since left unreachable, had read the same: six runs, three
+plain and three with the `sync` loop, 0 mismatches in at least 6720
+checks, and all 13840 flush boundaries mounted
+(`sroot-probe-fix-7f60cd99.out`, `sroot-probe-fix-syncloop-7f60cd99.out`).
+Its module hashed the same as that first pair's, `f61ebbc71cc784d3`. Two
+of the six runs committed less than the others (192 and 576 checks), so
+the comparison is per check: the two control readings together found 8
+mismatches in at least 6592 checks, at which rate 6720 checks would
+expect about 8, and none would come by chance about three times in ten
+thousand.
+
+The log count `conc-replay.sh` printed was the defect class the probe
+had. It ran `dmesg` after the replays, so a report from the writer phase
+had already been pushed out of the ring. The script now captures the
+log with `dmesg -w` from the module's load to its unload and counts the
+capture: on `h2debug-7.3tls` the three runs below captured 5420, 5503
+and 5072 lines while the ring held 1264 to 1266 at the end.
+
+The closing readings at `2e366c82`, whose module source is that of
+`7f60cd99`, each in `final-<build>-<reading>-2e366c82.out`, the tree line
+reading 0 uncommitted paths. On `h2debug-7.3tls`: the flakey tests, 51
+of 51 executed passed, 13 not run for a feature, generic/483 expunged;
+the freeze probe blocked in 5 of 5 rounds; `conc-crash.sh` 3 rounds of 8
+writers, 30510 records checked, 0 missing; `storm.sh`, `test-enospc.sh` as root and as a user,
+and `test-fixtures.sh` clean; `fuzz-mount.sh` with `H2_FUZZ_WRITE=1` over
+50 images, 40 mounted, 10 refused, 0 faulted, 0 with a kernel report;
+`cluster-sync.sh` 60 of 60; `conc-replay.sh` three runs, 90 marks with no
+record missing and 6888 flush boundaries all mounted. Because the change
+moves where a block is marked dirty, `hpanic-contain.sh` ran with a
+`HAMMER2_LOCKDEBUG=1` module: knob 2, 5 of 5, nothing written after the
+fault on the media; its knob 0 control, 4 of 4, the after-files on the
+media; knob 3, 9 of 9, the device byte-identical to the sync before the
+fault. The guest's log after the batch held no KASAN, UBSAN, `BUG:`,
+`WARNING:`, lockdep or hung-task line.
+`cluster-sync.sh` read kmemleak reporting nothing of hammer2's after the
+unload. On `h2kasan-7.3tls` at `2e366c82`: the flakey tests, 51 of 51;
+`conc-crash.sh` 3 rounds, 17032 records checked, 0 missing; `storm.sh`,
+`test-enospc.sh` both ways and `test-fixtures.sh` clean;
+`conc-replay.sh` three runs, 90 marks with no record missing and 2776
+flush boundaries all mounted; the log after the batch the same. Without
+the guest, at `2e366c82` against `linux-7.3-tls`: `make W=1` printed no
+warning; `analyze.sh` 8 candidates and `smatch.sh` 15 findings outside
+the `neighbour.h` assertion, the same sets by file, function and message
+as at `4e3509d3` (`final-instruments-compare-2e366c82.out`); the compile
+database holds 24 entries, as `hammer2-y` names 24 objects.
