@@ -412,5 +412,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "tree: $N files written here and counted on both sides, $fail failure(s)"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "tree: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

@@ -232,5 +232,5 @@ printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    fsck_hammer2 clean after the exports" || {
 	echo "  FAIL  fsck_hammer2 after the exports"; fail=$((fail + 1)); }
 echo "nfsd: $ok check(s) passed, $fail failure(s)"
-[ "$fail" -eq 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "nfsd: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" -eq 0 ] || exit 1

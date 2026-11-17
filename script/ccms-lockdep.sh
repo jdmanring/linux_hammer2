@@ -143,13 +143,13 @@ check "KASAN and UBSAN reports: ${kasan:-?}" $r
 check "BUG lines: ${bug:-?}" $r
 check "the module unloaded, so the threads stopped" $unload
 
+ringcnr=
+printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr=" linux"
+[ -z "$ringcnr" ] || { echo "ccms-lockdep: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 if [ $bad -ne 0 ]; then
 	printf '%s\n' "$out" | sed -n '/^---report---$/,$p'
 	echo "ccms-lockdep: $bad failed"
 	exit 1
 fi
-ringcnr=
-printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr=" linux"
-[ -z "$ringcnr" ] || { echo "ccms-lockdep: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 echo "ccms-lockdep: 7 check(s), 0 failed, $SECS s on $grel"
 exit 0

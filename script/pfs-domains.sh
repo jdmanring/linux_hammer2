@@ -213,5 +213,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "pfs: $ndom PFS roots made here and a snapshot written into, on $VOLUMES volume(s), mounted by label by both sides, $fail failure(s)"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "pfs: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

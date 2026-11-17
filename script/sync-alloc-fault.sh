@@ -443,6 +443,6 @@ unusable) check "kmemleak is usable" 1 "the scan refused; only a reboot turns it
 esac
 
 echo "sync-alloc: $checks check(s), $fail failed"
-[ "$fail" = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "sync-alloc: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" = 0 ] || exit 1
 exit 0

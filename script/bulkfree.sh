@@ -204,5 +204,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "bulkfree: $MB MB written, removed, scanned twice and written again, $fail failure(s)"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "bulkfree: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

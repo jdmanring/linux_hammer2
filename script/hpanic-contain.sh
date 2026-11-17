@@ -29,10 +29,10 @@ want() {	# description, extended regex that a line of the run must match
 	nc=$((nc + 1))
 	grep -Eq -- "$2" "$T" && echo "  ok    $1" || { echo "  FAIL  $1"; nf=$((nf + 1)); }
 }
-verdict() { echo "hpanic: knob $KNOB, $nc check(s), $nf failed"; [ $nf = 0 ] || exit 1
+verdict() { echo "hpanic: knob $KNOB, $nc check(s), $nf failed"
 	grep -q 'ring whole' "$T" && ! grep -q 'ring COULD-NOT-READ' "$T" || {
 		echo "hpanic: COULD-NOT-READ: the guest's kernel ring lost its start marker" >&2; exit 2; }
-	exit 0; }
+	[ $nf = 0 ] || exit 1; exit 0; }
 rm -f "$IMG" "$IMG.pre"; truncate -s 1G "$IMG"; "$NEWFS" -L HP "$IMG" >/dev/null 2>&1 || { echo "COULD-NOT-RUN: newfs"; exit 2; }
 waitssh() { i=0; while [ $i -lt 60 ]; do ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null && return 0; sleep 5; i=$((i+1)); done; return 1; }
 [ "$(virsh domstate $GUEST)" = "shut off" ] || { echo "COULD-NOT-RUN: $GUEST is $(virsh domstate $GUEST)"; exit 2; }

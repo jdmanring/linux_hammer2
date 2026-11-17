@@ -494,5 +494,5 @@ echo "  layout  big.dfly: $1 data blocks, $2 contiguous steps, $3 forward jumps,
 
 rm -f "$EXT4" "$BTRFS"
 echo "throughput: a $MIB MiB file written both ways and read back, $fail failure(s)"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "throughput: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

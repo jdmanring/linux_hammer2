@@ -378,5 +378,5 @@ fsck_control "$IMG" || fail=$((fail + 1))
 
 make -s clean >/dev/null 2>&1
 echo "closure: $npaths store paths, copied in and read cold on both sides, $nfiles files after the collection, $fail failure(s)"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "closure: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

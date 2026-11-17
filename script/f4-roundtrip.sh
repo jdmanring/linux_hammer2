@@ -188,5 +188,5 @@ down "$GUEST" "$GUEST_SSH"
 
 make -s clean >/dev/null 2>&1
 echo "f4: both directions on $IMG, $fail failure(s)"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "f4: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

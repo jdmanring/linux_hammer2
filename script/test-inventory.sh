@@ -718,17 +718,20 @@ RING_CHECK='test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep
 RING_REFUSE="the guest's kernel ring lost its start marker"
 RING_COUNT='grep( +-[A-Za-z]+)* +-[A-Za-z]*c[A-Za-z]*( |$).*(WARNING|BUG:|KASAN|circular|cut here)'
 ring_rule() {	# ring_rule <harness>: prints why it fails the rule, nothing when it passes
-	# Read in file order: every clear, `dmesg -c` among them, carries the
-	# marker, counted by occurrence so a second clear on a marked line is
-	# seen; and a report count needs a check after the last clear and
-	# before it, on an earlier line or earlier on its own. What this
-	# cannot read is whether the refusal is reachable: it holds the text
-	# to the order, and a refusal behind a condition that never holds is
+	# Read in file order: every clear, `dmesg -c` and `--clear` among
+	# them, is the one spelling with the marker, counted by occurrence so
+	# a second clear on a marked line is seen; a report count needs a
+	# check after the last clear and before it, on an earlier line or
+	# earlier on its own; and a clear after the first needs a report
+	# count since the one before, or it erases a phase nothing counted.
+	# What this cannot read is whether the refusal is reachable, or
+	# whether it comes before the run's failure exit: it holds the text
+	# to an order, and a refusal behind a condition that never holds is
 	# outside it.
 	command grep -v '^[[:space:]]*#' "$1" | awk -v mk="$RING_MARK" -v ck="$RING_CHECK" \
 	    -v cnt="$RING_COUNT" '
 	{
-		l = $0; nc = gsub(/dmesg -[cC]/, "&", l)
+		l = $0; nc = gsub(/dmesg (-[cC]|--clear)/, "&", l)
 		l = $0; nm = 0
 		while ((i = index(l, "dmesg -C; " mk)) > 0) { nm++; l = substr(l, i + 1) }
 		bare += nc - nm
@@ -737,11 +740,13 @@ ring_rule() {	# ring_rule <harness>: prints why it fails the rule, nothing when 
 		if (ip) checks++
 		cp = match($0, cnt)
 		if (cp && !(ip && ip < cp) && !(checked && !nc)) early++
-		if (nc) checked = 0
+		if (nc) { if (clears && !counted) erased++; clears += nc; counted = 0; checked = 0 }
+		if (cp) counted = 1
 		if (ip) checked = 1
 	}
 	END {
-		if (bare) print bare " ring clear(s) with no start marker after them"
+		if (bare) print bare " ring clear(s) not written as dmesg -C; " mk
+		if (erased) print erased " clear(s) erasing a phase no report count read"
 		if (!marks) print "no start marker written"
 		if (!checks) print "no check of the marker"
 		if (early) print early " report count(s) with no check since the last clear"
@@ -754,7 +759,7 @@ for s in script/*.sh; do
 	case "$s" in
 	script/test-inventory.sh) continue ;;
 	esac
-	rclear=$(command grep -v '^[[:space:]]*#' "$s" | command grep -c 'dmesg -[cC]') || :
+	rclear=$(command grep -v '^[[:space:]]*#' "$s" | command grep -cE 'dmesg (-[cC]|--clear)') || :
 	[ "$rclear" -gt 0 ] ||
 	    command grep -q -E 'grep( +-[A-Za-z]+)* +-[A-Za-z]*c[A-Za-z]*( |$).*(WARNING|BUG:|KASAN|circular|cut here)' "$s" ||
 	    continue
@@ -784,14 +789,15 @@ if [ -n "$ring_first" ]; then
 	ring_tmp=$(mktemp -d) || exit 2
 	# awk with index(), since the check holds `|` and `.` and a sed
 	# address would read them as syntax.
-	for m in '!d && (i = index($0, "dmesg -C; " mk)) { $0 = substr($0, 1, i + 7) substr($0, i + 10 + length(mk)); d = 1 } { print }::with no start marker after them::the first clear'"'"'s marker dropped' \
+	for m in '!d && (i = index($0, "dmesg -C; " mk)) { $0 = substr($0, 1, i + 7) substr($0, i + 10 + length(mk)); d = 1 } { print }::not written as dmesg -C; ::the first clear'"'"'s marker dropped' \
 	    '{ while ((i = index($0, mk)) > 0) $0 = substr($0, 1, i - 1) substr($0, i + length(mk)); print }::no start marker written::every marker dropped' \
 	    'index($0, ck) { next } { print }::no check of the marker::the check dropped' \
 	    'index($0, ck) { $0 = "# " $0 } { print }::no check of the marker::the check made a comment' \
 	    'index($0, rf) { next } { print }::no refusal when the marker is gone::the refusal dropped' \
-	    '{ print } END { print "dmesg -C" }::with no start marker after them::a bare clear appended' \
-	    '!d && index($0, "dmesg -C; " mk) { $0 = $0 "; dmesg -C"; d = 1 } { print }::with no start marker after them::a second clear on a marked line' \
-	    'index($0, ck) && !h { h = $0; next } { print } END { print h }::with no check since the last clear::the first check moved past the end'; do
+	    '{ print } END { print "dmesg -C" }::not written as dmesg -C; ::a bare clear appended' \
+	    '!d && index($0, "dmesg -C; " mk) { $0 = $0 "; dmesg -C"; d = 1 } { print }::not written as dmesg -C; ::a second clear on a marked line' \
+	    'index($0, ck) && !h { h = $0; next } { print } END { print h }::with no check since the last clear::the first check moved past the end' \
+	    'index($0, ck) && !d { print "dmesg -C; " mk; d = 1 } { print }::erasing a phase no report count read::a marked clear before the first check'; do
 		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
 		nringctl=$((nringctl + 1))
 		awk -v mk="$RING_MARK" -v ck="$RING_CHECK" -v rf="$RING_REFUSE" "$prog" \
@@ -805,8 +811,8 @@ if [ -n "$ring_first" ]; then
 	done
 	rm -rf "$ring_tmp"
 fi
-[ "$nringctl" = 8 ] || {
-	echo "  FAIL $nringctl ring control(s) ran, not the 8 the gate lists"
+[ "$nringctl" = 9 ] || {
+	echo "  FAIL $nringctl ring control(s) ran, not the 9 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it

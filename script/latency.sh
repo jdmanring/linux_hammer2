@@ -292,5 +292,5 @@ done
 down
 rm -rf "$W"
 echo "latency: $REPEAT pass(es) at $OPS op(s) over a $MIB MiB file, $fail failure(s)"
-[ "$fail" = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "latency: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" = 0 ] || exit 1

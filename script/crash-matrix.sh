@@ -383,6 +383,6 @@ for writer in $WRITERS; do
 	done
 done
 echo "crash: $fail failure(s), $missed cell(s) that never reached their condition"
+[ -z "$ringcnr" ] || { echo "crash: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 [ $fail = 0 ] || exit 1
 [ $missed = 0 ] || exit 2
-[ -z "$ringcnr" ] || { echo "crash: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }

@@ -235,5 +235,5 @@ down "$DFLY" "$DFLY_SSH"
 
 make -s clean >/dev/null 2>&1
 echo "cut: ${SECONDS_WRITING}s of writing, lag $LAG, $fail failure(s)"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "cut: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

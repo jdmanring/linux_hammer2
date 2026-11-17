@@ -217,5 +217,5 @@ fi
 
 make -s clean >/dev/null 2>&1
 echo "root-boot: 2 boot(s), 1 control, $fail failure(s)"
-[ "$fail" -eq 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "root-boot: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" -eq 0 ] || exit 1

@@ -252,5 +252,5 @@ rm -f "$WORK/fz.img"
 
 [ "$ran" = "$N" ] || { echo "  FAIL  ran $ran of $N images"; fail=$((fail + 1)); }
 echo "fuzz: seed $SEED, $ran image(s): $mounted mounted, $refused refused, $faulted faulted, $wrefused mounted but refused a write, $warned with a kernel report, $hung hung, $stuck stuck at umount or rmmod; write $WRITE; built from $built; log $LOG"
-[ $fail = 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "fuzz: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ $fail = 0 ] || exit 1

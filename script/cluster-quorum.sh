@@ -1090,7 +1090,8 @@ else
 	check "the module carries no instrumentation, its kernel tree configuring none" $? "${have_asan:-0} __asan import(s); the KASAN and UBSAN patterns below cannot report on this kernel, and say nothing here"
 fi
 a=$(val kernel-warnings); [ "${a:-1}" = 0 ]; check "no kernel warning, lockdep, KASAN or UBSAN report" $? "${a:-none}"
-grep -q 'ring whole' "$W/out" && ! grep -q 'ring COULD-NOT-READ' "$W/out" || cnr "the guest's kernel ring lost its start marker"
+ringcnr=
+grep -q 'ring whole' "$W/out" && ! grep -q 'ring COULD-NOT-READ' "$W/out" || ringcnr=" linux"
 # A scan that refused is not an empty report. An earlier control run can
 # switch kmemleak off, after which it reports nothing and stays off until a
 # reboot, so a refusal fails here rather than reading as a clean scan. A
@@ -1156,7 +1157,7 @@ K="$FIXDIR/quorum-run-$STAMP.klog"
 echo "  read  $(val guest-kernel), lockdep debug_locks ${dl:-absent}"
 if [ -r "$K" ]; then
 	head -1 "$K" | grep -q 'h2ring-start' && echo "  read  the kept log starts at the run's marker" ||
-		echo "  read  the kept log does not start at the run's marker: the ring wrapped or the marker was never written, and the counts below may be short"
+		ringcnr="$ringcnr kept-log"
 	for i in 0 1; do
 		kc() { grep -c "$1 clindex $i" "$K"; }
 		echo "  read  clindex $i: pass $(kc 'syncsnap: pass') idle $(kc 'syncsnap: idle') idlestamp $(kc 'syncsnap: idlestamp') noquorum $(kc 'syncsnap: noquorum') flush $(kc 'sync_flush:') verified $(kc 'syncsnap: verified')"
@@ -1164,6 +1165,7 @@ if [ -r "$K" ]; then
 	echo "  read  thread inode updates $(grep -c 'syncthr: update inode' "$K")"
 fi
 echo "quorum: $checks check(s), $fail failed"
+[ -z "$ringcnr" ] || { echo "quorum: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
 [ "$fail" = 0 ] || exit 1
 # A failure above is a finding whether or not a reading was exercised;
 # with none, a reading that exercised nothing is no pass.

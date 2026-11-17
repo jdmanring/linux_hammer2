@@ -733,6 +733,6 @@ echo "          being equal for LZ4 and ZLIB, anything a second mount of the"
 echo "          same device would show, and the writing ioctls: snapshot,"
 echo "          PFS create and delete, growfs and bulkfree need a writable"
 echo "          mount and are verified by hand"
-[ "$fail" -eq 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "fixtures: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" -eq 0 ] || exit 1
 exit 0

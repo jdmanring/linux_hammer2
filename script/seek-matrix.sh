@@ -581,8 +581,8 @@ SETUP cold reattach failed"
 		echo "  FAIL  fsck_hammer2 exit $fsck_rc"; fail=$((fail + 1)); }
 	echo "seek-matrix: $([ "$RACE" = 1 ] && echo race || { [ "$TIME" = 1 ] && echo time || { [ "$COLD" = 1 ] && echo cold || { [ "$WINDOW" != 0 ] && echo "window $WINDOW" || echo contend; }; }; }), $REPEAT repeat(s), $fail failure(s)"
 	rm -f "$IMG"
-	[ "$fail" -eq 0 ] || exit 1
 	[ -z "$ringcnr" ] || { echo "seek-matrix: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+	[ "$fail" -eq 0 ] || exit 1
 	exit 0
 fi
 
@@ -693,5 +693,5 @@ fi
 	echo "  FAIL  fsck_hammer2 exit $fsck_rc after the hard stop"; fail=$((fail + 1)); }
 echo "seek-matrix: $ok probe check(s), $fail failure(s)"
 rm -f "$IMG"
-[ "$fail" -eq 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "seek-matrix: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" -eq 0 ] || exit 1

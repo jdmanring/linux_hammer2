@@ -305,5 +305,5 @@ printf '%s\n' "$out" | command grep -q '^storm-ops .* 0$' && {
 "$FSCK" "$IMG" >/dev/null 2>&1 && echo "  ok    fsck_hammer2 clean after the run" || {
 	echo "  FAIL  fsck_hammer2 after the run"; fail=$((fail + 1)); }
 echo "storm: $CYCLES cycles over $FILES files, $fail failures"
-[ "$fail" -eq 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "storm: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" -eq 0 ] || exit 1

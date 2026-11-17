@@ -222,7 +222,7 @@ printf '%s\n' "$out" | command grep -q '^log: bug 0 oops 0 warn 0 kasan 0 ubsan 
 printf '%s\n' "$out" | grep -q 'ring whole' && ! printf '%s\n' "$out" | grep -q 'ring COULD-NOT-READ' || ringcnr="$ringcnr linux"
 [ "$fail" -eq 0 ] || keep
 echo "$summary"
-[ "$fail" -eq 0 ] || exit 1
 [ -z "$ringcnr" ] || { echo "xfstests: COULD-NOT-READ: the guest's kernel ring lost its start marker:$ringcnr" >&2; exit 2; }
+[ "$fail" -eq 0 ] || exit 1
 [ "$nexec" -gt 0 ] || { echo "xfstests: COULD-NOT-RUN: every test named was skipped" >&2; exit 2; }
 exit 0
