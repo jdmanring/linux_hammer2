@@ -366,7 +366,7 @@ case $CUT in loss|dup|reorder|trail|late|withdraw) FAULT=$CUT PROTO=1;; esac
 POWER=0; case $CUT in slave|master) POWER=1;; esac
 case $CUTAT in *[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT is a call count" >&2; exit 2;; esac
 case $DEPTH in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is an inode count" >&2; exit 2;; esac
-[ "$DEPTH" -ge 1 ] && [ "$DEPTH" -lt 5000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is 1 to 4999, inside the pass's 5310 files" >&2; exit 2; }
+[ "$DEPTH" -ge 1 ] && [ "$DEPTH" -lt 5000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_DEPTH is 1 to 4999, inside the pass's 5311 files" >&2; exit 2; }
 [ "$POWER" = 0 ] || [ -z "$CUTAT" ] || { echo "wire: COULD-NOT-RUN: a power cut is placed by H2_WIRE_CUT_DEPTH, not H2_WIRE_CUT_AT" >&2; exit 2; }
 [ -z "$CUT" ] || [ "$POWER" = 1 ] || [ -n "$CUTAT" ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT needs H2_WIRE_CUT_AT" >&2; exit 2; }
 [ -n "$CUT" ] || [ -z "$CUTAT" ] || [ "$CUTAT" -ge 1000000 ] || { echo "wire: COULD-NOT-RUN: H2_WIRE_CUT_AT without H2_WIRE_CUT only traces, at 1000000" >&2; exit 2; }
@@ -456,7 +456,7 @@ HAMMER2=${H2_HAMMER2:-$(command -v hammer2 2>/dev/null || echo "$HOME/Projects/h
 FSCK=${H2_FSCK:-$(command -v fsck_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/fsck_hammer2")}
 { [ "$PASS" != 1 ] && [ "$ROGATE" = 0 ] && [ "$PASSREFUSE" = 0 ]; } || { [ -x "$HAMMER2" ] && [ -x "$FSCK" ]; } || { echo "wire: COULD-NOT-RUN: H2_WIRE_PASS and the controls reading an image need hammer2 and fsck_hammer2 on the host (H2_HAMMER2, H2_FSCK)" >&2; exit 2; }
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
-# a power cut's reads cross 5310 files over the wire, warm and cold; the
+# a power cut's reads cross 5311 files over the wire, warm and cold; the
 # bound scales on a KASAN tree, as cluster-sync.sh's does
 RUNSECS=300; [ "$POWER" = 1 ] || [ "$SEEKTIME" = 1 ] && RUNSECS=900
 grep -qx 'CONFIG_KASAN=y' "$KDIR/.config" 2>/dev/null && RUNSECS=$((RUNSECS * 4))
@@ -1925,7 +1925,7 @@ elif [ "$POWER" = 1 ]; then
 	# before the cut is the one read at the arm, taken just before it, and
 	# the master check below requires the one after to be unverified.
 	else uc=$(num "$(val B cut-updates-before)" 0); vc=$(num "$(val B cut-arm-verdicts)" 1); fi
-	[ "$(num "$(val B cut-arm-updates)" 0)" -ge "$DEPTH" ] && [ "$(num "$(val B cut-arm-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-arm-snap)" 0)" -ge 1 ] && [ "$vc" = 0 ] && [ $((uc - ub)) -gt 0 ] && [ $((uc - ub)) -lt 5000 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "power: $CUT's power is cut inside the pass, its snapshot read and no verdict, with inodes still to copy" $? "armed at $(val B cut-arm-updates) updates of depth $DEPTH, $((uc - ub)) by the cut of 5310 files, verdicts at the arm $(val B cut-arm-verdicts) and by the cut $vc, snapshots read $(val B cut-arm-snap), printk $(val B cut-printk)"
+	[ "$(num "$(val B cut-arm-updates)" 0)" -ge "$DEPTH" ] && [ "$(num "$(val B cut-arm-verdicts)" 1)" = 0 ] && [ "$(num "$(val B cut-arm-snap)" 0)" -ge 1 ] && [ "$vc" = 0 ] && [ $((uc - ub)) -gt 0 ] && [ $((uc - ub)) -lt 5000 ] && [ "$(num "$(val B cut-snap-before-go)" 1)" = 0 ] && [ "$(num "$(val B cut-root-rw-rc)" 1)" = 0 ]; check "power: $CUT's power is cut inside the pass, its snapshot read and no verdict, with inodes still to copy" $? "armed at $(val B cut-arm-updates) updates of depth $DEPTH, $((uc - ub)) by the cut of 5311 files, verdicts at the arm $(val B cut-arm-verdicts) and by the cut $vc, snapshots read $(val B cut-arm-snap), printk $(val B cut-printk)"
 	[ "$(num "$(val H cut-fsck-rc)" 1)" = 0 ] && [ "$(num "$(val H cut-precut-warnings)" 1)" = 0 ] && { [ "$CUT" = master ] || [ "$(num "$(val H cut-image-tgt)" 0)" = 1 ]; }; rc=$?
 	# the status is taken before the name, whose substitution would set $?
 	check "power: the cut image is clean by fsck_hammer2$([ "$CUT" = slave ] && echo " and holds the pass's target")" $rc "fsck rc $(val H cut-fsck-rc), CL.h2sync-tgt $(val H cut-image-tgt), CL.h2sync-peer $(val H cut-image-peer), bulk entries $(val H cut-image-bulk), warnings before the cut $(val H cut-precut-warnings), HM2 lines before it $(val H cut-precut-hm2)"
@@ -1964,7 +1964,8 @@ elif [ "$POWER" = 1 ]; then
 	case "$(val B cut-resumed-verdicts)" in "verified "*|"newer verified ") rv=0;; *) rv=1;; esac
 	[ "$rv" = 0 ] && [ "$(num "$(val B cut-resumed-hm2)" 1)" = 0 ] && [ "$(num "$(val B pass-snap-deleted)" 0)" -ge 1 ]; check "power: the resumed pass verifies, or reads newer and the next pass verifies" $? "verdicts $(val B cut-resumed-verdicts)after a wait of $(val B cut-resumed-second-wait) s, keys kept by tid $(val B cut-resumed-kept-keys), HM2 lines after $(val B cut-resumed-hm2), deleted $(val B pass-snap-deleted), passes $(val B pass-snap-passes), no quorum $(val B pass-snap-noquorum), errors $(val B pass-errors) and $(val B pass-sync-errors), end after $(val B pass-end-seconds) s"
 	[ "$(num "$(val A more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val A more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-media-files)" 0)" = $(( 5 * (1 + $(num "$(val B more-media-snaps)" 0)) )) ] && [ "$(num "$(val B more-snap-deleted)" 0)" -ge 1 ] && [ "$(num "$(val B more-snap-unverified)" 9)" = "$nu" ]; check "power: five files written on the master after the resumed pass reach the slave by a later pass" $? "A $(val A more-media-files) beside $(val A more-media-snaps) snapshot(s), B $(val B more-media-files) beside $(val B more-media-snaps) after $(val B more-wait-seconds) s, deleted $(val B more-snap-deleted) more, unverified $(val B more-snap-unverified) of $nu"
-	[ "$fa" = 0 ] && [ "$fb" = 0 ] && [ "$nfa" = 5310 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 9)" = "$nl" ]; check "power: both images clean, the slave's CL the master's entry for entry and block for block, and no snapshot of the pass left" $? "fsck A rc $fa B rc $fb; A $nfpa file entries of $nfa and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-peer on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left) of $nl"
+	# A's fill is 306 files since the sparse file the seek reads (0da43830), the cut adds 5000 and the pass mode 5.
+	[ "$fa" = 0 ] && [ "$fb" = 0 ] && [ "$nfa" = 5311 ] && [ "$nfpa" = "$nfa" ] && [ "$ndata" -gt 0 ] && cmp -s "$W/fp.a" "$W/fp.b" && [ "$sa" = 0 ] && [ "$sb" = 0 ] && [ "$(num "$(val A snap-link-left)" 9)" = "$nl" ]; check "power: both images clean, the slave's CL the master's entry for entry and block for block, and no snapshot of the pass left" $? "fsck A rc $fa B rc $fb; A $nfpa file entries of $nfa and $ndata data blocks, B $nfpb; $(diff "$W/fp.a" "$W/fp.b" | grep -c '^[<>]') lines differ; CL.h2sync-peer on A $sa, CL.h2sync-tgt on B $sb, A's left-by-the-link deletions $(val A snap-link-left) of $nl"
 elif [ "$SEQ" = control ]; then
 	# The sequence checks compiled out: the fault, placed as the cut's, is
 	# taken, and the link stays up to B's unmount: no line of B's ending it,
