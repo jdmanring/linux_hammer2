@@ -815,16 +815,20 @@ fi
 # whole. A harness that starts it must wait for its marker with --started
 # before it prints a line, call --end, carry the refusal, and
 # neither clear nor read the ring, which no marker of its own vouches for;
-# no other script may stream the log. A `pkill` of an old reader reads
-# nothing and is not one. What this cannot read is whether each count sits
+# no other script may stream the log. A reader is any use of /dev/kmsg but a
+# write to it (a marker), dmesg following, or journalctl; a `pkill` of an
+# old reader reads nothing and is not one. Nor can this tell a second
+# stream no count reads from one a count reads without its --end, so a
+# harness may start the reader more than once. What this cannot read is whether each count sits
 # before an --end, or whether the refusal comes before the run's failure
 # exit: the stream's harnesses judge on the host from what the guest
 # printed, in shapes too unlike one another for one text rule.
 STREAM_REFUSE="the guest's kernel log stream lost records"
-STREAM_READER='dmesg +(-[A-Za-z]*w|--follow)|cat +[^|]*/dev/kmsg'
+STREAM_READER='dmesg +(-[A-Za-z]*[wW]|--follow)|journalctl|/dev/kmsg'
 # A pkill names the reader it stops, so the command is cut from its line,
-# up to the next ; & or |, and the rest of the line is still read.
-code_of() { command grep -v '^[[:space:]]*#' "$1" | sed -E 's/pkill [^;&|]*//g'; }
+# up to the next ; & or |, and the rest of the line is still read; so is a
+# write to /dev/kmsg, which every marker is.
+code_of() { command grep -v '^[[:space:]]*#' "$1" | sed -E 's/pkill [^;&|]*//g; s/[0-9]*>>? *\/dev\/kmsg//g'; }
 stream_rule() {	# stream_rule <harness>: prints why it fails the rule, nothing when it passes
 	code=$(code_of "$1")
 	printf '%s\n' "$code" | command grep -qE "$STREAM_READER" &&
@@ -867,7 +871,10 @@ if [ -n "$stream_first" ]; then
 	    '{ print } END { print "cat /dev/kmsg > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a cat reader appended' \
 	    '{ print } END { print "n=$(dmesg | grep -c BUG:)" }::a read or a clear of the ring::a ring count appended' \
 	    '{ print } END { print "pkill -x dmesg 2>/dev/null; dmesg -w > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dmesg -w reader appended after a pkill on its line' \
-	    '{ print } END { print "dmesg > /tmp/x.ring" }::a read or a clear of the ring::a ring snapshot to a file appended'; do
+	    '{ print } END { print "dmesg > /tmp/x.ring" }::a read or a clear of the ring::a ring snapshot to a file appended' \
+	    '{ print } END { print "dd if=/dev/kmsg of=/tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dd reader appended' \
+	    '{ print } END { print "journalctl -kf > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a journalctl reader appended' \
+	    '{ gsub(/sh \/tmp\/kmsg-stream.sh --start >/, "tail -f /dev/kmsg >"); print }::a reader other than kmsg-stream.sh::its reader swapped for tail -f'; do
 		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
 		nstreamctl=$((nstreamctl + 1))
 		awk -v rf="$STREAM_REFUSE" "$prog" "$stream_first" > "$stream_tmp/changed.sh"
@@ -879,17 +886,19 @@ if [ -n "$stream_first" ]; then
 		esac
 	done
 	# A script that streams outside the rule is found: a copy of the first
-	# ring reader with a dmesg -w reader added.
-	nstreamctl=$((nstreamctl + 1))
-	{ cat "$ring_first"; echo "dmesg -w > /tmp/x.klog &"; } > "$stream_tmp/outside.sh"
-	command grep -v '^[[:space:]]*#' "$stream_tmp/outside.sh" | command grep -qF "$STREAM_START" ||
-	    code_of "$stream_tmp/outside.sh" | command grep -qE "$STREAM_READER" || {
-		echo "  FAIL control: $ring_first with a dmesg -w reader added is not seen streaming"
-		fail=$((fail + 1)); }
+	# ring reader with a reader added.
+	for r in "dmesg -w > /tmp/x.klog &" "tail -f /dev/kmsg > /tmp/x.klog &"; do
+		nstreamctl=$((nstreamctl + 1))
+		{ cat "$ring_first"; echo "$r"; } > "$stream_tmp/outside.sh"
+		command grep -v '^[[:space:]]*#' "$stream_tmp/outside.sh" | command grep -qF "$STREAM_START" ||
+		    code_of "$stream_tmp/outside.sh" | command grep -qE "$STREAM_READER" || {
+			echo "  FAIL control: $ring_first with \"$r\" added is not seen streaming"
+			fail=$((fail + 1)); }
+	done
 	rm -rf "$stream_tmp"
 fi
-[ "$nstreamctl" = 9 ] || {
-	echo "  FAIL $nstreamctl stream control(s) ran, not the 9 the gate lists"
+[ "$nstreamctl" = 13 ] || {
+	echo "  FAIL $nstreamctl stream control(s) ran, not the 13 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it
