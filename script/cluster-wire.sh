@@ -1655,8 +1655,13 @@ elif [ "$PASS" = 1 ]; then PASSES=full; else PASSES=none; fi
 if [ "$CUT" = slave ]; then cg=$GB cs=$SB cl=b; else cg=$GA cs=$SA cl=a; fi
 ci=$FIXDIR/wire-$cl.img
 power_cut() {
-	echo "H cut-precut-$($RUN "$cs" 'sh /tmp/kmsg-stream.sh --end /tmp/h2wire.klog' 2>/dev/null)" >> "$W/out"
-	scp -q "$cs:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-$cl-precut.klog" 2>/dev/null
+	# A verdict that did not come back, or a klog that did not, is a stream
+	# line that is not whole: the counts below would read 0 from nothing.
+	pcv=$($RUN "$cs" 'sh /tmp/kmsg-stream.sh --end /tmp/h2wire.klog' 2>/dev/null)
+	case "$pcv" in "stream "*) ;; *) pcv="stream COULD-NOT-READ: no verdict from $cs" ;; esac
+	scp -q "$cs:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-$cl-precut.klog" 2>/dev/null ||
+		pcv="stream COULD-NOT-READ: the precut klog was not copied from $cs"
+	echo "H cut-precut-$pcv" >> "$W/out"
 	$VIRSH destroy "$cg" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: $cg did not stop" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 	"$FSCK" "$ci" > "$FIXDIR/wire-run-$stamp-fsck-cut.txt" 2>&1; echo "H cut-fsck-rc $?" >> "$W/out"
 	"$HAMMER2" -v show "$ci" > "$W/show.cut" 2>/dev/null
