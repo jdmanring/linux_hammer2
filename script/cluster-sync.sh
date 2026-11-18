@@ -908,6 +908,11 @@ finish() {
 	timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
 	echo "cluster-umount ok"
 	echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
+	# The teardown's lines (the scrap summary, the chains kept modified)
+	# print from the unmount above, and no line read since was printed after
+	# them, so the reader can still be behind them: every count from here on
+	# reads the klog after the end marker, which follows them.
+	sh /tmp/kmsg-stream.sh --end $K
 	# The per-chain scrap print is rate-limited, so its lines cap a count at
 	# the burst: two KASAN runs on 2026-11-09 printed ten each for thousands
 	# scrapped, with no "suppressed" line, which prints only on a later call.
@@ -934,7 +939,6 @@ finish() {
 	# 2026-10-18), which is the guest's and not the port's. Those lines name
 	# drivers/gpu/drm/ and are counted apart, so they neither hide a report of
 	# the port's nor fail the run on their own.
-	sh /tmp/kmsg-stream.sh --end $K
 	echo "kernel-warnings $(grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K | grep -vc 'drivers/gpu/drm/')"
 	echo "gpu-warnings $(grep -c 'WARNING.*drivers/gpu/drm/' $K)"
 	# Before rmmod, so the report's %pS resolves the module's own symbols. The
@@ -1557,6 +1561,7 @@ echo "h2probe: bigdir write start" > /dev/kmsg
 i=0; while [ $i -lt $NBIG ]; do head -c 4096 /dev/urandom > /mnt/h2c/bigdir/p$i; i=$((i + 1)); done
 sync
 echo "h2probe: bigdir write end" > /dev/kmsg
+sh /tmp/kmsg-stream.sh --end $K	# the range ends at the probe line, which must be read first
 # Destroys the thread made while the write ran, and in all. Both read 0
 # unless H2_DEBUG carries 0x0001, which is what prints a destroy.
 echo "write-destroys $(sed -n '/h2probe: bigdir write start/,/h2probe: bigdir write end/p' $K | grep -c 'destroy rec')"
@@ -1641,9 +1646,11 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 		[ "$(verdicts)" != "$v0" ] && break
 		sleep 0.05; n=$((n + 1))
 	done
+	# Read after the end marker: a verdict the reader has yet to write
+	# would read as a cut inside the pass.
+	sh /tmp/kmsg-stream.sh --end $K
 	echo "crash-copied $(( $(copied) - u1 ))"
 	echo "crash-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
-	sh /tmp/kmsg-stream.sh --end $K
 	echo "crash-last-target $(awk '/syncsnap: target/ { v = $NF } END { print v }' $K)"
 	# The cut pass's own target line: a pass whose target an earlier pass
 	# left valid prints none, so the last line above can be another pass's.
@@ -1667,6 +1674,7 @@ fi
 # and keeps nothing.
 timeout 30 mount -t hammer2 /dev/vdb@CL /mnt/h2c; mrc=$?
 echo "mutate-mount-rc $mrc"
+sh /tmp/kmsg-stream.sh --end $K	# a verdict not yet read would read as in the pass
 echo "mutate-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 rm -f /mnt/h2c/mark/m0 /mnt/h2c/mark/m1 /mnt/h2c/mark/m2 /mnt/h2c/mark/m3 /mnt/h2c/mark/m4 /mnt/h2c/mark/m5 /mnt/h2c/mark/m6 /mnt/h2c/mark/m7 /mnt/h2c/mark/m8 /mnt/h2c/mark/m9
 i=0; while [ $i -lt 10 ]; do head -c $(( 900 + i * 41 )) /dev/urandom > /mnt/h2c/mark/new$i; i=$((i + 1)); done
@@ -1702,12 +1710,14 @@ done
 echo "interrupt-stop-copied $(( $(copied) - u1 )) wanted $STOP_DEPTH after $(( $(date +%s) - t0 )) s"
 [ "$H2_COLLAPSE_LATE" = 1 ] && echo "collapse-late-armed-at ${armed_at:-never}"
 [ "$H2_INTERFLUSH" != 0 ] && echo "interflush $(cat /sys/module/hammer2/parameters/sync_interflush) $(( $(klog 'sync_interflush: clindex') - if0 ))"
+sh /tmp/kmsg-stream.sh --end $K	# a verdict not yet read would read as in the pass
 echo "interrupt-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 echo "interrupt-threads-before $(ps -eo comm | grep -c '^h2nod-CL')"
 timeout 60 umount /mnt/h2c
 t0=$(date +%s%N); timeout 180 umount /mnt/h2s; urc=$?; t1=$(date +%s%N)
 echo "interrupt-umount-rc $urc"
 echo "interrupt-umount-ms $(( (t1 - t0) / 1000000 ))"
+sh /tmp/kmsg-stream.sh --end $K	# the counts below include the teardown's lines
 echo "interrupt-copied $(( $(copied) - u1 ))"
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
 echo "interrupt-didbreak $(( $(klog didbreak) - db0 ))"
@@ -1964,9 +1974,14 @@ scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$STAMP.klog" 2>/dev
 	&& echo "  kept  the guest's memory samples beside the images as cluster-run-*.mem"
 detach_disks
 # Every count the checks below read comes from the stream of the guest's
-# kernel log, each guest half writing its stream's end marker after the
-# events its counts cover and before it reads them: --end waits until the
-# reader has written the marker, so every record before it is in the klog. A stream that is not whole is a run this script cannot read, refused
+# kernel log. The klog is a prefix of the record sequence, so a count holds
+# every record before the newest line the reader had written when it read.
+# --end writes a marker and waits for the reader to write it, so a count
+# read after it holds every record before the marker: each guest half's
+# finish reads after one, and so does each count a check passes on zero
+# that is read straight after the act whose lines it counts. The other
+# zero-pass counts read after a wait for a later line, a quiet interval or
+# a fixed sleep. A stream that is not whole is a run this script cannot read, refused
 # before any check can fail on what survived; so is a guest that finished
 # without saying.
 sw=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)

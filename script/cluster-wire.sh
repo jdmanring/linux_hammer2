@@ -1393,6 +1393,9 @@ if mountpoint -q /mnt/h2k; then
 	echo "vdb-gone-threads $(threads)"
 	umount /mnt/h2k || echo "umount vdc failed"
 fi
+# The counts below include the unmounts' own lines, read after the end
+# marker that follows them.
+sh /tmp/kmsg-stream.sh --end $K
 echo "log-detached $(klog 'remote element CL at clindex 1 detached')"
 echo "detached-why $(kl | grep 'remote element CL at clindex 1 detached' | sed 's/.*detached: //' | tr '\n' ' ')"
 echo "spans-del $(klog 'H2 -RXSPAN')"
@@ -1755,10 +1758,12 @@ guest_off "$GB" "$SB"
 
 # Every count a check below reads comes from a stream of a guest's kernel
 # log: each guest's from its setup or restart to its down.sh, the cut
-# guest's up to the cut. Each is vouched for by an end marker written after
-# the events its counts cover and before they are read: --end waits until
-# the reader has written the marker, so every record before it is in the
-# klog when a count reads it. A stream that is not whole is a run this
+# guest's up to the cut. Each is vouched for by an end marker: --end waits
+# until the reader has written the marker, so every record before it is in
+# the klog when a count after it reads it. down.sh's counts and the source
+# gate's read after one, and the precut counts read the klog copied after
+# one; a count read mid-run otherwise reads what the reader had written by
+# then. A stream that is not whole is a run this
 # script cannot read, refused before any check can fail on what survived;
 # so is a guest whose final stream line is missing. A verdict a guest reads
 # mid-run carries a prefix (srcgate-, restart-, cut-precut-), so whole is

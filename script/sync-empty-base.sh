@@ -301,6 +301,9 @@ while [ $c -lt $CYCLES ]; do
 	c=$((c + 1))
 done
 
+# The counts read after the end marker, which follows every line they count:
+# the loop above can leave on the line it waits for, with the reader behind.
+sh /tmp/kmsg-stream.sh --end $K
 echo "empty-base $(klog 'from empty base')"
 echo "passes-after $(( $(klog 'sync_slaves pfs CL') ))"
 echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
@@ -315,7 +318,6 @@ timeout 60 umount /mnt/m 2>/dev/null
 echo "mounts-after $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 sync
-sh /tmp/kmsg-stream.sh --end $K
 kill $KPID 2>/dev/null
 GUEST
 
