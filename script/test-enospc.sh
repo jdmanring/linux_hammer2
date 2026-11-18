@@ -837,7 +837,7 @@ out=$(ssh "$GUEST_SSH" '
 	# Follow whichever banner fired, not the cycle alone: a run whose
 	# fault is a different one printed an empty section and read as a run
 	# with nothing to show.
-	kl | command sed -n "/$(kl | command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" || echo possible circular locking dependency)/,+220p" /tmp/kms
+	kl | command sed -n "/$(kl | command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" || echo possible circular locking dependency)/,+220p" |
 	    command sed "s/^[0-9,;]*;//"
 	echo "=== first report ends"
 
