@@ -26511,9 +26511,19 @@ to be zero. `4b3029c8` adds an end marker before each: a second one
 after `sync-empty-base.sh`'s teardown with the warnings count behind
 it, four in `cluster-dmsg.sh`'s default path, `test-enospc.sh`'s second
 moved to just after the unmount returns, and `first-stream` in
-`pass.sh`. Not swept: `cluster-dmsg.sh`'s `H2_DMSG_TLS` and peer arms,
-which read deltas after `sleep 1` or a wait on a line, for checks that
-require a delta above zero and so fail on a reader behind.
+`pass.sh`. Not swept, and open: a count read before an act, the
+baseline a delta is measured from. Rounds 2 and 3 placed `--end` before
+counts read after an act and none before a baseline, so a baseline read
+while the reader is behind comes out low and its delta high, and a check
+that needs a delta above zero can pass on a line older than the act. A
+pattern search finds them in `cluster-dmsg.sh`'s `H2_DMSG_TLS` and peer
+arms (`snap`'s `h0`, the hold arms' `hn0`, `lb`), `cluster-sync.sh`
+(`:1602` among others), `cluster-wire.sh` (`:901`, whose idle check wants
+a delta of zero and so fails the other way) and `test-enospc.sh`
+(`:746`). An earlier text of this paragraph said those arms fail on a
+reader behind; that holds for a count read after the act and not for
+its baseline. The shape predates the stream: `dmesg -w` lagged the same
+way.
 
 The end marker. `--end` waited for its marker, and the verdict accepted
 it, as a substring of a line; `8a5fa234` matches the whole rendered
