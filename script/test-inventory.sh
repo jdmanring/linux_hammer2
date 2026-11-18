@@ -822,14 +822,17 @@ fi
 # printed, in shapes too unlike one another for one text rule.
 STREAM_REFUSE="the guest's kernel log stream lost records"
 STREAM_READER='dmesg +(-[A-Za-z]*w|--follow)|cat +[^|]*/dev/kmsg'
+# A pkill names the reader it stops, so the command is cut from its line,
+# up to the next ; & or |, and the rest of the line is still read.
+code_of() { command grep -v '^[[:space:]]*#' "$1" | sed -E 's/pkill [^;&|]*//g'; }
 stream_rule() {	# stream_rule <harness>: prints why it fails the rule, nothing when it passes
-	code=$(command grep -v '^[[:space:]]*#' "$1")
-	printf '%s\n' "$code" | command grep -E "$STREAM_READER" | command grep -qv pkill &&
+	code=$(code_of "$1")
+	printf '%s\n' "$code" | command grep -qE "$STREAM_READER" &&
 		echo "a reader other than kmsg-stream.sh"
 	printf '%s\n' "$code" | command grep -qF 'kmsg-stream.sh --started' || echo "no --started"
 	printf '%s\n' "$code" | command grep -qF 'kmsg-stream.sh --end' || echo "no --end"
 	printf '%s\n' "$code" | command grep -qF "$STREAM_REFUSE" || echo "no refusal when the stream lost records"
-	printf '%s\n' "$code" | command grep -qE 'dmesg (-[cC]|--clear)|dmesg *\|' && echo "a read or a clear of the ring"
+	printf '%s\n' "$code" | command grep -qE '(^|[^[:alnum:]_.-])dmesg([^[:alnum:]_.-]|$)' && echo "a read or a clear of the ring"
 }
 nstream=0; stream_first=
 for s in script/*.sh; do
@@ -842,7 +845,7 @@ for s in script/*.sh; do
 		[ -z "$why" ] || {
 			printf '%s\n' "$why" | sed "s|^|  FAIL $s: streams the kernel log with |"
 			fail=$((fail + 1)); }
-	elif command grep -v '^[[:space:]]*#' "$s" | command grep -E "$STREAM_READER" | command grep -qv pkill; then
+	elif code_of "$s" | command grep -qE "$STREAM_READER"; then
 		echo "  FAIL $s: streams the kernel log without kmsg-stream.sh, which alone"
 		echo "       says when the stream lost records"
 		fail=$((fail + 1))
@@ -862,7 +865,9 @@ if [ -n "$stream_first" ]; then
 	    'index($0, "kmsg-stream.sh --started") { next } { print }::no --started::every --started dropped' \
 	    '{ print } END { print "dmesg -w > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dmesg -w reader appended' \
 	    '{ print } END { print "cat /dev/kmsg > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a cat reader appended' \
-	    '{ print } END { print "n=$(dmesg | grep -c BUG:)" }::a read or a clear of the ring::a ring count appended'; do
+	    '{ print } END { print "n=$(dmesg | grep -c BUG:)" }::a read or a clear of the ring::a ring count appended' \
+	    '{ print } END { print "pkill -x dmesg 2>/dev/null; dmesg -w > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dmesg -w reader appended after a pkill on its line' \
+	    '{ print } END { print "dmesg > /tmp/x.ring" }::a read or a clear of the ring::a ring snapshot to a file appended'; do
 		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
 		nstreamctl=$((nstreamctl + 1))
 		awk -v rf="$STREAM_REFUSE" "$prog" "$stream_first" > "$stream_tmp/changed.sh"
@@ -878,13 +883,13 @@ if [ -n "$stream_first" ]; then
 	nstreamctl=$((nstreamctl + 1))
 	{ cat "$ring_first"; echo "dmesg -w > /tmp/x.klog &"; } > "$stream_tmp/outside.sh"
 	command grep -v '^[[:space:]]*#' "$stream_tmp/outside.sh" | command grep -qF "$STREAM_START" ||
-	    command grep -v '^[[:space:]]*#' "$stream_tmp/outside.sh" | command grep -E "$STREAM_READER" | command grep -qv pkill || {
+	    code_of "$stream_tmp/outside.sh" | command grep -qE "$STREAM_READER" || {
 		echo "  FAIL control: $ring_first with a dmesg -w reader added is not seen streaming"
 		fail=$((fail + 1)); }
 	rm -rf "$stream_tmp"
 fi
-[ "$nstreamctl" = 7 ] || {
-	echo "  FAIL $nstreamctl stream control(s) ran, not the 7 the gate lists"
+[ "$nstreamctl" = 9 ] || {
+	echo "  FAIL $nstreamctl stream control(s) ran, not the 9 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it
