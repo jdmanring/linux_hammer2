@@ -706,13 +706,9 @@ done
 # lost. The population is every script that clears the ring and every
 # report counter above; comment lines are not code. The guest's text is
 # literal, with no `$` and no quote, so it reads the same in a quoted
-# heredoc, an unquoted one and a single-quoted ssh argument.
-# DEFER(the next change to a streaming harness's capture): the five
-# harnesses below count from a stream of /dev/kmsg, which a run outgrows
-# many times over (a cluster-sync.sh log runs 39 to 144 MB), so a marker
-# in the ring says nothing about them. dmesg -w retries a read the kernel
-# refuses for lost records (util-linux dmesg.c, read_kmsg_one()), and cat
-# stops there unseen; the upgrade reads sequence numbers from the stream.
+# heredoc, an unquoted one and a single-quoted ssh argument. A harness that
+# streams the log is held to the stream rule below instead.
+STREAM_START='kmsg-stream.sh --start'
 RING_MARK='echo h2ring-start > /dev/kmsg'
 RING_CHECK='test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ'
 RING_REFUSE="the guest's kernel ring lost its start marker"
@@ -763,11 +759,9 @@ for s in script/*.sh; do
 	[ "$rclear" -gt 0 ] ||
 	    command grep -q -E 'grep( +-[A-Za-z]+)* +-[A-Za-z]*c[A-Za-z]*( |$).*(WARNING|BUG:|KASAN|circular|cut here)' "$s" ||
 	    continue
-	case "$s" in
-	script/cluster-sync.sh|script/cluster-wire.sh|script/cluster-dmsg.sh|\
-	script/sync-empty-base.sh|script/test-enospc.sh)
-		nringskip=$((nringskip + 1)); continue ;;
-	esac
+	if command grep -v '^[[:space:]]*#' "$s" | command grep -qF "$STREAM_START"; then
+		nringskip=$((nringskip + 1)); continue
+	fi
 	nring=$((nring + 1)); ring_first=${ring_first:-$s}
 	why=$(ring_rule "$s")
 	[ -z "$why" ] || {
@@ -777,10 +771,6 @@ done
 [ "$nring" -gt 0 ] || {
 	echo "  FAIL no script under script/ reads the kernel ring, so the"
 	echo "       marker check above read nothing"
-	fail=$((fail + 1)); }
-[ "$nringskip" = 5 ] || {
-	echo "  FAIL $nringskip streaming harness(es) matched the exemption, not the"
-	echo "       five it names, so a name in it is stale"
 	fail=$((fail + 1)); }
 # The controls: copies of the first ring reader, each with one part of the
 # rule broken, each failing for its own reason. Their number is asserted.
@@ -813,6 +803,85 @@ if [ -n "$ring_first" ]; then
 fi
 [ "$nringctl" = 9 ] || {
 	echo "  FAIL $nringctl ring control(s) ran, not the 9 the gate lists"
+	fail=$((fail + 1)); }
+
+# A harness whose run outgrows the ring streams the log instead (a
+# cluster-sync.sh log runs 39 to 144 MB against the guests' 8 MiB ring), and
+# a stream loses records too: a reader that falls a whole ring behind gets
+# EPIPE once and resumes at the oldest record left (devkmsg_read()), which
+# dmesg -w retries without a word (util-linux dmesg.c, read_kmsg_one()) and
+# cat stops at unseen. kmsg-stream.sh is the one reader: it says in the
+# stream when records were lost, and its --end prints whether the stream is
+# whole. A harness that starts it must call --end, carry the refusal, and
+# neither clear nor read the ring, which no marker of its own vouches for;
+# no other script may stream the log. A `pkill` of an old reader reads
+# nothing and is not one. What this cannot read is whether each count sits
+# before an --end, or whether the refusal comes before the run's failure
+# exit: the stream's harnesses judge on the host from what the guest
+# printed, in shapes too unlike one another for one text rule.
+STREAM_REFUSE="the guest's kernel log stream lost records"
+STREAM_READER='dmesg +(-[A-Za-z]*w|--follow)|cat +[^|]*/dev/kmsg'
+stream_rule() {	# stream_rule <harness>: prints why it fails the rule, nothing when it passes
+	code=$(command grep -v '^[[:space:]]*#' "$1")
+	printf '%s\n' "$code" | command grep -E "$STREAM_READER" | command grep -qv pkill &&
+		echo "a reader other than kmsg-stream.sh"
+	printf '%s\n' "$code" | command grep -qF 'kmsg-stream.sh --end' || echo "no --end"
+	printf '%s\n' "$code" | command grep -qF "$STREAM_REFUSE" || echo "no refusal when the stream lost records"
+	printf '%s\n' "$code" | command grep -qE 'dmesg (-[cC]|--clear)|dmesg *\|' && echo "a read or a clear of the ring"
+}
+nstream=0; stream_first=
+for s in script/*.sh; do
+	# ring-flood.sh names the readers it stops and the one it mutates, and
+	# reads nothing.
+	case "$s" in script/test-inventory.sh|script/kmsg-stream.sh|script/ring-flood.sh) continue ;; esac
+	if command grep -v '^[[:space:]]*#' "$s" | command grep -qF "$STREAM_START"; then
+		nstream=$((nstream + 1)); stream_first=${stream_first:-$s}
+		why=$(stream_rule "$s")
+		[ -z "$why" ] || {
+			printf '%s\n' "$why" | sed "s|^|  FAIL $s: streams the kernel log with |"
+			fail=$((fail + 1)); }
+	elif command grep -v '^[[:space:]]*#' "$s" | command grep -E "$STREAM_READER" | command grep -qv pkill; then
+		echo "  FAIL $s: streams the kernel log without kmsg-stream.sh, which alone"
+		echo "       says when the stream lost records"
+		fail=$((fail + 1))
+	fi
+done
+[ "$nstream" -gt 0 ] && [ "$nstream" = "$nringskip" ] || {
+	echo "  FAIL $nstream streaming harness(es) read and $nringskip left out of the ring rule:"
+	echo "       none read means the rule above read nothing"
+	fail=$((fail + 1)); }
+# The controls: copies of the first streaming harness, each with one part of
+# the rule broken, each failing for its own reason. Their number is asserted.
+nstreamctl=0
+if [ -n "$stream_first" ]; then
+	stream_tmp=$(mktemp -d) || exit 2
+	for m in '{ while ((i = index($0, "kmsg-stream.sh --end")) > 0) $0 = substr($0, 1, i - 1) "kmsg-stream.sh --stop" substr($0, i + 20); print }::no --end::every --end dropped' \
+	    'index($0, rf) { next } { print }::no refusal when the stream lost records::the refusal dropped' \
+	    '{ print } END { print "dmesg -w > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dmesg -w reader appended' \
+	    '{ print } END { print "cat /dev/kmsg > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a cat reader appended' \
+	    '{ print } END { print "n=$(dmesg | grep -c BUG:)" }::a read or a clear of the ring::a ring count appended'; do
+		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
+		nstreamctl=$((nstreamctl + 1))
+		awk -v rf="$STREAM_REFUSE" "$prog" "$stream_first" > "$stream_tmp/changed.sh"
+		why=$(stream_rule "$stream_tmp/changed.sh")
+		case "$why" in
+		*"$want"*) ;;
+		*) echo "  FAIL control: $stream_first with $how read as ${why:-passing the stream rule}, not as $want"
+		   fail=$((fail + 1)) ;;
+		esac
+	done
+	# A script that streams outside the rule is found: a copy of the first
+	# ring reader with a dmesg -w reader added.
+	nstreamctl=$((nstreamctl + 1))
+	{ cat "$ring_first"; echo "dmesg -w > /tmp/x.klog &"; } > "$stream_tmp/outside.sh"
+	command grep -v '^[[:space:]]*#' "$stream_tmp/outside.sh" | command grep -qF "$STREAM_START" ||
+	    command grep -v '^[[:space:]]*#' "$stream_tmp/outside.sh" | command grep -E "$STREAM_READER" | command grep -qv pkill || {
+		echo "  FAIL control: $ring_first with a dmesg -w reader added is not seen streaming"
+		fail=$((fail + 1)); }
+	rm -rf "$stream_tmp"
+fi
+[ "$nstreamctl" = 6 ] || {
+	echo "  FAIL $nstreamctl stream control(s) ran, not the 6 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it
@@ -1273,5 +1342,5 @@ done
 	echo "  FAIL only $ntlsdocs document(s) read for a TLS claim, so the sweep matched far less than doc/ holds"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nnames $names_from, $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nring ring reader(s) ($nringskip streaming, deferred), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
+echo "inventory: $nnames $names_from, $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nring ring reader(s), $nstream streaming harness(es), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1

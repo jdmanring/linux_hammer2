@@ -421,6 +421,7 @@ $VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio >/dev/null 2>&1 || {
 cc -static -O2 -o /tmp/h2mmaptest.$$ test/hammer2-mmap-exercise.c 2>/dev/null || {
 	echo "enospc: COULD-NOT-RUN: the mmap exerciser did not compile" >&2; exit 2; }
 scp -q -o ConnectTimeout=5 "$KO" "$GUEST_SSH:/tmp/h2.ko" >/dev/null 2>&1
+scp -q -o ConnectTimeout=5 script/kmsg-stream.sh "$GUEST_SSH:/tmp/kmsg-stream.sh" >/dev/null 2>&1
 scp -q -o ConnectTimeout=5 /tmp/h2mmaptest.$$ "$GUEST_SSH:/tmp/h2mmaptest" >/dev/null 2>&1
 rm -f /tmp/h2mmaptest.$$
 
@@ -511,22 +512,20 @@ out=$(ssh "$GUEST_SSH" '
 		[ "$(readlink /proc/$p/fd/1 2>/dev/null)" = /tmp/kmsg.log ] &&
 		    kill "$p" 2>/dev/null
 	done
+	sh /tmp/kmsg-stream.sh --stop
 	trap "kill \$kpid 2>/dev/null" EXIT
 	: > /tmp/kmsg.log
-	# Unbuffered, because cat block-buffers to a file: a line the kernel
-	# prints during the unmount can still be sitting in the buffer when
-	# this script greps for it, which reads as a line that was never
-	# printed. Which form ran is reported, so a run says whether its
-	# late lines can be trusted rather than leaving that to be assumed.
-	if command -v stdbuf >/dev/null 2>&1; then
-		stdbuf -o0 cat /dev/kmsg > /tmp/kmsg.log 2>/dev/null &
-		kpid=$!
-		echo "kmsg capture unbuffered"
-	else
-		cat /dev/kmsg > /tmp/kmsg.log 2>/dev/null &
-		kpid=$!
-		echo "kmsg capture buffered, late lines may be missing"
-	fi
+	# The reader is kmsg-stream.sh. A bare cat of /dev/kmsg stops at the
+	# first record the ring overwrote before it was read, and nothing in
+	# the capture said so; this one says so in the stream, and its --end
+	# below prints whether the stream is whole. It writes each line as it
+	# arrives, since a line the kernel prints during the unmount must not
+	# sit in a buffer when this script greps for it, and it starts at a
+	# marker of its own, so the counts no longer read the earlier runs
+	# a fresh read of the ring replays.
+	sh /tmp/kmsg-stream.sh --start > /tmp/kmsg.log 2>&1 &
+	kpid=$!
+	echo "kmsg capture unbuffered"
 	# A boundary this run writes itself. A fresh read of /dev/kmsg replays
 	# the whole retained ring, so the capture opens on every earlier run in
 	# this boot, and the taint line the counts below once anchored on is
@@ -715,6 +714,9 @@ out=$(ssh "$GUEST_SSH" '
 	echo "allocated before sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
 	sync
 	echo "allocated after sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
+	# The counts from here to the unmount are vouched for as they are read;
+	# the --end after the unmount covers the rest.
+	echo "stream $(sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log)"
 	echo "data blocks rewritten $(cat /sys/module/hammer2/parameters/data_rewrites), filled $(command grep -c "filled around" /tmp/kmsg.log)"
 	echo "block folios refused $(command grep -c "no block folio" /tmp/kmsg.log), free pages by order $(command grep Normal /proc/buddyinfo | sed "s/.*zone *Normal *//")"
 	command grep "enospace refuses" /tmp/kmsg.log | tail -3 | sed "s/^.*hammer2: enospace /refusal /"
@@ -979,6 +981,7 @@ out=$(ssh "$GUEST_SSH" '
 		echo "outstanding no line, so kill_sb did not reach its end"
 	fi
 	echo "busy inodes $(command grep -c "Busy inodes after unmount\|VFS: Busy" /tmp/kmsg.log || true)"
+	echo "stream $(sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log)"
 	echo "=== log tail begins"
 	# Wide enough for a whole backtrace. At 25 lines this window cut
 	# the head off the one oops that explains the failure and left the
@@ -1005,6 +1008,16 @@ if printf '%s\n' "$out" | command grep -q '^SETUP '; then
 	echo "          it needs a hard reset; a run that faults leaves it so" >&2
 	exit 2
 fi
+# Every count the guest printed was read from the stream of its kernel log,
+# and the stream's end marker is written after the last of them. A stream
+# that says it lost records is a run this script cannot read, refused before
+# any check can fail on what survived. A run with no stream line did not
+# reach its end, which the checks below read as failures of their own; one
+# that would pass without it is refused at the end.
+st=$(printf '%s\n' "$out" | sed -n 's/^stream //p' | command grep -vx whole | head -1)
+[ -z "$st" ] || {
+	echo "enospc: COULD-NOT-READ: the guest's kernel log stream lost records: $st" >&2
+	exit 2; }
 
 fail=0
 n=$(printf '%s\n' "$out" | sed -n 's/^files written //p')
@@ -1294,5 +1307,8 @@ make -s clean >/dev/null 2>&1
 # The image of a failed run is kept beside the next run's, since the
 # freemap it holds is the reading a loss is diagnosed from on the host.
 [ "$fail" -eq 0 ] || cp "$IMG" "$IMG.failed"
+[ "$fail" -gt 0 ] || printf '%s\n' "$out" | command grep -qx 'stream whole' || {
+	echo "enospc: COULD-NOT-READ: the guest's kernel log stream lost records: no stream line" >&2
+	exit 2; }
 echo "enospc: filled $SIZE, $fail failure(s)"
 [ "$fail" -eq 0 ]

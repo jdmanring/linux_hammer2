@@ -318,6 +318,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	nk "'^<'"; nk "'^>'"; nk "'^[<>]'"; nk "' FILE\$'"	# diff and file(1) output
 	nk "'__asan'"; nk "'__ubsan'"; nk "'CONFIG_KASAN=y'"	# nm and the kernel config
 	nk "'^cluster-umount ok'"; nk "'^rmmod ok'"; nk "'^crash-armed'"; nk '"COULD-NOT-RUN"'	# this run's own output
+	nk "'^stream '"; nk 'whole'	# kmsg-stream.sh --end's verdict, in this run's output
 	nk "'^h2nod'"; nk "'^h2nod-CL'"; nk "'^h2nod-LONE'"; nk "'^hammer2'"; nk "' type hammer2'"; nk '" type hammer2"'	# ps, lsmod, mount
 	nk "'h2sync-src'"; nk "'h2sync-tgt'"	# pfs-list
 	nk "'blockref ('"; nk "'^data '"; nk "'^dirent \"q[0-9]*\" '"; nk "'([0-9]* inode, [0-9]* indirect, [0-9]* data, [0-9]* dirent)'"	# show and fsck
@@ -933,6 +934,7 @@ finish() {
 	# 2026-10-18), which is the guest's and not the port's. Those lines name
 	# drivers/gpu/drm/ and are counted apart, so they neither hide a report of
 	# the port's nor fail the run on their own.
+	echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
 	echo "kernel-warnings $(grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K | grep -vc 'drivers/gpu/drm/')"
 	echo "gpu-warnings $(grep -c 'WARNING.*drivers/gpu/drm/' $K)"
 	# Before rmmod, so the report's %pS resolves the module's own symbols. The
@@ -995,21 +997,23 @@ if mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "cluster: COULD-NOT-RUN: the guest still has a hammer2 volume mounted; unmount it first" >&2
 	exit 2
 fi
-rmmod hammer2 2>/dev/null; dmesg -C
+rmmod hammer2 2>/dev/null
 # The kernel's ring is 128 KiB on the KASAN build and a pass prints a line per
 # inode it copies, so a run that copies a large set overflows it and every
 # count taken from dmesg afterwards is short by whatever scrolled off. A
 # follower writes the same lines to a file as they arrive, and every count
 # below reads that file. The follower is killed last, after rmmod has stopped
-# the module's lines, so nothing written after the last count is lost.
+# the module's lines, so nothing written after the last count is lost. It is
+# kmsg-stream.sh, since dmesg -w resumes past lost records without a word;
+# finish's --end says whether the stream is whole.
 K=/tmp/h2cluster.klog
 # A follower from a run that exited early is still writing, and two of them
 # write the ring twice into one file, which doubles every count below and
 # turns the deltas negative: measured 2026-10-16, three strays from three
 # refused runs and a klog holding the ring four times over. Any earlier one
 # is stopped first, and this one goes when the shell does.
-pkill -x dmesg 2>/dev/null; sleep 0.2
-dmesg -w > $K 2>&1 &
+pkill -x dmesg 2>/dev/null; sh /tmp/kmsg-stream.sh --stop; sleep 0.2
+sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
@@ -1088,7 +1092,7 @@ if [ "$TREE" != 0 ]; then
 		done ) &
 		wp="$wp $!"; w=$((w + 1))
 	done
-	# Only the writers: a bare wait also waits on the dmesg -w at KPID.
+	# Only the writers: a bare wait also waits on the stream reader at KPID.
 	wait $wp
 	sync
 	echo "tree-write-seconds $(( $(date +%s) - t0 ))"
@@ -1638,6 +1642,7 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	done
 	echo "crash-copied $(( $(copied) - u1 ))"
 	echo "crash-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
+	echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
 	echo "crash-last-target $(awk '/syncsnap: target/ { v = $NF } END { print v }' $K)"
 	# The cut pass's own target line: a pass whose target an earlier pass
 	# left valid prints none, so the last line above can be another pass's.
@@ -1765,9 +1770,8 @@ set -u
 # and the kernel log before the cut is gone with it; the readings before the
 # cut are the first half's own lines.
 K=/tmp/h2cluster.klog
-pkill -x dmesg 2>/dev/null; sleep 0.2
-dmesg -C
-dmesg -w > $K 2>&1 &
+pkill -x dmesg 2>/dev/null; sh /tmp/kmsg-stream.sh --stop; sleep 0.2
+sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 w0=$H2WALKS; [ "$w0" = alt ] && w0=1
@@ -1825,7 +1829,7 @@ fingerprint() {	# image
 
 # The guest half loads /tmp/hammer2.ko by name, so a module given under
 # another name through H2_KO is copied to that name.
-scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
+scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guest.sh" "$W/tail.sh" "$(dirname "$0")/kmsg-stream.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 GUEST_ENV="H2SEEKVOTE=$SEEKVOTE NBIG=$NBIG NBIG2=$NBIG2 H2_FAULT=$FAULT H2_FAULT2=${H2_FAULT2:-0} H2DEBUG=$H2DEBUG H2SNAP=$H2SNAP H2WALKS=$WALKS SHAPE=$SHAPE H2_STOP_DEPTH=$STOP_DEPTH H2_STOP_DEPTH_MS=$STOP_DEPTH_MS H2_STOP_ROUND=$STOP_ROUND H2_CRASH=${H2_CRASH:-0} H2_CRASH_DEPTH=${H2_CRASH_DEPTH:-2000} H2_RESUME_SECS=${H2_RESUME_SECS:-900} H2_FORCE_RESCAN=$FORCE_RESCAN H2_FAIL_STAMP=$FAIL_STAMP H2_NARROW=$NARROW H2_NARROW_ALTER=$NARROW_ALTER H2_COLLAPSE=$COLLAPSE H2_COLLAPSE_LATE=$COLLAPSE_LATE H2_INTERFLUSH=$INTERFLUSH TREE=$TREE TREE_FAN=$TREE_FAN TREE_WRITERS=$TREE_WRITERS PASS_CHANGES=$PASS_CHANGES TREE_SECS=${H2_TREE_SECS:-3600}"
 if [ "${H2_CRASH:-0}" = 1 ]; then
 	# 6. The crash. The guest half runs to its armed line, the guest is
@@ -1889,7 +1893,7 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 		[ $n -gt 60 ] && { echo "cluster: COULD-NOT-RUN: $GUEST did not answer ssh in 5 minutes after the cut" >&2; detach_disks; exit 2; }
 	done
 	echo "crash-restart-seconds $((n * 5))" >> "$W/out"
-	scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guestb.sh" "$W/tail.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed after the cut" >&2; detach_disks; exit 2; }
+	scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/guestb.sh" "$W/tail.sh" "$(dirname "$0")/kmsg-stream.sh" "$GUEST_SSH:/tmp/" || { echo "cluster: COULD-NOT-RUN: copy to $GUEST failed after the cut" >&2; detach_disks; exit 2; }
 	$RUN "$GUEST_SSH" "$GUEST_ENV sh -c 'mv /tmp/guestb.sh /tmp/h2cluster-b.sh; mv /tmp/tail.sh /tmp/h2cluster-tail.sh; . /tmp/h2cluster-b.sh'" >> "$W/out" 2>&1
 	rc=$?
 else
@@ -1957,6 +1961,15 @@ scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$STAMP.klog" 2>/dev
 [ "$TREE" != 0 ] && scp -q "$GUEST_SSH:/tmp/h2cluster.mem" "$FIXDIR/cluster-run-$STAMP.mem" 2>/dev/null \
 	&& echo "  kept  the guest's memory samples beside the images as cluster-run-*.mem"
 detach_disks
+# Every count the checks below read comes from the stream of the guest's
+# kernel log, each guest half writing its stream's end marker before its last
+# count. A stream that is not whole is a run this script cannot read, refused
+# before any check can fail on what survived; so is a guest that finished
+# without saying.
+sw=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)
+[ -z "$sw" ] && command grep -q '^stream ' "$W/out" || {
+	echo "cluster: COULD-NOT-READ: the guest's kernel log stream lost records: ${sw:-no stream line}" >&2
+	exit 2; }
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 nval() { grep -c -E "^$1( |$)" "$W/out"; }	# how many lines carry the name, with or without a value

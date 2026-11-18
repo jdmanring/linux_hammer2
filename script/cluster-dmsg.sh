@@ -190,10 +190,11 @@ done
 if lsmod 2>/dev/null | grep -q '^hammer2' || mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "dmsg: COULD-NOT-RUN: the guest still has hammer2 loaded or mounted" >&2; exit 2
 fi
-dmesg -C
+# kmsg-stream.sh reads the log, since dmesg -w resumes past lost records
+# without a word; finish's --end says whether the stream is whole.
 K=/tmp/h2dmsg.klog
-pkill -x dmesg 2>/dev/null; sleep 0.2
-dmesg -w > $K 2>&1 &
+pkill -x dmesg 2>/dev/null; sh /tmp/kmsg-stream.sh --stop; sleep 0.2
+sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
 trap 'kill $KPID 2>/dev/null' EXIT
 klog() { grep -c "$1" $K; }
@@ -206,6 +207,7 @@ echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
 # The end of every mode: warnings, kmemleak before and after the unload.
 finish() {
+echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
 echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive' $K)"
 # Before rmmod, so the report's %pS resolves the module's own symbols, and
 # after the wait the scanner's age rule needs (kmemleak.c MSECS_MIN_AGE,
@@ -877,6 +879,7 @@ if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
 	done
 	echo "fdmount-tasks $n"
 	sleep 1
+	echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
 	echo "fdmount-lockdep $(grep -c 'possible recursive locking detected' $K)"
 	echo "fdmount-mntlk-lines $(grep -c '(h2_mnt)' $K)"	# hammer2_mntlk's lockdep name
 	echo "fdmount-badfd $(grep -c 'bad cluster_fd' $K)"
@@ -1016,7 +1019,7 @@ finish
 kill $KPID 2>/dev/null
 GUEST
 
-scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/h2attach" "$W/h2service" "$GUEST_SSH:/tmp/" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/h2dmsg.sh" || {
+scp -q "$KO" "$GUEST_SSH:/tmp/hammer2.ko" && scp -q "$W/h2attach" "$W/h2service" script/kmsg-stream.sh "$GUEST_SSH:/tmp/" && scp -q "$W/guest.sh" "$GUEST_SSH:/tmp/h2dmsg.sh" || {
 	echo "dmsg: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	$RUN "$GUEST_SSH" 'rm -rf /tmp/h2peer && mkdir /tmp/h2peer' && scp -q test/h2attach.c src/sys/fs/hammer2/hammer2_ioctl.h src/sys/fs/hammer2/hammer2_disk.h "$GUEST_SSH:/tmp/h2peer/" || {
@@ -1031,6 +1034,17 @@ fi
 stamp=$(date +%Y%m%d-%H%M%S)
 scp -q "$GUEST_SSH:/tmp/h2dmsg.klog" "$FIXDIR/dmsg-run-$stamp.klog" 2>/dev/null && echo "  kept  the guest kernel log beside the images as dmsg-run-$stamp.klog"
 { echo "guest-kernel $guest_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; } > "$FIXDIR/dmsg-run-$stamp.out" 2>/dev/null
+# Every count the checks below read comes from the stream of the guest's
+# kernel log, and finish() writes the stream's end marker before the last of
+# them. A stream that is not whole is a run this script cannot read, refused
+# before any check can fail on what survived; a guest half that finished
+# (exit 0) without saying is refused the same way.
+st=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)
+if [ -n "$st" ] || [ "$rc" = 0 ]; then
+	[ -z "$st" ] && command grep -qx 'stream whole' "$W/out" || {
+		echo "dmsg: COULD-NOT-READ: the guest's kernel log stream lost records: ${st:-no stream line}" >&2
+		detach_disk; exit 2; }
+fi
 # H2_DMSG_CLUSTERFD=1 runs only the mount intake, cluster_fd=, which no other
 # harness drives: a TCP connection to a silent listener on the guest's
 # loopback is handed to the mount as descriptor 3. The mount holds

@@ -213,10 +213,13 @@ if mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "sync-empty: COULD-NOT-RUN: the guest still has a volume mounted" >&2
 	exit 2
 fi
-rmmod hammer2 2>/dev/null; dmesg -C
+rmmod hammer2 2>/dev/null
 # The ring wraps, so the log is streamed to a file and every count reads it.
+# kmsg-stream.sh is the reader, since dmesg -w resumes past lost records
+# without a word; --end below says whether the stream is whole.
 K=/tmp/h2empty.klog
-dmesg -w > $K 2>&1 &
+sh /tmp/kmsg-stream.sh --stop
+sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
 klog() { grep -c "$1" $K; }
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
@@ -311,10 +314,11 @@ timeout 60 umount /mnt/m 2>/dev/null
 echo "mounts-after $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 sync
+echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
 kill $KPID 2>/dev/null
 GUEST
 
-scp -q "$KO" "$W/guest.sh" "$GUEST_SSH:/tmp/" || { echo "sync-empty: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
+scp -q "$KO" "$W/guest.sh" "$(dirname "$0")/kmsg-stream.sh" "$GUEST_SSH:/tmp/" || { echo "sync-empty: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 $RUN "$GUEST_SSH" "N=$N CYCLES=$CYCLES H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2empty.sh; . /tmp/h2empty.sh'" > "$W/out" 2>&1
 rc=$?
 # A guest half that REFUSED is not a run that failed, and reporting it as
@@ -365,6 +369,16 @@ for d in vdb vdc; do
 	$VIRSH detach-disk "$GUEST" $d --live >/dev/null 2>&1
 	$VIRSH detach-disk "$GUEST" $d --config >/dev/null 2>&1
 done
+
+# Every count below reads the stream of the guest's kernel log, and the
+# stream's end marker is written after the last line any of them reads, so
+# a stream that is not whole is a run this script cannot read, refused
+# before any check can fail on what survived.
+st=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)
+[ -z "$st" ] && command grep -qx 'stream whole' "$W/out" || {
+	cp "$W/out" "$FIXDIR/sync-empty-unread-$(date +%Y%m%d-%H%M%S).out" 2>/dev/null
+	echo "sync-empty: COULD-NOT-READ: the guest's kernel log stream lost records: ${st:-no stream line}" >&2
+	exit 2; }
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 fail=0; checks=0

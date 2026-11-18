@@ -66,7 +66,8 @@ BEGIN {
 EOF
 )
 
-case ${1:-} in
+# The selftest is named in the form pre-push-check.sh and CI find it by.
+[ "${1:-}" = "--selftest" ] || case ${1:-} in
 --start)
 	m="h2kmsg-start $(cat /proc/sys/kernel/random/uuid)" || exit 2
 	echo "$m" > /dev/kmsg || exit 2
@@ -91,7 +92,6 @@ case ${1:-} in
 	# bracket keeps this pattern from matching a shell that names it.
 	pkill -f 'h2kmsg[-]start ' 2>/dev/null
 	exit 0 ;;
---selftest) ;;
 *)	echo "kmsg-stream: COULD-NOT-RUN: --start, --end <klog>, --render or --selftest" >&2; exit 2 ;;
 esac
 

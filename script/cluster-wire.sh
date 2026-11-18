@@ -594,10 +594,14 @@ to_guest() {	# to_guest <domain> <ssh>: its module and daemon, on a boot that ca
 	dl=$($SSH "$s" "awk '/debug_locks:/ {print \$2}' /proc/lockdep_stats 2>/dev/null")
 	[ "$dl" = 0 ] && {
 		echo "wire: COULD-NOT-RUN: lockdep is off on $g since an earlier report; boot it again" >&2; exit 2; }
-	# KASAN reports once per boot (mm/kasan/report.c, without kasan_multi_shot)
-	kb=$($SSH "$s" "dmesg | grep -c 'BUG: KASAN'")
-	[ "${kb:-0}" = 0 ] || {
-		echo "wire: COULD-NOT-RUN: $g's boot already holds $kb KASAN report(s), so it reports no more; boot it again" >&2; exit 2; }
+	# KASAN reports once per boot (mm/kasan/report.c, without
+	# kasan_multi_shot), and every report taints the kernel B in
+	# end_report(), as a bad page does, so the taint answers for the whole
+	# boot where the ring answers only for what it still holds.
+	tb=$($SSH "$s" cat /proc/sys/kernel/tainted 2>/dev/null)
+	case $tb in ''|*[!0-9]*) echo "wire: COULD-NOT-RUN: $g's taint is unreadable: '${tb}'" >&2; exit 2 ;; esac
+	[ $((tb & 32)) = 0 ] || {
+		echo "wire: COULD-NOT-RUN: $g's boot is tainted B (a KASAN report or a bad page), so KASAN reports no more; boot it again" >&2; exit 2; }
 	scp -q "$ko" "$s:/tmp/hammer2.ko" && scp -q "$svc" "$s:/tmp/h2service" || {
 		echo "wire: COULD-NOT-RUN: copy to $g failed" >&2; exit 2; }
 }
@@ -667,9 +671,10 @@ cat > "$W/setup.sh" <<'GUEST'
 if lsmod 2>/dev/null | grep -q '^hammer2' || mount 2>/dev/null | grep -q ' type hammer2'; then
 	echo "wire: COULD-NOT-RUN: the guest still has hammer2 loaded or mounted" >&2; exit 2
 fi
-dmesg -C
-pkill -f 'dmesg -w' 2>/dev/null
-setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
+# kmsg-stream.sh reads the log, since dmesg -w resumes past lost records
+# without a word; down.sh's --end says whether the stream is whole.
+pkill -f 'dmesg -w' 2>/dev/null; sh /tmp/kmsg-stream.sh --stop
+setsid -f sh -c 'exec sh /tmp/kmsg-stream.sh --start > /tmp/h2wire.klog 2>&1'
 # an earlier run's markers and TLS arguments: a .pub left by a TLS run
 # would admit the plaintext dial H2_WIRE_ADMIT=1 must see refused
 rm -f /tmp/h2keys/peer.none /tmp/h2keys/peer.pub /run/h2tls/args
@@ -833,7 +838,8 @@ cat > "$W/srcgate.sh" <<'GUEST'
 # read-write, then read-only; each state read from /proc/mounts
 S=/mnt/h2src; mkdir -p $S
 st() { awk -v m=$S '$2 == m { split($4, o, ","); print o[1]; f = 1 } END { if (!f) print "none" }' /proc/mounts; }
-n0=$(dmesg | grep -c 'refused: a synchronization source')
+echo "srcgate-stream $(sh /tmp/kmsg-stream.sh --end $K)"
+n0=$(klog 'refused: a synchronization source')
 for x in src peer; do
 	mount -t hammer2 -w /dev/vdb@ZZ.h2sync-$x $S 2>/dev/null; echo "srcgate-$x-rw-rc $?"
 	echo "srcgate-$x-rw-state $(st)"
@@ -845,7 +851,8 @@ for x in src peer; do
 	echo "srcgate-$x-ro-state $(st)"
 	[ "$(st)" = none ] || umount $S
 done
-echo "srcgate-lines $(( $(dmesg | grep -c 'refused: a synchronization source') - n0 ))"
+echo "srcgate-stream $(sh /tmp/kmsg-stream.sh --end $K)"
+echo "srcgate-lines $(( $(klog 'refused: a synchronization source') - n0 ))"
 GUEST
 cat > "$W/pass.sh" <<'GUEST'
 # pass: B's slave element is written by its synchronization pass from A's
@@ -1328,9 +1335,12 @@ if [ "$1" = dial ]; then
 	fi
 	exit 0
 fi
-dmesg -C
-pkill -f 'dmesg -w' 2>/dev/null
-setsid -f sh -c 'exec dmesg -w > /tmp/h2wire.klog 2>&1'
+# A reader still running holds the stream every count so far read, which the
+# new one truncates, so it is vouched for first; a guest booted again after a
+# cut has none.
+pgrep -f 'h2kmsg[-]start ' >/dev/null && echo "restart-stream $(sh /tmp/kmsg-stream.sh --end $K)"
+pkill -f 'dmesg -w' 2>/dev/null; sh /tmp/kmsg-stream.sh --stop
+setsid -f sh -c 'exec sh /tmp/kmsg-stream.sh --start > /tmp/h2wire.klog 2>&1'
 # the resumed pass is read from this line on, as after the relay's cut
 echo "h2wire cut gap end" > /dev/kmsg
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# the boot's own objects are not the module's
@@ -1458,6 +1468,7 @@ sleep 2
 echo "h2wire end of unload" > /dev/kmsg
 n=0; until grep -q 'h2wire end of unload' /tmp/h2wire.klog || [ $n -ge 50 ]; do sleep 0.1; n=$((n+1)); done
 echo "klog-alive $(grep -c 'h2wire end of unload' /tmp/h2wire.klog)"
+echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
 # every snapshot this side took, by whether the root it copied was its
 # element's as last flushed (a power-cut guest's first boot is in its
 # precut klog, not counted here)
@@ -1482,7 +1493,7 @@ echo "lockdep-saturated $(klog 'MAX_LOCKDEP_ENTRIES too low')"
 # the connection device's own refusals, warnings by design
 echo "conn-warnings $(kl | grep 'WARNING' | grep -c -E 'hammer2_io_getblk_conn|hammer2_io\.c:')"
 echo "threads-final $(threads)"
-pkill -f 'dmesg -w' 2>/dev/null
+sh /tmp/kmsg-stream.sh --stop
 GUEST
 cat > "$W/tls.sh" <<'GUEST'
 # tls <check|key ROLE IDENTITY|cap PORT|wait|stat|down>: kernel TLS on the
@@ -1575,7 +1586,7 @@ down)
 esac
 GUEST
 to_scripts() {	# to_scripts <ssh>
-	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/walks.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$W/srcgate.sh" "$W/tls.sh" "$1:/tmp/" || {
+	scp -q "$W/common.sh" "$W/clmode.awk" "$W/setup.sh" "$W/fill.sh" "$W/lone.sh" "$W/reg.sh" "$W/walks.sh" "$W/ro.sh" "$W/pass.sh" "$W/read.sh" "$W/dial.sh" "$W/link.sh" "$W/down.sh" "$W/stale.sh" "$W/redial.sh" "$W/cut.sh" "$W/restart.sh" "$W/srcgate.sh" "$W/tls.sh" script/kmsg-stream.sh "$1:/tmp/" || {
 		echo "wire: COULD-NOT-RUN: copy to $1 failed" >&2; exit 2; }
 }
 to_scripts "$SA"
@@ -1639,6 +1650,7 @@ elif [ "$PASS" = 1 ]; then PASSES=full; else PASSES=none; fi
 if [ "$CUT" = slave ]; then cg=$GB cs=$SB cl=b; else cg=$GA cs=$SA cl=a; fi
 ci=$FIXDIR/wire-$cl.img
 power_cut() {
+	echo "H cut-precut-stream $($RUN "$cs" 'sh /tmp/kmsg-stream.sh --end /tmp/h2wire.klog' 2>/dev/null)" >> "$W/out"
 	scp -q "$cs:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-$cl-precut.klog" 2>/dev/null
 	$VIRSH destroy "$cg" >/dev/null 2>&1 || { echo "wire: COULD-NOT-RUN: $cg did not stop" >&2; guest_off "$GA" "$SA"; guest_off "$GB" "$SB"; exit 2; }
 	"$FSCK" "$ci" > "$FIXDIR/wire-run-$stamp-fsck-cut.txt" 2>&1; echo "H cut-fsck-rc $?" >> "$W/out"
@@ -1718,6 +1730,8 @@ esac && [ "$CUT" != control ] && [ "$SEQ" != control ] && [ "$CLOSEWAIT" != cont
 [ "$RAW" = 0 ] || { phase A tls.sh stat; phase B tls.sh stat; }
 # a faulted B unmounts nothing; guest_off forces it under its bound
 [ "$CLOSEWAIT" = control ] || phase B down.sh
+# B's down.sh, which vouches for its stream, does not run in that control
+[ "$CLOSEWAIT" = control ] && echo "B stream $($RUN "$SB" 'sh /tmp/kmsg-stream.sh --end /tmp/h2wire.klog' 2>/dev/null)" >> "$W/out"
 sleep 2
 phase A link.sh "$clid" 3	# after B's unmount: its spans deleted
 phase A down.sh
@@ -1736,6 +1750,17 @@ scp -q "$SB:/tmp/h2wire.klog" "$FIXDIR/wire-run-$stamp-b.klog" 2>/dev/null
 echo "  kept  both kernel logs and the relay trace beside the images as wire-run-$stamp-{a,b}.klog and .trace"
 guest_off "$GA" "$SA"
 guest_off "$GB" "$SB"
+
+# Every count a check below reads comes from a stream of a guest's kernel
+# log: each guest's from its setup or restart to its down.sh, the cut
+# guest's up to the cut. Each is vouched for by an end marker written after
+# the counts it covers, and a stream that is not whole is a run this script
+# cannot read, refused before any check can fail on what survived; so is a
+# guest whose final stream line is missing.
+sw=$(command grep -E '^[ABH] ([a-z]+-)*stream ' "$W/out" | command grep -v ' stream whole$' | head -1)
+[ -z "$sw" ] && command grep -qx 'A stream whole' "$W/out" && command grep -qx 'B stream whole' "$W/out" || {
+	echo "wire: COULD-NOT-READ: the guest's kernel log stream lost records: ${sw:-a guest's final stream line is missing}" >&2
+	exit 2; }
 
 fail=0; checks=0
 check() {	# check <name> <0 ok / 1 fail> <reading>
