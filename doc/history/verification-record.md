@@ -26437,9 +26437,10 @@ The review found `cluster-sync.sh`'s finish reading its scrap summary
 and kept-modified counts straight after the unmounts that print them,
 and `--end` after them; round 1's refusal of K2 had judged the counts
 after `--end` and said nothing of those before it. Read over every
-`cluster-sync.sh` check that passes on zero (`zero-pass.sh`, 39 keys,
-`zero-pass-97385a85.out`) and by hand over the other harnesses, the
-same shape was in the interrupt cell after its unmounts,
+`cluster-sync.sh` check that passes on zero whose key is a literal
+(`zero-pass.sh`, 39 keys, `zero-pass-97385a85.out`; a key built from a
+loop variable, `change-$c-*`, is outside it) and by hand over the other
+harnesses, the same shape was in the interrupt cell after its unmounts,
 `write-destroys`, the three "in pass" readings, `sync-empty-base.sh`'s
 every count, which the review had read as correct, and
 `cluster-wire.sh`'s `down.sh`. `694f3e0b` puts an `--end` before each.
@@ -26454,8 +26455,10 @@ since no text rule tells an unread stream from one read without its
 `--end`. `inventory-stream-controls-97385a85.out` (driver
 `inventory-stream-controls.sh`): each of the rule's five checks
 removed fails its controls; the reader pattern of `654d6152` fails the
-four new ones; the marker-write strip removed fails every harness that
-writes a marker; the review's `tail -f`, `dd`, `head` and `journalctl`
+four new ones; the marker-write strip removed fails the 24 scripts the rule
+reads that write one (the other three of the 27 that write to
+`/dev/kmsg` are `kmsg-stream.sh`, the exempt `ring-flood.sh` and the
+gate); the review's `tail -f`, `dd`, `head` and `journalctl`
 mutations of `cluster-dmsg.sh` each fail the gate, and the second
 `--start` passes it.
 
@@ -26480,3 +26483,75 @@ default run reaches; `cluster-wire.sh` 36, two `A` and two `B` stream
 lines (`fixtures/wire-run-20261117-232814.out`); under
 `H2_WIRE_CUT=slave` 44, with `H cut-precut-stream whole`
 (`fixtures/wire-run-20261117-233017.out`). None failed.
+
+## A kernel log stream that lost records, review round 3, 2026-11-18
+
+The third review, of `052aedbb..6d0a0a98`, returned FIX-FIRST with five
+blocking findings and six more; each was read at its line, and the
+dispositions are in `review-stream-round3-dispositions.md`. It is the
+last review round this increment takes.
+
+Counts read ahead of the reader, again. The hand read of round 2 over
+the harnesses other than `cluster-sync.sh` missed four. `694f3e0b` had
+moved `sync-empty-base.sh`'s only `--end` above its teardown, so the
+unmounts, the unload and the reader's stop were outside both the
+warnings count and the verdict, and a record lost there printed its
+line after a `stream whole` the host had already read. `cluster-dmsg.sh`
+read its TLS refusal lines, the server's log counts, the counts after
+the held connection's unmount and the control's final shutdown count
+with no end marker after the act; the stage 1 check that no span is
+left and the control's equal shutdown counts pass on zero, and a
+`log-shitcan-before` read low lets the shutdown branch's check pass
+with no line from the hold. `test-enospc.sh` read sixteen counts after
+its unmount before its second `--end`, among them the warnings, oops
+and module fault counts scored against zero. `cluster-wire.sh`'s
+`pass.sh first`, reached under the pass refusal and snapshot routing
+controls, waited on the media and then counted lines its checks require
+to be zero. `4b3029c8` adds an end marker before each: a second one
+after `sync-empty-base.sh`'s teardown with the warnings count behind
+it, four in `cluster-dmsg.sh`'s default path, `test-enospc.sh`'s second
+moved to just after the unmount returns, and `first-stream` in
+`pass.sh`. Not swept: `cluster-dmsg.sh`'s `H2_DMSG_TLS` and peer arms,
+which read deltas after `sleep 1` or a wait on a line, for checks that
+require a delta above zero and so fail on a reader behind.
+
+The end marker. `--end` waited for its marker, and the verdict accepted
+it, as a substring of a line; `8a5fa234` matches the whole rendered
+line, as `c61edb93` did for the start marker, and the selftest gains a
+klog whose only end line carries a longer suffix. On a scratch copy
+with the old match restored the selftest fails that case and exits 1.
+
+The rule's readers. A reader of `/proc/kmsg` passed the stream rule.
+`9ca81849` names it and adds a fourteenth control; with the pattern of
+`97385a85` restored on a scratch copy the gate exits 1 on that control.
+
+Refused: that `--selftest` passes with `--start`'s reader swapped for
+one that reads nothing (it renders from files on the host; such a
+reader never writes its start marker to the klog, so every guest run's
+`--started` and `--end` print `COULD-NOT-READ` and are refused); that a
+dropped ssh in `test-enospc.sh` should be COULD-NOT-RUN (its comment
+says a lost session is the hang it exists to find); that the ring size
+sentence above is a state claim (it is dated, in the dated record).
+
+The wire's snapshot routing control. Its rerun failed four checks
+that need a pass: that control sets `PASS` and refuses every pass's
+snapshot, so no pass ends, and the per-pass readings of `aff598c7` and
+the copy floor of `802dedf2` required one. Its last reading on record,
+29 checks and 0 failed, predates both. `2f03c966` skips them under that
+control, whose own check reads the refusals.
+
+The batch at `9ca81849` (`stream-gates-run-9ca81849.log`): the control
+through `test-enospc.sh`, plain exit 0 with two stream lines, plant exit
+1 with the planted warning counted, flood exit 2 with
+`cat: /dev/kmsg: Broken pipe`, mutant exit 0, the last three each
+`ring-flood: ok`. `sync-empty-base.sh` 18 checks, two stream lines each
+whole; `cluster-dmsg.sh` 87, five stream lines
+(`fixtures/dmsg-run-20261118-024106.out`); `cluster-wire.sh` under
+`H2_WIRE_PASSREFUSE=control` 34, with `B first-stream whole`
+(`fixtures/wire-run-20261118-024219.out`). None failed there; under
+`H2_WIRE_SNAPROUTE=control` 40 with the four above failed. At
+`2f03c966` that arm read 36 checks, 0 failed, 36 of 36 snapshots
+refused `EOPNOTSUPP`, 0 files on B, and `B first-stream whole`
+(`stream-gates-run-2f03c966.log`, `fixtures/wire-run-20261118-025623.out`).
+`cluster-sync.sh` and the default `cluster-wire.sh` run are unchanged
+since the batch at `97385a85` and were not rerun.
