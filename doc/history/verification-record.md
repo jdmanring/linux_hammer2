@@ -26258,10 +26258,11 @@ which begins at record 0, printed a loss; `ebabe16d` fixed it and the
 selftest reads a stream from record 0, which fails on the earlier
 reader.
 
-`b5b5be30` moves the five onto it. Each calls `--end` after the events
-its counts cover and before it reads them, since `--end` returns once
-the reader has written the end marker, so every record before the
-marker is in the klog when a count reads it; and each refuses with
+`b5b5be30` moves the five onto it. Each calls `--end`, which returns
+once the reader has written the end marker, so a count read after it
+reads a klog holding every record before the marker; three harnesses
+read some counts before theirs, which review round 2 found and
+`694f3e0b` moved (below). Each refuses with
 exit 2 on any `stream` line that is not whole, before
 any check reads a count; a guest half that finished without one is
 refused the same way. `cluster-wire.sh` vouches for the cut guest's
@@ -26274,7 +26275,7 @@ report. `test-enospc.sh` no longer counts the earlier runs a fresh read
 of the ring replays. `test-inventory.sh` holds a script that starts the
 reader to `--started`, `--end`, the refusal and no read or clear of
 the ring, refuses any other script that streams the log, and runs
-seven controls. Those print nothing when they pass, so
+six controls. Those print nothing when they pass, so
 `inventory-stream-controls-b7e2ff6e.out` shows them able to fail: each
 of the rule's five checks removed from a copy of the gate in a
 worktree fails that copy on its own control, exit 1, and the gate at
@@ -26307,7 +26308,9 @@ plant exit 1, the planted warning counted; flood exit 2, refused with
 `the guest's kernel log stream lost records: COULD-NOT-READ: cat:
 /dev/kmsg: Broken pipe`; mutant exit 0, a reader that reopens
 `/dev/kmsg` and checks no sequence number reading the same flood as
-whole. Each arm read `ring-flood: ok` (`stream-gates-enospc-*-8a095257.out`).
+whole. The plant, flood and mutant arms each read `ring-flood: ok`;
+the plain arm is `test-enospc.sh` run alone and prints no such line
+(`stream-gates-enospc-*-8a095257.out`).
 The other four passed: `sync-empty-base.sh` 18 checks,
 `cluster-dmsg.sh` 87, `cluster-sync.sh` 60, `cluster-wire.sh` 36, none
 failed. Two keep their guest half's output, and it holds the verdict:
@@ -26330,7 +26333,7 @@ numbers, so no kept klog of these five can say whether it lost
 records. A loss needs a reader stalled for a whole ring's worth of
 output, 8 MiB since 2026-11-16 and 128 KiB before it.
 
-What the rule cannot read: whether each count sits before an `--end`,
+What the rule cannot read: whether each count reads after an `--end`,
 and whether the refusal comes before the run's failure exit, which the
 five decide on the host from what the guest printed in shapes too
 unlike for one text rule. Each was read by hand. The renderer matches
@@ -26384,7 +26387,8 @@ five harnesses.
 
 The batch at `61c02fbf` (`stream-gates-run-61c02fbf.log`) added three
 runs of `cluster-wire.sh` that read a verdict mid-run. Plain, plant and
-flood read as before, `ring-flood: ok` each; the four harnesses passed
+flood read as before, plain exit 0 and the other two `ring-flood: ok`;
+the four harnesses passed
 with 18, 87, 60 and 36 checks. `H2_WIRE_SRCGATE=1` passed 37, its two
 `A srcgate-stream whole` lines read
 (`fixtures/wire-run-20261117-202843.out`) and its four refusal lines
@@ -26417,3 +26421,62 @@ Every other arm of both batches before it, and the mutant arm at
 `e815a5ce`, took `SIGBUS` there. It is the first such reading on
 record. Its cause is not read yet; it is a candidate defect of the
 fault path's admission, diagnosed and driven in its own increment.
+
+## A kernel log stream that lost records, review round 2, 2026-11-17
+
+The second review, of `052aedbb..fbb7adb5`, returned FIX-FIRST with two
+blocking findings and four more; each was read at its line, and the
+dispositions are in `review-stream-round2-dispositions.md`.
+
+Counts read ahead of the reader. The klog is a prefix of the record
+sequence, so a count holds every record up to the newest line the
+reader had written, and the reader can be seconds behind a burst. A
+count read after `--end`, or after a wait for a line printed later, is
+safe; one read straight after the act whose lines it counts is not.
+The review found `cluster-sync.sh`'s finish reading its scrap summary
+and kept-modified counts straight after the unmounts that print them,
+and `--end` after them; round 1's refusal of K2 had judged the counts
+after `--end` and said nothing of those before it. Read over every
+`cluster-sync.sh` check that passes on zero (`zero-pass.sh`, 39 keys,
+`zero-pass-97385a85.out`) and by hand over the other harnesses, the
+same shape was in the interrupt cell after its unmounts,
+`write-destroys`, the three "in pass" readings, `sync-empty-base.sh`'s
+every count, which the review had read as correct, and
+`cluster-wire.sh`'s `down.sh`. `694f3e0b` puts an `--end` before each.
+
+The rule's readers. `test-inventory.sh` knew a reader as `dmesg`
+following or `cat` of `/dev/kmsg`, so `tail -f`, `dd`, `head` and
+`journalctl -kf` passed, and a harness whose reader was swapped for
+`tail -f` passed both rules. `97385a85` takes any use of `/dev/kmsg`
+but a write as a reader, adds four controls to make thirteen, and says
+in the comment that a second stream started and never ended passes,
+since no text rule tells an unread stream from one read without its
+`--end`. `inventory-stream-controls-97385a85.out` (driver
+`inventory-stream-controls.sh`): each of the rule's five checks
+removed fails its controls; the reader pattern of `654d6152` fails the
+four new ones; the marker-write strip removed fails every harness that
+writes a marker; the review's `tail -f`, `dd`, `head` and `journalctl`
+mutations of `cluster-dmsg.sh` each fail the gate, and the second
+`--start` passes it.
+
+Also applied: `cluster-wire.sh`'s power cut wrote whatever its ssh
+returned after `H cut-precut-`, so a failed ssh left no stream line and
+the run passed on A's and B's; a missing verdict or klog is now a
+`COULD-NOT-READ` stream line (`5e464cd3`), and the host filter refuses
+both shapes. `--started` took a token shorter than a UUID from a
+command line, which matched any earlier marker it prefixes; it now
+takes a whole UUID and matches a whole marker line, and the selftest's
+stand-in with a prefix token fails the earlier extractor (`c61edb93`).
+The two sentences of the batch account above that misstated the plain
+arm and the control count are corrected.
+
+The batch at `97385a85` (`stream-gates-run-97385a85.log`): the control
+through `test-enospc.sh`, plain exit 0, plant exit 1 with the planted
+warning counted, flood exit 2 with `cat: /dev/kmsg: Broken pipe`,
+mutant exit 0, the last three each `ring-flood: ok`.
+`sync-empty-base.sh` 18 checks and one stream line; `cluster-dmsg.sh`
+87; `cluster-sync.sh` 60 with five stream lines, one per `--end` a
+default run reaches; `cluster-wire.sh` 36, two `A` and two `B` stream
+lines (`fixtures/wire-run-20261117-232814.out`); under
+`H2_WIRE_CUT=slave` 44, with `H cut-precut-stream whole`
+(`fixtures/wire-run-20261117-233017.out`). None failed.
