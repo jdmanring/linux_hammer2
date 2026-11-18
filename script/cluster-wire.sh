@@ -2181,8 +2181,10 @@ fi
 # lines, stamps alone, verify rounds, narrowed rounds and the keys they
 # name, round 1's acted count, detach verdicts, the verdict and the
 # reasons a round was carried. A run whose log holds no bracketed pass
-# fails rather than passing every per-pass check on nothing.
-if [ "$PASS" = 1 ]; then
+# fails rather than passing every per-pass check on nothing. The snapshot
+# routing control sets PASS but refuses every pass's snapshot, so no pass
+# ends there; its own check reads that.
+if [ "$PASS" = 1 ] && [ "$SNAPROUTE" != control ]; then
 	bk=$FIXDIR/wire-run-$stamp-b.klog
 	pv=$(awk '/syncsnap: begin clindex/ { p++; f = r = n = s = m = rd = nr = k = a1 = dt = 0; v = "none"; c = ""; in_p = 1; next }
 	    !in_p { next }
@@ -2447,7 +2449,7 @@ for sd in A B; do
 	# B's pass prints once per target it takes, and the defect this reads
 	# shows only on a target after a link's first, so every target taken
 	# in the same log must have its own print, and the pass at least one
-	bw=0; tw=0; [ "$sd" = B ] && [ "$PASS" = 1 ] && { bw=1; tw=$(num "$(val B snap-targets-taken)" 1); }
+	bw=0; tw=0; [ "$sd" = B ] && [ "$PASS" = 1 ] && [ "$SNAPROUTE" != control ] && { bw=1; tw=$(num "$(val B snap-targets-taken)" 1); }
 	[ "$bs" = 0 ] && [ $((be + bs)) -ge "$bw" ] && [ "$(num "$(val $sd snap-target-prints)" 0)" -ge "$tw" ]; check "$sd: every snapshot copies its element's root as last flushed" $? "equal $(val $sd snap-blockset-equal), stale $(val $sd snap-blockset-stale), targets taken $(val $sd snap-targets-taken), $(val $sd snap-target-prints) of them with their own print$( [ "$bw" = 0 ] && echo ', none required: only the slave under the pass is held to a print')"
 	case "$CUT$sd" in masterA|slaveB) cw=2;; *) cw=1;; esac	# a power-cut guest loads twice, once per boot
 	c=$(grep "^$sd " "$W/out" | grep -o kmemleak-cleared | wc -l); k=$(val $sd kmemleak); m=$(nval $sd kmemleak)	# counted by occurrence, so a second marker glued to a line or beside the first on one line is a second clear
