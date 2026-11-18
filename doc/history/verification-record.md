@@ -26651,9 +26651,8 @@ pattern that matches nothing, fails the gate through its control or its
 population check (`orphan-rule-controls-ed5a17bd.out`). All five
 harnesses read counts after their run's last `--end`, and in
 `test-enospc.sh` those follow an unmount that, stuck, can still print.
-`ed5a17bd` makes the last act on each run's klog an `--end`; no gate
-checks that order, and the sweep that found the reads is
-`block-end-ed5a17bd.out`.
+`ed5a17bd` moves the `--end` of each harness's main path below its last
+read; review round 2 found two arms that exit before that path ends, below.
 
 The batch at `ed5a17bd` (`stream-gates-run-ed5a17bd.log`), on
 `h2debug-7.3tls`: the enospc control plain exit 0, plant exit 1, flood
@@ -26669,3 +26668,33 @@ guest (`fixtures/wire-run-20261118-132817.out`); under `H2_WIRE_CUT=slave`
 `H2_WIRE_SNAPROUTE=control` 36, 36 of 36 snapshots refused `EOPNOTSUPP`
 and `B first-stream whole` (`fixtures/wire-run-20261118-133512.out`).
 None failed.
+
+Review round 2 (`review-read-round2.md`, FIX-FIRST; dispositions in
+`review-read-round2-dispositions.md`). cluster-dmsg's
+`H2_DMSG_CLUSTERFD=1` arm and cluster-sync's `H2_CRASH=1` first half end
+their guest script with `exit 0` before `finish`, and each still wrote
+its `--end` above its last counts; neither ran in the batch above.
+`4841c5dc` moves both below. Which `--end` a run reaches last is read by
+hand: `block-end.py` lists, by heredoc block in text order, the reads
+after a block's last `--end` and the reads between an `--end` and an
+`exit` below it (`block-end-44a377bf.out`), and cannot follow a function
+call or the order the host runs blocks in. Read that way, each run of
+the five ends its klog with an `--end` after its last read: the main
+paths through `finish` (cluster-dmsg, cluster-sync and its second
+guest), `down.sh` (cluster-wire, whose `tls.sh down` arm reads nothing),
+and the teardown (sync-empty-base, test-enospc); the two arms above; the
+`first`, `more`, `srcgate` and `restart` phases of cluster-wire, which
+`down.sh` follows on the same guest (`restart` reads its verdict before
+its `--started`); and every `exit` above with a nonzero status,
+which fails its run. No gate checks this. The orphaned-filter rule read
+only a tab run plus four spaces, so a pipe cut before a filter at one or
+two tabs passed; `44a377bf` reads every filter indented deeper than the
+code line before it, 93 in `script/`, none refused. That rule refuses the
+window at `e9228881` and round 2's two cuts, passes the control's own site
+turned from `|` to `&&`, and fails the gate with its refusal disabled or
+its pattern matching nothing (`orphan-rule-controls-44a377bf.out`).
+The two arms at `44a377bf` (`stream-gates-run-44a377bf.log`), on
+`h2debug-7.3tls`: `H2_DMSG_CLUSTERFD=1` exit 0, its five checks passed and
+its guest output ending its counts with `stream whole`
+(`fixtures/dmsg-run-20261118-143724.out`); `H2_CRASH=1` 49 checks, 0
+failed, three stream lines each whole.
