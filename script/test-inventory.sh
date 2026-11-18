@@ -838,7 +838,8 @@ code_of() { command grep -v '^[[:space:]]*#' "$1" | sed -E 's/pkill [^;&|]*//g; 
 # holds). A name may appear as an argument of kmsg-stream.sh, after a write
 # redirect, in an assignment, after a test's =, and on an scp line, which
 # copies the klog off the guest; anywhere else it is read. Names are found
-# with index(), so none is read as a pattern.
+# with index(), so none is read as a pattern. The rule reads text: a name
+# built at run time (`${D}.klog`) or reached through a glob is not seen.
 klog_reads() {	# klog_reads <harness>: the lines that name its klog, but not to write, assign, test or copy it
 	awk '
 function ok(pre,   p) {
@@ -899,7 +900,8 @@ stream_rule() {	# stream_rule <harness>: prints why it fails the rule, nothing w
 nstream=0; stream_first=
 for s in script/*.sh; do
 	# ring-flood.sh names the readers it stops and the one it mutates, and
-	# reads nothing.
+	# its lag arm reads its own klog raw on purpose, the count --read must
+	# beat.
 	case "$s" in script/test-inventory.sh|script/kmsg-stream.sh|script/ring-flood.sh) continue ;; esac
 	if command grep -v '^[[:space:]]*#' "$s" | command grep -qF "$STREAM_START"; then
 		nstream=$((nstream + 1)); stream_first=${stream_first:-$s}
