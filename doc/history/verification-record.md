@@ -26258,8 +26258,11 @@ which begins at record 0, printed a loss; `ebabe16d` fixed it and the
 selftest reads a stream from record 0, which fails on the earlier
 reader.
 
-`b5b5be30` moves the five onto it. Each ends its counts with `--end`
-and refuses with exit 2 on any `stream` line that is not whole, before
+`b5b5be30` moves the five onto it. Each calls `--end` after the events
+its counts cover and before it reads them, since `--end` returns once
+the reader has written the end marker, so every record before the
+marker is in the klog when a count reads it; and each refuses with
+exit 2 on any `stream` line that is not whole, before
 any check reads a count; a guest half that finished without one is
 refused the same way. `cluster-wire.sh` vouches for the cut guest's
 stream before its power cut and for a live stream before `restart.sh`
@@ -26334,3 +26337,83 @@ unlike for one text rule. Each was read by hand. The renderer matches
 `dmesg` under the C locale, which is how the harnesses run it; `dmesg`
 in a UTF-8 locale prints a valid multibyte character where the reader
 keeps the kernel's escape.
+
+## A kernel log stream that lost records, review round 1, 2026-11-17
+
+The first review of `052aedbb..9f69644a` returned FIX-FIRST with two
+blocking findings and five more; each was read at its line. Applied:
+`cluster-wire.sh` read a stream line as whole only when it ended in
+` stream whole`, and `8a095257` had made the verdicts it reads mid-run
+`srcgate-stream`, `restart-stream` and `cut-precut-stream`, so every
+run under `H2_WIRE_SRCGATE` or a power cut would have exited 2 with a
+whole stream; whole is now judged on the last two words
+(`61c02fbf`). `test-inventory.sh` dropped every line naming `pkill`
+before it looked for a reader, so a reader on the same line as the
+`pkill` passed, and a `dmesg` written to a file matched neither
+pattern; the `pkill` command alone is cut now, any `dmesg` left in a
+streaming harness is a read of the ring, and two controls hold both
+shapes, nine in all (`654d6152`). `--started` took any start marker,
+an earlier run's included, before the new reader truncated the klog;
+it now waits for the marker of a reader that is running, read from
+that reader's command line, and a wait that runs out prints a stream
+line every caller refuses. `--end`'s verdict became a function the
+selftest reads on six klogs, and a klog with no start marker is named
+as that (`5e8bad36`). A selftest arm caught a defect in the first
+version of that naming before it was committed.
+
+Refused in the code and applied in the text: the finding that the
+counts read after `--end` are unvouched. The order it asked for, the
+counts first, is the unsafe one, since a count read before the end
+marker reaches the klog can run ahead of the reader. `--end` returns
+once the reader has written the marker, so the counts after it read a
+klog holding every record before the marker, with none lost; the model
+the finding named, `test-enospc.sh`, uses the same order. The record's
+sentence above and two comments said otherwise and are corrected.
+Refused: that `--end` passes a stream with nothing between its
+markers, which is a stream in which nothing was logged; a lost record
+is a gap in the sequence numbers, which prints a line. Open, with its
+trigger the next change to that script's finish: `cluster-sync.sh`
+counts kernel warnings before its `rmmod`, so a report the unload
+prints is in no count, as it was with `dmesg -w`. The dispositions are
+in `review-stream-round1-dispositions.md`.
+
+`inventory-stream-controls-61c02fbf.out`: each of the rule's five
+checks removed from a copy of the gate fails it on its own controls,
+the two new ones among them, and the gate over `b5b5be30^` refuses all
+five harnesses.
+
+The batch at `61c02fbf` (`stream-gates-run-61c02fbf.log`) added three
+runs of `cluster-wire.sh` that read a verdict mid-run. Plain, plant and
+flood read as before, `ring-flood: ok` each; the four harnesses passed
+with 18, 87, 60 and 36 checks. `H2_WIRE_SRCGATE=1` passed 37, its two
+`A srcgate-stream whole` lines read
+(`fixtures/wire-run-20261117-202843.out`) and its four refusal lines
+counted from the stream. `H2_WIRE_CUT=disconnect` exited 2 before it
+ran: the driver had not set `H2_WIRE_CUT_AT`, which that cut needs.
+`H2_WIRE_CUT=slave` read its `H cut-precut-stream whole` line and
+failed one check: A's cluster held 5311 files where the check required
+5310, both images clean and equal. `0da43830` had added the sparse
+file the remote seek reads to A's fill, and no power-cut run since had
+read the check; `e815a5ce` moves the count to 5311. The mutant arm
+exited 1, not 0: the stream read as whole, as that arm requires, and
+the run failed the check that a mapped write on the full volume is
+refused, below.
+
+The batch at `e815a5ce` (`stream-gates-run-e815a5ce.log`): the mutant
+arm exit 0 and `ring-flood: ok`, the mapped write killed by `SIGBUS`;
+`H2_WIRE_CUT=disconnect` with `H2_WIRE_CUT_AT=155` passed 45 checks and
+`H2_WIRE_CUT=slave` 44. No flow prints `restart-stream`: `restart.sh`
+reads a running reader's verdict first, and runs only on a guest booted
+again after a cut, where none runs. That shape is read on the host
+alone, where the filter passes the three prefixed whole verdicts and
+refuses a prefixed and an unprefixed `COULD-NOT-READ`.
+
+Found beside it, and not this increment's: in the mutant arm at
+`61c02fbf` a mapped write to an existing file on the full volume
+returned `mmap test ok`, exit 0, while `write(2)` of 128K on the same
+volume was refused, about 50.2 MB free against a 100.2 MB reserve and
+no exact-sum admission (`stream-gates-enospc-mutant-61c02fbf.out`).
+Every other arm of both batches before it, and the mutant arm at
+`e815a5ce`, took `SIGBUS` there. It is the first such reading on
+record. Its cause is not read yet; it is a candidate defect of the
+fault path's admission, diagnosed and driven in its own increment.
