@@ -32,6 +32,9 @@
 #   sh kmsg-stream.sh --end klog              writes the end marker, waits up
 #                                             to 30 s for it, prints "stream
 #                                             whole" or "stream COULD-NOT-READ"
+#   sh kmsg-stream.sh --read klog             the klog, once a marker written
+#                                             now has reached it: every count
+#                                             reads the klog this way
 #   sh kmsg-stream.sh --render < raw          every raw record on stdin, no
 #                                             marker, then the reader's line
 #   sh kmsg-stream.sh --stop                  ends every reader on the guest
@@ -70,17 +73,42 @@ EOF
 
 # --end's verdict on a klog whose end marker it wrote, apart so the
 # selftest reads it: whole only with both markers in the klog and no line
-# from the reader saying it lost records or ended, nor from cat.
+# from the reader saying it lost records or ended, nor from cat, and no
+# count's wait for the reader that ran out (rd below).
 verdict() {	# verdict <klog> <end marker>
-	if grep -q "^\[ *[0-9]*\.[0-9]*\] $2\$" "$1" && grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$1" && ! grep -q '^h2kmsg: \|^cat: ' "$1"; then
+	if grep -q "^\[ *[0-9]*\.[0-9]*\] $2\$" "$1" && grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$1" && ! grep -q '^h2kmsg: \|^cat: ' "$1" && [ ! -e "$1.lag" ]; then
 		echo "stream whole"
 	else
 		why=$(grep -m1 '^h2kmsg: \|^cat: ' "$1")
 		if [ -n "$why" ]; then :
+		elif [ -e "$1.lag" ]; then why=$(cat "$1.lag")
 		elif ! grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$1"; then why="the start marker is not in the klog"
 		else why="the end marker did not arrive in 30 s"; fi
 		echo "stream COULD-NOT-READ: $why"
 	fi
+}
+
+# --read's wait, apart so the selftest drives it with a file for the
+# device. The reader writes the klog behind the kernel, so a count read
+# from it at once misses what is still on the way: a baseline read that
+# way reads low and the delta after an act reads high, and a check that
+# wants a delta above zero passes on an older line. A marker written now
+# and seen in what the klog gained since says every record before it is
+# in. A wait that runs out leaves <klog>.lag, which verdict refuses, and
+# spares every later wait: a reader that far behind is not caught by
+# waiting again. A read after a run's last --end that runs out is refused
+# by nothing, and needs nothing: that --end vouched for the klog up to its
+# marker, which is all such a count covers. --started removes the file.
+rd() {	# rd <klog> <device> <secs>
+	[ -e "$1.lag" ] && return 1
+	m="h2kmsg-end $(cat /proc/sys/kernel/random/uuid)"
+	o=$(wc -c < "$1")
+	echo "$m" >> "$2"	# a record either way on the device; the selftest's file keeps its lines
+	n=0
+	until tail -c +$((o + 1)) "$1" | grep -q "^\[ *[0-9]*\.[0-9]*\] $m\$"; do
+		[ $n -ge $(($3 * 10)) ] && { echo "a count's marker did not arrive in $3 s" > "$1.lag"; return 1; }
+		sleep 0.1; n=$((n + 1))
+	done
 }
 
 # Only a whole UUID is taken from a command line and only a whole marker
@@ -109,7 +137,7 @@ started() {	# started <klog>: the marker of a reader now running is in it
 	# run's marker left in a klog the new reader has yet to truncate does
 	# not count. A wait that runs out says so as a stream line, which every
 	# caller refuses.
-	k=${2:-}; n=0
+	k=${2:-}; n=0; rm -f "$k.lag"
 	until started "$k" || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
 	started "$k" || echo "stream COULD-NOT-READ: no running reader's start marker reached $k in 10 s"
 	exit 0 ;;
@@ -123,6 +151,10 @@ started() {	# started <klog>: the marker of a reader now running is in it
 	n=0; until grep -q "^\[ *[0-9]*\.[0-9]*\] $m\$" "$k" || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
 	verdict "$k" "$m"
 	exit 0 ;;
+--read)
+	k=${2:-}
+	[ -f "$k" ] && rd "$k" /dev/kmsg 30
+	exec cat "$k" ;;
 --render)
 	exec awk -v start= -v src='exec cat' "$PROG" ;;
 --stop)
@@ -131,7 +163,7 @@ started() {	# started <klog>: the marker of a reader now running is in it
 	# bracket keeps this pattern from matching a shell that names it.
 	pkill -f 'h2kmsg[-]start ' 2>/dev/null
 	exit 0 ;;
-*)	echo "kmsg-stream: COULD-NOT-RUN: --start, --end <klog>, --render or --selftest" >&2; exit 2 ;;
+*)	echo "kmsg-stream: COULD-NOT-RUN: --start, --started, --end or --read <klog>, --render, --stop or --selftest" >&2; exit 2 ;;
 esac
 
 # The selftest renders a fixture of raw records and compares the result
@@ -201,6 +233,36 @@ for c in "whole:$st|[    1.500000] a line|$en" "COULD-NOT-READ: h2kmsg: COULD-NO
 	*) echo "  FAIL a klog of $(wc -l < "$T/v") line(s) read \"$got\", not stream $want"; fail=1 ;;
 	esac
 done
+# and refuses a klog whole by its markers when a count's wait ran out
+printf '%s\n' "$st" "$en" > "$T/v"; echo "a count's marker did not arrive in 30 s" > "$T/v.lag"
+got=$(verdict "$T/v" "$E")
+case "$got" in
+"stream COULD-NOT-READ: a count's marker did not arrive"*) echo "  ok   a whole klog beside a count's wait that ran out reads $got" ;;
+*) echo "  FAIL a whole klog beside a count's wait that ran out read \"$got\""; fail=1 ;;
+esac
+# A count read through rd() waits for what is on the way. A file stands in
+# for the device and a subshell for the reader, rendering what the file
+# holds half a second later. A line written before the read is missing from
+# the klog when the read starts, which is the lag a count read at once
+# would take for the whole log, and must be in it when rd() returns.
+: > "$T/k"; echo "act" > "$T/dev"
+( sleep 0.5; sed 's/^/[    3.000000] /' "$T/dev" >> "$T/k" ) &
+b=$(command grep -c 'act$' "$T/k")
+rd "$T/k" "$T/dev" 5; r=$?
+a=$(command grep -c 'act$' "$T/k"); wait	# read as rd() returns, not once the stand-in is done
+if [ "$b" = 0 ] && [ "$r" = 0 ] && [ "$a" = 1 ] && [ ! -e "$T/k.lag" ]; then echo "  ok   a count through rd() reads a line the reader had yet to write (0 before, 1 after)"
+else echo "  FAIL rd() status $r: the line read $b before and $a after, lag file $(test -e "$T/k.lag" && echo present || echo absent)"; fail=1; fi
+# With no reader the wait runs out, leaves the lag file, and the next read
+# returns at once rather than waiting again.
+: > "$T/k"
+rd "$T/k" "$T/dev" 1; r=$?
+if [ "$r" = 1 ] && command grep -qx "a count's marker did not arrive in 1 s" "$T/k.lag"; then echo "  ok   a wait with no reader runs out and leaves the lag file"
+else echo "  FAIL a wait with no reader returned $r, lag file: $(cat "$T/k.lag" 2>/dev/null || echo absent)"; fail=1; fi
+( rd "$T/k" "$T/dev" 100 ) & rp=$!
+sleep 1
+if kill -0 "$rp" 2>/dev/null; then echo "  FAIL a read after a wait ran out waits again"; kill "$rp"; fail=1
+else echo "  ok   a read after a wait ran out does not wait again"; fi
+wait "$rp" 2>/dev/null
 # --started waits for the marker of a reader now running: a stand-in whose
 # command line carries one, beside an earlier run's marker in the klog.
 U=0000aaaa-1111-2222-3333-444455556666
