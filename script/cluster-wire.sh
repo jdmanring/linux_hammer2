@@ -1756,10 +1756,14 @@ guest_off "$GB" "$SB"
 # Every count a check below reads comes from a stream of a guest's kernel
 # log: each guest's from its setup or restart to its down.sh, the cut
 # guest's up to the cut. Each is vouched for by an end marker written after
-# the counts it covers, and a stream that is not whole is a run this script
-# cannot read, refused before any check can fail on what survived; so is a
-# guest whose final stream line is missing.
-sw=$(command grep -E '^[ABH] ([a-z]+-)*stream ' "$W/out" | command grep -v ' stream whole$' | head -1)
+# the events its counts cover and before they are read: --end waits until
+# the reader has written the marker, so every record before it is in the
+# klog when a count reads it. A stream that is not whole is a run this
+# script cannot read, refused before any check can fail on what survived;
+# so is a guest whose final stream line is missing. A verdict a guest reads
+# mid-run carries a prefix (srcgate-, restart-, cut-precut-), so whole is
+# judged on the last two words.
+sw=$(command grep -E '^[ABH] ([a-z]+-)*stream ' "$W/out" | command grep -vE '[ -]stream whole$' | head -1)
 [ -z "$sw" ] && command grep -qx 'A stream whole' "$W/out" && command grep -qx 'B stream whole' "$W/out" || {
 	echo "wire: COULD-NOT-READ: the guest's kernel log stream lost records: ${sw:-a guest's final stream line is missing}" >&2
 	exit 2; }

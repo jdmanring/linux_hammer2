@@ -1964,8 +1964,9 @@ scp -q "$GUEST_SSH:/tmp/h2cluster.klog" "$FIXDIR/cluster-run-$STAMP.klog" 2>/dev
 	&& echo "  kept  the guest's memory samples beside the images as cluster-run-*.mem"
 detach_disks
 # Every count the checks below read comes from the stream of the guest's
-# kernel log, each guest half writing its stream's end marker before its last
-# count. A stream that is not whole is a run this script cannot read, refused
+# kernel log, each guest half writing its stream's end marker after the
+# events its counts cover and before it reads them: --end waits until the
+# reader has written the marker, so every record before it is in the klog. A stream that is not whole is a run this script cannot read, refused
 # before any check can fail on what survived; so is a guest that finished
 # without saying.
 sw=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)
