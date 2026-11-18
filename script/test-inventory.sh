@@ -981,31 +981,56 @@ fi
 	echo "  FAIL $nstreamctl stream control(s) ran, not the 18 the gate lists"
 	fail=$((fail + 1)); }
 
-# A filter indented as a pipeline's continuation follows a line that
-# continues. One that lost its `|` is still a command: `sh -n` and both
-# shells parse it, it reads the caller's stdin, and the pipeline above it
-# ends a stage early. test-enospc.sh's lockdep window printed nothing on
-# four runs that way, its `sed` past an ssh heredoc's end. The control is
-# the first such line with its predecessor's `|` or `\` removed.
-ORPH_FILT='^\t*    (command )?(sed|grep|awk|cut|tr|sort|uniq|wc|head|tail)([^[:alnum:]_-]|$)'
-orphan_rule() {	# orphan_rule <file>...: each orphaned filter as file:line, then the population
-	awk -v f="$ORPH_FILT" '
-	FNR == 1 { prev = "" }
+# A filter indented deeper than the code line before it follows a line
+# that continues or opens a block. One that lost its `|` is still a
+# command: `sh -n` and both shells parse it, it reads the caller's stdin,
+# and the pipeline above it ends a stage early. test-enospc.sh's lockdep
+# window printed nothing on four runs that way, its `sed` past an ssh
+# heredoc's end. A line opens when it ends in a pipe, a backslash, &&, an
+# opener or a keyword that takes a body, holds more `{` than `}`, or begins
+# with a case pattern. The rule reads text: a filter not in its list, or
+# one at its predecessor's indent, or one after a line that also opens a
+# block, is not seen. The control is the first such filter whose
+# predecessor ends in `|` or `\` and opens nothing once that is cut.
+ORPH_FILT='^[[:space:]]*(command )?(sed|grep|awk|cut|tr|sort|uniq|wc|head|tail)([^[:alnum:]_-]|$)'
+orphan_rule() {	# orphan_rule [-pick] <file>...: each orphan as file:line, then the population;
+	# -pick prints the control's file, predecessor line and line instead
+	pick=0; [ "$1" = -pick ] && { pick=1; shift; }
+	awk -v f="$ORPH_FILT" -v pick="$pick" '
+	function width(s,   w, i, c) {
+		w = 0
+		for (i = 1; i <= length(s); i++) {
+			c = substr(s, i, 1)
+			if (c == "\t") w = int(w / 8 + 1) * 8; else if (c == " ") w++; else break
+		}
+		return w
+	}
+	function opens(p,   o, c) {
+		if (p ~ /(\||\\|&&|\(|\{|\)|;;|(^|[^[:alnum:]_])(do|then|else|in))[[:space:]]*(#.*)?$/) return 1
+		o = gsub(/\{/, "{", p); c = gsub(/\}/, "}", p)
+		return o > c || p ~ /^[[:space:]]*[^[:space:]()|]+\)[[:space:]]/
+	}
+	FNR == 1 { prev = ""; pn = 0 }
 	/^[[:space:]]*(#|$)/ { next }
-	$0 ~ f { n++; if (prev !~ /(\||\\|&&|\(|\{|do|then|else|in|;;)[[:space:]]*$/) printf "%s:%d\n", FILENAME, FNR }
-	{ prev = $0 }
-	END { print "population " n + 0 }' "$@"
+	prev != "" && $0 ~ f && width($0) > width(prev) {
+		n++
+		cut = prev; sub(/[[:space:]]*(\||\\)[[:space:]]*$/, "", cut)
+		if (pick && cut != prev && !opens(cut)) { print FILENAME, pn, FNR; exit }
+		if (!pick && !opens(prev)) printf "%s:%d\n", FILENAME, FNR
+	}
+	{ prev = $0; pn = FNR }
+	END { if (!pick) print "population " n + 0 }' "$@"
 }
 orph=$(orphan_rule script/*.sh)
 norph=$(printf '%s\n' "$orph" | sed -n 's/^population //p')
 [ "${norph:-0}" -gt 0 ] || {
-	echo "  FAIL no filter indented as a continuation in script/: the orphan rule read nothing"
+	echo "  FAIL no filter indented deeper than its predecessor in script/: the orphan rule read nothing"
 	fail=$((fail + 1)); }
 for o in $(printf '%s\n' "$orph" | command grep -v '^population '); do
-	echo "  FAIL $o: a filter indented as a pipeline's continuation after a line that does not continue"
+	echo "  FAIL $o: a filter indented deeper than a line that does not continue"
 	fail=$((fail + 1))
 done
-set -- $(awk -v f="$ORPH_FILT" 'FNR == 1 { p = 0 } /^[[:space:]]*(#|$)/ { next } $0 ~ f { print FILENAME, p, FNR; exit } { p = FNR }' script/*.sh)
+set -- $(orphan_rule -pick script/*.sh)
 orph_tmp=$(mktemp -d) || exit 2
 awk -v p="${2:-0}" 'FNR == p { sub(/[[:space:]]*(\||\\)[[:space:]]*$/, "") } { print }' "${1:-/dev/null}" > "$orph_tmp/changed.sh"
 if [ -z "${3:-}" ] || cmp -s "$1" "$orph_tmp/changed.sh"; then
