@@ -979,6 +979,42 @@ fi
 	echo "  FAIL $nstreamctl stream control(s) ran, not the 18 the gate lists"
 	fail=$((fail + 1)); }
 
+# A filter indented as a pipeline's continuation follows a line that
+# continues. One that lost its `|` is still a command: `sh -n` and both
+# shells parse it, it reads the caller's stdin, and the pipeline above it
+# ends a stage early. test-enospc.sh's lockdep window printed nothing on
+# four runs that way, its `sed` past an ssh heredoc's end. The control is
+# the first such line with its predecessor's `|` or `\` removed.
+ORPH_FILT='^\t*    (command )?(sed|grep|awk|cut|tr|sort|uniq|wc|head|tail)([^[:alnum:]_-]|$)'
+orphan_rule() {	# orphan_rule <file>...: each orphaned filter as file:line, then the population
+	awk -v f="$ORPH_FILT" '
+	FNR == 1 { prev = "" }
+	/^[[:space:]]*(#|$)/ { next }
+	$0 ~ f { n++; if (prev !~ /(\||\\|&&|\(|\{|do|then|else|in|;;)[[:space:]]*$/) printf "%s:%d\n", FILENAME, FNR }
+	{ prev = $0 }
+	END { print "population " n + 0 }' "$@"
+}
+orph=$(orphan_rule script/*.sh)
+norph=$(printf '%s\n' "$orph" | sed -n 's/^population //p')
+[ "${norph:-0}" -gt 0 ] || {
+	echo "  FAIL no filter indented as a continuation in script/: the orphan rule read nothing"
+	fail=$((fail + 1)); }
+for o in $(printf '%s\n' "$orph" | command grep -v '^population '); do
+	echo "  FAIL $o: a filter indented as a pipeline's continuation after a line that does not continue"
+	fail=$((fail + 1))
+done
+set -- $(awk -v f="$ORPH_FILT" 'FNR == 1 { p = 0 } /^[[:space:]]*(#|$)/ { next } $0 ~ f { print FILENAME, p, FNR; exit } { p = FNR }' script/*.sh)
+orph_tmp=$(mktemp -d) || exit 2
+awk -v p="${2:-0}" 'FNR == p { sub(/[[:space:]]*(\||\\)[[:space:]]*$/, "") } { print }' "${1:-/dev/null}" > "$orph_tmp/changed.sh"
+if [ -z "${3:-}" ] || cmp -s "$1" "$orph_tmp/changed.sh"; then
+	echo "  FAIL control: no continued line found to cut, so the orphan rule's control shows nothing"
+	fail=$((fail + 1))
+elif ! orphan_rule "$orph_tmp/changed.sh" | command grep -qx "$orph_tmp/changed.sh:$3"; then
+	echo "  FAIL control: $1 with line $2's continuation cut is not refused at line $3"
+	fail=$((fail + 1))
+fi
+rm -rf "$orph_tmp"
+
 # A harness that scans kmemleak must clear it before the load and scan it
 # again after the unload, and every reading scans twice. Uncleared, the
 # list carries an earlier run's leaks, which the count names "hammer2"
@@ -1437,5 +1473,5 @@ done
 	echo "  FAIL only $ntlsdocs document(s) read for a TLS claim, so the sweep matched far less than doc/ holds"
 	fail=$((fail + 1)); }
 
-echo "inventory: $nnames $names_from, $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nring ring reader(s), $nstream streaming harness(es), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
+echo "inventory: $nnames $names_from, $nc source file(s), $nh header(s), $nt test file(s), $ngates gate(s), $ndefer DEFER(s), $nxrow XXX row(s), $npatch staged file(s), $nref reference row(s), $nrep report counter(s), $nring ring reader(s), $nstream streaming harness(es), $norph continued filter(s), $nleak kmemleak scanner(s), $nops operator document(s), $ntlsdocs document(s) read for a TLS claim ($ntlsclaim claim(s), $ntlscond conditional, record ${tlsrun:-none}), $fail finding(s)"
 [ "$fail" = 0 ] || exit 1
