@@ -32,6 +32,7 @@
 #                                             whole" or "stream COULD-NOT-READ"
 #   sh kmsg-stream.sh --render < raw          every raw record on stdin, no
 #                                             marker, then the reader's line
+#   sh kmsg-stream.sh --stop                  ends every reader on the guest
 #   sh kmsg-stream.sh --selftest              on the host, no guest
 set -u
 
@@ -48,9 +49,9 @@ function rec(l,   i, h, m, ts) {
 	split(substr(l, 1, i - 1), h, ",")
 	m = substr(l, i + 1)
 	if (!on) { if (m != start) return; on = 1 }
-	else if (h[2] + 0 != last + 1) printf "h2kmsg: COULD-NOT-READ: records %d to %d were lost\n", last + 1, h[2] - 1
-	last = h[2] + 0
-	ts = sprintf("[%5d.%06d] ", int(h[3] / 1000000), h[3] % 1000000)
+	else if (seen && h[2] + 0 != last + 1) printf "h2kmsg: COULD-NOT-READ: records %d to %d were lost\n", last + 1, h[2] - 1
+	last = h[2] + 0; seen = 1
+	ts =sprintf("[%5d.%06d] ", int(h[3] / 1000000), h[3] % 1000000)
 	m = lit(m, "\\x0a", "\n" sprintf("%" length(ts) "s", ""))
 	m = lit(m, "\\x09", "\t")
 	m = lit(m, "\\x5c", "\\")
@@ -84,6 +85,12 @@ case ${1:-} in
 	exit 0 ;;
 --render)
 	exec awk -v start= -v src='exec cat' "$PROG" ;;
+--stop)
+	# A reader is the awk --start became, whose arguments carry its
+	# marker; its cat ends at the next record it cannot write. The
+	# bracket keeps this pattern from matching a shell that names it.
+	pkill -f 'h2kmsg[-]start ' 2>/dev/null
+	exit 0 ;;
 --selftest) ;;
 *)	echo "kmsg-stream: COULD-NOT-RUN: --start, --end <klog>, --render or --selftest" >&2; exit 2 ;;
 esac
@@ -136,5 +143,10 @@ printf '%s\n' "6,1,1,-;$S" '6,2,2,-;a' '6,5,3,-;b' > "$T/gap"
 awk -v start="$S" -v src="cat $T/gap" "$PROG" > "$T/gapk"
 if command grep -qx 'h2kmsg: COULD-NOT-READ: records 3 to 4 were lost' "$T/gapk"; then echo "  ok   a skipped sequence number prints the records lost"
 else echo "  FAIL a skipped sequence number printed nothing:"; sed 's/^/        /' "$T/gapk"; fail=1; fi
+# A ring read whole from boot begins at sequence 0, which is no gap.
+printf '%s\n' '6,0,1,-;first' '6,1,2,-;second' > "$T/zero"
+awk -v start= -v src="cat $T/zero" "$PROG" > "$T/zerok"
+if command grep -q '^h2kmsg: COULD' "$T/zerok"; then echo "  FAIL a stream from sequence 0 printed a gap:"; sed 's/^/        /' "$T/zerok"; fail=1
+else echo "  ok   a stream from sequence 0 prints no gap"; fi
 [ "$fail" = 0 ] || { echo "kmsg-stream: selftest FAILED"; exit 1; }
 echo "kmsg-stream: selftest ok"
