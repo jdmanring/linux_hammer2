@@ -34,6 +34,15 @@
 #   script/ring-flood.sh flood  <fleet script> [args]   must exit 2: the plant is erased
 #   script/ring-flood.sh mutant <fleet script> [args]   must exit 0: a copy with its refusal
 #                                                        removed passes over the erased plant
+#   script/ring-flood.sh lag                            kmsg-stream.sh --read on the guest
+#
+# The lag arm runs no fleet script. A reader stopped with SIGSTOP leaves
+# the klog behind the kernel: a line written then is missing from a count
+# read from the klog at once, and must be in one read through --read,
+# which waits for its marker until the reader is resumed 3 s later. A copy
+# of kmsg-stream.sh with that wait removed must miss it, which shows the
+# arm can fail. A reader stopped past --read's 30 s must leave the klog's
+# lag file, which spares the next read its wait and which --end refuses.
 #
 # Each arm prints the fleet script's status, whether the file fired, and
 # how many planted lines the guest's ring still holds afterwards. Exit 0
@@ -43,10 +52,61 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 ARM=${1:-}; SUBJ=${2:-}
-case $ARM in plant|flood|mutant) ;; *) echo "ring-flood: COULD-NOT-RUN: arm plant, flood or mutant" >&2; exit 2 ;; esac
+case $ARM in plant|flood|mutant|lag) ;; *) echo "ring-flood: COULD-NOT-RUN: arm plant, flood, mutant or lag" >&2; exit 2 ;; esac
+GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
+if [ "$ARM" = lag ]; then
+	ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null || {
+		echo "ring-flood: COULD-NOT-RUN: the guest does not answer ssh" >&2; exit 2; }
+	mr=/tmp/ring-flood-lagmut.$$; trap 'rm -f "$mr"' EXIT
+	sed 's|^\tuntil tail -c +$((o + 1)) "$1" \| grep -q "^\\\[ \*\[0-9\]\*\\\.\[0-9\]\*\\\] $m\\$"; do$|\tuntil true; do|' script/kmsg-stream.sh > "$mr"
+	[ "$(diff script/kmsg-stream.sh "$mr" | command grep -c '^>')" = 1 ] || {
+		echo "ring-flood: COULD-NOT-RUN: the no-wait reader is not the one-line change it must be" >&2; exit 2; }
+	scp -q script/kmsg-stream.sh "$GUEST_SSH:/tmp/kmsg-stream.sh" && scp -q "$mr" "$GUEST_SSH:/tmp/kmsg-stream-nowait.sh" || {
+		echo "ring-flood: COULD-NOT-RUN: could not copy the readers to the guest" >&2; exit 2; }
+	r=$(ssh "$GUEST_SSH" 'sh -s' <<'EOF'
+K=/tmp/h2lag.klog
+lagged() {	# lagged <reader>: a count at once and one through its --read, the reader stopped
+	sh /tmp/kmsg-stream.sh --stop; sleep 0.2
+	sh "$1" --start > $K 2>&1 &
+	sh "$1" --started $K
+	pkill -STOP -f '^cat /dev/kmsg'
+	echo "<6>h2lag planted $1" > /dev/kmsg
+	raw=$(grep -c "h2lag planted $1" $K)
+	( sleep 3; pkill -CONT -f '^cat /dev/kmsg' ) & cp=$!
+	t0=$(date +%s); rd=$(sh "$1" --read $K | grep -c "h2lag planted $1"); t1=$(date +%s)
+	wait "$cp"	# not the reader, which is this shell's job too
+	echo "$2 raw $raw read $rd waited $((t1 - t0))"
+}
+lagged /tmp/kmsg-stream.sh real
+lagged /tmp/kmsg-stream-nowait.sh nowait
+sh /tmp/kmsg-stream.sh --stop; sleep 0.2
+sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
+sh /tmp/kmsg-stream.sh --started $K
+pkill -STOP -f '^cat /dev/kmsg'
+t0=$(date +%s); sh /tmp/kmsg-stream.sh --read $K > /dev/null; t1=$(date +%s)
+sh /tmp/kmsg-stream.sh --read $K > /dev/null; t2=$(date +%s)
+echo "lagfile $(cat $K.lag 2>/dev/null || echo absent)"
+pkill -CONT -f '^cat /dev/kmsg'
+echo "out waited $((t1 - t0)) again $((t2 - t1))"
+echo "end $(sh /tmp/kmsg-stream.sh --end $K)"
+sh /tmp/kmsg-stream.sh --stop
+rm -f $K $K.lag /tmp/kmsg-stream-nowait.sh
+EOF
+)
+	printf '%s\n' "$r" | sed 's/^/  | /'
+	v() { printf '%s\n' "$r" | sed -n "s/^$1 .*$2 \([0-9][0-9]*\).*/\1/p"; }
+	[ "$(v real raw)" = 0 ] && [ "$(v real read)" = 1 ] && [ "$(v real waited)" -ge 2 ] &&
+	[ "$(v nowait raw)" = 0 ] && [ "$(v nowait read)" = 0 ] &&
+	printf '%s\n' "$r" | command grep -qx "lagfile a count's marker did not arrive in 30 s" &&
+	[ "$(v out waited)" -ge 29 ] && [ "$(v out again)" -le 1 ] &&
+	printf '%s\n' "$r" | command grep -q "^end stream COULD-NOT-READ: a count's marker did not arrive" || {
+		[ -n "$r" ] || { echo "ring-flood: COULD-NOT-RUN: the guest printed nothing" >&2; exit 2; }
+		echo "ring-flood: FAIL: arm lag did not read what it must"; exit 1; }
+	echo "ring-flood: ok"
+	exit 0
+fi
 [ -f "script/$SUBJ" ] || { echo "ring-flood: COULD-NOT-RUN: no script/$SUBJ" >&2; exit 2; }
 shift 2
-GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 REFUSE="the guest's kernel ring lost its start marker"; HOOK=/var/lib/h2ring-flood
 if ! command grep -qF "$REFUSE" "script/$SUBJ"; then
 	REFUSE="the guest's kernel log stream lost records"; HOOK=/var/lib/h2stream-flood
