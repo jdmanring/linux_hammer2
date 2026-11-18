@@ -19,6 +19,17 @@
 # five seconds per open (kernel/printk/printk.c, devkmsg_open(),
 # devkmsg_write()); printk.devkmsg=on lifts it.
 #
+# A fleet script that streams the log through kmsg-stream.sh is controlled
+# the same way through /var/lib/h2stream-flood, which kmsg-stream.sh --end
+# runs before it writes its end marker. In the flood arm the file first
+# stops every reader of /dev/kmsg, so the plant and the flood land while
+# nothing reads them and the reader, resumed, meets records the ring has
+# already overwritten. The mutant arm ships a reader without its loss
+# detection: it opens /dev/kmsg again where cat stopped, which resumes at
+# the oldest record left as dmesg -w does, and prints no gap. A script
+# controlled this way must ship the reader under its own name, so the
+# mutant's copy can name another file in its place.
+#
 #   script/ring-flood.sh plant  <fleet script> [args]   must fail: the count reads the plant
 #   script/ring-flood.sh flood  <fleet script> [args]   must exit 2: the plant is erased
 #   script/ring-flood.sh mutant <fleet script> [args]   must exit 0: a copy with its refusal
@@ -36,17 +47,22 @@ case $ARM in plant|flood|mutant) ;; *) echo "ring-flood: COULD-NOT-RUN: arm plan
 [ -f "script/$SUBJ" ] || { echo "ring-flood: COULD-NOT-RUN: no script/$SUBJ" >&2; exit 2; }
 shift 2
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
-REFUSE="the guest's kernel ring lost its start marker"
-command grep -qF "$REFUSE" "script/$SUBJ" || {
-	echo "ring-flood: COULD-NOT-RUN: script/$SUBJ carries no ring refusal" >&2; exit 2; }
+REFUSE="the guest's kernel ring lost its start marker"; HOOK=/var/lib/h2ring-flood
+if ! command grep -qF "$REFUSE" "script/$SUBJ"; then
+	REFUSE="the guest's kernel log stream lost records"; HOOK=/var/lib/h2stream-flood
+	command grep -qF "$REFUSE" "script/$SUBJ" || {
+		echo "ring-flood: COULD-NOT-RUN: script/$SUBJ carries no ring or stream refusal" >&2; exit 2; }
+fi
+stop=0; [ "$HOOK" = /var/lib/h2stream-flood ] && [ "$ARM" != plant ] && stop=1
 ssh -o ConnectTimeout=4 -o BatchMode=yes "$GUEST_SSH" true 2>/dev/null || {
 	echo "ring-flood: COULD-NOT-RUN: the guest does not answer ssh" >&2; exit 2; }
 
 flood=0; [ "$ARM" = plant ] || flood=1
-ssh "$GUEST_SSH" "cat > /var/lib/h2ring-flood; chmod 755 /var/lib/h2ring-flood; rm -f /var/lib/h2ring-flood.fired" <<EOF || {
+ssh "$GUEST_SSH" "cat > $HOOK; chmod 755 $HOOK; rm -f $HOOK.fired" <<EOF || {
 #!/bin/sh
-rm -f /var/lib/h2ring-flood
-echo fired > /var/lib/h2ring-flood.fired
+rm -f $HOOK
+echo fired > $HOOK.fired
+[ $stop = 0 ] || pkill -STOP -f '^cat /dev/kmsg'
 echo "<3>BUG: KASAN: h2ring planted" > /dev/kmsg
 [ $flood = 1 ] || exit 0
 read lvl rest < /proc/sys/kernel/printk
@@ -57,22 +73,35 @@ while [ \$i -lt 100000 ]; do
 	i=\$((i + 1))
 done
 echo \$lvl > /proc/sys/kernel/printk
+[ $stop = 0 ] || pkill -CONT -f '^cat /dev/kmsg'
 exit 0
 EOF
 	echo "ring-flood: COULD-NOT-RUN: could not install the file on the guest" >&2; exit 2; }
 
 subj=script/$SUBJ
-if [ "$ARM" = mutant ]; then
+if [ "$ARM" = mutant ] && [ "$HOOK" = /var/lib/h2ring-flood ]; then
 	subj=script/.run-ringmut-$SUBJ
 	command grep -vF "$REFUSE" "script/$SUBJ" > "$subj" || exit 2
 	trap 'rm -f "$subj"' EXIT
+elif [ "$ARM" = mutant ]; then
+	subj=script/.run-ringmut-$SUBJ; mr=script/.run-ringmut-kmsg-stream.sh
+	trap 'rm -f "$subj" "$mr"' EXIT
+	command grep -qF 'script/kmsg-stream.sh "$GUEST_SSH:/tmp/kmsg-stream.sh"' "script/$SUBJ" || {
+		echo "ring-flood: COULD-NOT-RUN: script/$SUBJ does not ship the reader under its own name" >&2; exit 2; }
+	sed 's|script/kmsg-stream.sh "$GUEST_SSH:/tmp/kmsg-stream.sh"|'"$mr"' "$GUEST_SSH:/tmp/kmsg-stream.sh"|' "script/$SUBJ" > "$subj"
+	sed "s|src='exec cat /dev/kmsg 2>&1'|src='while :; do cat /dev/kmsg 2>/dev/null; done'|; s|else if (seen \&\& h\[2\] + 0 != last + 1)|else if (0)|" \
+	    script/kmsg-stream.sh > "$mr"
+	cmp -s script/kmsg-stream.sh "$mr" || [ "$(diff script/kmsg-stream.sh "$mr" | command grep -c '^>')" = 2 ] || {
+		echo "ring-flood: COULD-NOT-RUN: the mutant reader is not the two-line change it must be" >&2; exit 2; }
+	! cmp -s script/kmsg-stream.sh "$mr" && ! cmp -s "script/$SUBJ" "$subj" || {
+		echo "ring-flood: COULD-NOT-RUN: the mutant changed nothing" >&2; exit 2; }
 fi
 sh "$subj" "$@" > /tmp/ring-flood.$$ 2>&1; st=$?
 sed 's/^/  | /' /tmp/ring-flood.$$
 refused=0; command grep -qF "$REFUSE" /tmp/ring-flood.$$ && refused=1
 rm -f /tmp/ring-flood.$$
 
-r=$(ssh -o ConnectTimeout=5 "$GUEST_SSH" 'test -e /var/lib/h2ring-flood.fired && echo fired || echo unfired; echo "planted $(dmesg | grep -c "h2ring planted")"; rm -f /var/lib/h2ring-flood /var/lib/h2ring-flood.fired' 2>/dev/null)
+r=$(ssh -o ConnectTimeout=5 "$GUEST_SSH" "test -e $HOOK.fired && echo fired || echo unfired; echo \"planted \$(dmesg | grep -c 'h2ring planted')\"; rm -f $HOOK $HOOK.fired" 2>/dev/null)
 fired=$(printf '%s\n' "$r" | command grep -c '^fired$')
 planted=$(printf '%s\n' "$r" | sed -n 's/^planted //p')
 echo "ring-flood: arm $ARM, $SUBJ exit $st, refusal printed $refused, file fired $fired, planted lines in the ring ${planted:-unread}"

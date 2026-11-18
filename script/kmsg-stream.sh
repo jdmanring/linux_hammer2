@@ -76,6 +76,8 @@ EOF
 	k=${2:-}
 	[ -f "$k" ] || { echo "stream COULD-NOT-READ: no klog $k"; exit 0; }
 	m="h2kmsg-end $(cat /proc/sys/kernel/random/uuid)"
+	# ring-flood.sh installs this file, which runs once, for its control
+	test -x /var/lib/h2stream-flood && /var/lib/h2stream-flood
 	echo "$m" > /dev/kmsg
 	n=0; until grep -qF "] $m" "$k" || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
 	if grep -qF "] $m" "$k" && grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$k" && ! grep -q '^h2kmsg: ' "$k"; then
