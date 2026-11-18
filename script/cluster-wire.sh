@@ -867,6 +867,9 @@ if [ "${1:-}" = first ]; then
 	n=0
 	until [ "$(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')" -ge 300 ] || [ $n -ge 180 ]; do sleep 2; n=$((n + 2)); done
 	echo "first-wait-seconds $n"
+	# the wait above is on the media, not on a line, so the counts read
+	# after an end marker
+	echo "first-$(sh /tmp/kmsg-stream.sh --end $K)"
 	echo "first-media-files $(hammer2 -v show /dev/vdb 2>/dev/null | grep -c 'filename "e[0-9]')"
 	echo "first-refused-lines $(klog 'sync pass refused on clindex')"
 	echo "first-snap-errors $(klog 'syncsnap: snapshot CL.h2sync-src error')"

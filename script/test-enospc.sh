@@ -891,6 +891,9 @@ out=$(ssh "$GUEST_SSH" '
 	# Printed on every run, so a run that does not hang still reports how
 	# close it came rather than nothing at all.
 	echo "umount took $(( $(cut -d. -f1 /proc/uptime) - ustart ))s"
+	# Every count below reads after this end marker, so a fault the
+	# unmount printed is in the capture before anything counts it.
+	sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log
 	# The oom count above is read before the unmount and so cannot see a
 	# kill during it, which is where the unmount has been dying. Read it
 	# again here, and show the end of the log whenever the unmount did not
@@ -982,7 +985,6 @@ out=$(ssh "$GUEST_SSH" '
 		echo "outstanding no line, so kill_sb did not reach its end"
 	fi
 	echo "busy inodes $(command grep -c "Busy inodes after unmount\|VFS: Busy" /tmp/kmsg.log || true)"
-	sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log
 	echo "=== log tail begins"
 	# Wide enough for a whole backtrace. At 25 lines this window cut
 	# the head off the one oops that explains the failure and left the

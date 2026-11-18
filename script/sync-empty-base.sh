@@ -310,7 +310,6 @@ echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
 echo "defer-nonzero $(grep -c 'defer [1-9a-f]' $K)"
 echo "device-in-error $(klog 'device in error')"
 echo "gave-up $(klog 'gave up')"
-echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:' $K)"
 # Leave the guest clean whatever happened.
 timeout 60 umount /mnt/c 2>/dev/null
 timeout 60 umount /mnt/s 2>/dev/null
@@ -318,6 +317,10 @@ timeout 60 umount /mnt/m 2>/dev/null
 echo "mounts-after $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 sync
+# A second end marker after the teardown, so the warnings count covers the
+# unmounts and the unload and a record lost during them is a stream line.
+sh /tmp/kmsg-stream.sh --end $K
+echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:' $K)"
 kill $KPID 2>/dev/null
 GUEST
 

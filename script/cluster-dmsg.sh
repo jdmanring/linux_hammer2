@@ -930,6 +930,9 @@ out=$($A --attach $M --action refuse 2>&1); echo "refuse-rc $?"; echo "refuse $o
 out=$($A --attach $M --action tlsrefuse 2>&1); echo "tlsrefuse-rc $?"; echo "tlsrefuse $out"
 sleep 1
 echo "handshake-upcall $(grep -c ' handshake_req_alloc$' /proc/kallsyms)"
+# Each log count below reads after an end marker written after the act it
+# counts, since a reader seconds behind a burst holds a prefix of it.
+sh /tmp/kmsg-stream.sh --end $K
 echo "log-tlsrefuse lines: all=$(klog 'cluster link refused:') tcp=$(klog 'refused: TLS needs a TCP socket') mode=$(klog 'refused: unknown cluster_tls mode') nkeys=$(klog 'refused: more key serials') client=$(klog 'refused: a client takes exactly one') server=$(klog 'refused: a server needs a keyring') role=$(klog 'refused: unknown cluster_tls_role') key=$(klog 'refused: a key serial must be positive') ulp=$(klog 'refused: the socket already carries') required=$(klog 'refused: cluster_tls_required is set') upcall=$(klog 'refused: this kernel has no handshake upcall') nobind=$(klog 'refused: a TLS intake binds no cluster id') dup=$(klog 'refused: a key serial is listed twice') keynobind=$(klog 'refused: an admitted key binds no cluster id') toomany=$(klog 'refused: too many cluster id bindings') noslot=$(klog 'refused: a cluster id binding names no key')"
 for act in conn cancel badmagic badsize badaux halfclose close reconnect proto2 badcrc badcrc1 auxok auxbad spanlist span2on1 hm2proto1 hm2proto2; do
 	out=$($A --attach $M --action $act --trace /tmp/h2attach-$act.trace 2>&1); rc=$?
@@ -966,6 +969,7 @@ echo "hm2scanall-off1 $(sed -n 's/^blk key=0000000000010000 .* data_off=\([0-9a-
 hm2 hm2lookup --action hm2lookup --inum $BI --key 0x10000
 hm2 hm2bmap --action hm2bmap --inum $BI --key 1
 hm2 hm2refuse --action hm2refuse --inum $RI
+sh /tmp/kmsg-stream.sh --end $K
 echo "log-serve $(klog 'H2 SERVE')"
 echo "log-refused $(klog 'HM2 request .* refused: a modifying')"
 echo "log-oneshot $(klog 'HM2 request .* refused: one-shot')"
@@ -997,6 +1001,7 @@ wait $HPID; echo "hold-rc $?"
 echo "hold $(grep 'eof=' /tmp/hold.out | head -1)"
 echo "hold-start $(grep 'holding' /tmp/hold.out | head -1)"
 echo "hold-threads-after $(threads)"
+sh /tmp/kmsg-stream.sh --end $K
 echo "log-shitcan-after $(klog shitcanning)"
 echo "log-spantab0-after-hold $(klog 'H2 SPANTAB 0')"
 echo "log-spanleft $(klog 'left after the connection closed')"
@@ -1014,6 +1019,7 @@ t0=$(date +%s%N); timeout 60 umount $M; urc=$?; t1=$(date +%s%N)
 echo "ctl-umount-rc $urc"
 echo "ctl-umount-ms $(( (t1 - t0) / 1000000 ))"
 echo "ctl-threads-after $(threads)"
+sh /tmp/kmsg-stream.sh --end $K
 echo "log-shitcan-final $(klog shitcanning)"
 
 finish
