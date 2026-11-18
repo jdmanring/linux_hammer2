@@ -26565,3 +26565,68 @@ refused `EOPNOTSUPP`, 0 files on B, and `B first-stream whole`
 (`stream-gates-run-2f03c966.log`, `fixtures/wire-run-20261118-025623.out`).
 `cluster-sync.sh` and the default `cluster-wire.sh` run are unchanged
 since the batch at `97385a85` and were not rerun.
+
+## Counts that wait for the reader, 2026-11-18
+
+The open item of round 3 above: a count read from a klog at once misses
+what the reader has yet to write. Three review rounds placed `--end`
+before counts read after an act and found the baselines in none, so this
+series closes the class by construction rather than by a fourth sweep.
+
+`3ef84a3b` gives `kmsg-stream.sh` a `--read` mode: it writes a marker in
+`--end`'s form, waits until the marker appears in what the klog gained
+since, and prints the klog. A wait that runs out after 30 s leaves
+`<klog>.lag`, which the verdict refuses and which spares every later read
+its wait; `--started` removes it. A read after a run's last `--end` that
+runs out is refused by nothing, and needs nothing: that `--end` vouched
+for the klog up to its marker, which is all such a count covers. The
+selftest drives the wait with a file for the device and a stand-in
+reader half a second behind. A line written before the read reads 0 at
+once and 1 when the read returns, and with no reader the wait leaves the
+lag file and the next read returns at once; the same selftest with the
+wait removed, a one-line change, fails both cases and exits 1
+(`kmsg-stream-read-selftest-411aaf47.out`).
+
+`6dab8d76` sends every read of the five streaming harnesses' klogs
+through a `kl` that calls `--read`: 97 lines, the count helpers among
+them, and the wait loops, which only wait longer. `test-inventory.sh`
+finds each harness's klog names from its `--start` redirect and the
+assignments tied to it, and refuses any other use of a name but an
+argument of `kmsg-stream.sh`, a write, an assignment, a test's right side
+and an `scp` line. At `9ba411d8` the rule names 97 lines in the five;
+at `411aaf47`, none (`klog-reads-9ba411d8.out`). Four controls on the first streaming harness: every
+`--read` turned to `cat`, a count of the klog appended, and a read of the
+path its variable holds appended are each refused, and a count through
+`--read` appended passes. With the subject's `kl` turned back to `cat`,
+with the rule allowing every context, and with the names a variable ties
+to left out, the gate exits 1 on a scratch copy of each
+(`inventory-klog-controls-411aaf47.out`).
+
+`411aaf47` adds `ring-flood.sh`'s lag arm, which runs no fleet script:
+the arms through a fleet script read a verdict that sits after an
+`--end`, and so cannot tell a count through `--read` from one read at
+once. On the guest it stops the real reader's `cat` with `SIGSTOP`,
+writes a line, and reads it at once and through `--read` with the reader
+resumed 3 s later. In the batch below it read the line 0 times at once
+and once through `--read`, which waited 3 s; the copy without the wait
+read it 0 times through `--read`; a reader stopped past 30 s left the lag
+file, the first read returned after 32 s and the next at once, and `--end`
+printed `stream COULD-NOT-READ: a count's marker did not arrive in 30 s`
+(`stream-gates-lag-411aaf47.out`).
+
+The batch at `411aaf47` (`stream-gates-run-411aaf47.log`), on
+`h2debug-7.3tls`: the control through `test-enospc.sh`, plain exit 0 with
+two stream lines each whole, plant exit 1 on the planted warning, flood
+exit 2 with the refusal printed and the plant gone from the ring, mutant
+exit 0, the last three each `ring-flood: ok`. `sync-empty-base.sh` 18 checks, two stream lines each
+whole; `cluster-dmsg.sh` 87, five `stream whole`
+(`fixtures/dmsg-run-20261118-085410.out`); `cluster-sync.sh` 60, five
+stream lines each whole; `cluster-wire.sh` 36, two `stream whole` on each
+guest and the log stream alive on both
+(`fixtures/wire-run-20261118-090245.out`); under `H2_WIRE_CUT=slave` 44,
+two `stream whole` on each guest and the host's precut stream whole
+(`fixtures/wire-run-20261118-090451.out`); under
+`H2_WIRE_SNAPROUTE=control` 36, 36 of 36 snapshots refused `EOPNOTSUPP`,
+0 files on B, and `B first-stream whole`
+(`fixtures/wire-run-20261118-090947.out`). None failed, and each count is
+the one the batch at `97385a85` or `2f03c966` read.
