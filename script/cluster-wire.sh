@@ -638,7 +638,7 @@ R=/mnt/h2r; C=/mnt/h2c
 # The kernel log is streamed to a file from the load on, since a pass over
 # the wire prints faster than the ring holds and dmesg alone loses the head.
 K=/tmp/h2wire.klog
-kl() { cat $K; }
+kl() { sh /tmp/kmsg-stream.sh --read $K; }
 klog() { kl | grep -c "$1"; }
 # a line the module prints at an action read just after it: the stream to
 # $K can trail the print, so wait for one, at most 5 s
@@ -992,7 +992,7 @@ mark)
 	# so its verdict count is printed and the placement is read from B's
 	# own HM2 line or the relay's next call
 	echo "h2wire fault seen" > /dev/kmsg
-	n=0; until grep -q 'h2wire fault seen' $K || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	n=0; until kl | grep -q 'h2wire fault seen' || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
 	echo "cut-mark-snap $(kl | awk '/h2wire fault seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { n++ } END { print n + 0 }')"
 	echo "cut-mark-verdicts $(kl | awk -v v="$V" '/h2wire fault seen/ { exit } /syncsnap: remote snapshot CL.h2sync-src tid/ { s = 1 } s && $0 ~ v { n++ } END { print n + 0 }')"
 	;;
@@ -1052,7 +1052,7 @@ wait)
 	# the gap is read on the printk clock, from the verdict to this line
 	sleep 7
 	echo "h2wire cut gap end" > /dev/kmsg
-	n=0; until grep -q 'h2wire cut gap end' $K || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
+	n=0; until kl | grep -q 'h2wire cut gap end' || [ $n -ge 50 ]; do sleep 0.1; n=$((n + 1)); done
 	echo "cut-gap-ms $(kl | awk -F'[][]' -v v="$V" '$0 ~ v && t == "" { t = $2 } /h2wire cut gap end/ { if (t != "") printf "%d\n", ($2 - t) * 1000; exit }')"
 	echo "cut-detached $(klog "$D")"
 	echo "cut-detached-why $(kl | grep "$D" | sed 's/.*detached: //' | tr '\n' ' ')"
@@ -1474,8 +1474,7 @@ fi
 # a line written after it.
 sleep 2
 echo "h2wire end of unload" > /dev/kmsg
-n=0; until grep -q 'h2wire end of unload' /tmp/h2wire.klog || [ $n -ge 50 ]; do sleep 0.1; n=$((n+1)); done
-echo "klog-alive $(grep -c 'h2wire end of unload' /tmp/h2wire.klog)"
+echo "klog-alive $(klog 'h2wire end of unload')"
 sh /tmp/kmsg-stream.sh --end $K
 # every snapshot this side took, by whether the root it copied was its
 # element's as last flushed (a power-cut guest's first boot is in its

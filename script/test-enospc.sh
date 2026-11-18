@@ -526,6 +526,7 @@ out=$(ssh "$GUEST_SSH" '
 	sh /tmp/kmsg-stream.sh --start > /tmp/kmsg.log 2>&1 &
 	kpid=$!
 	sh /tmp/kmsg-stream.sh --started /tmp/kmsg.log
+	kl() { sh /tmp/kmsg-stream.sh --read /tmp/kmsg.log; }	# every read waits for the reader first
 	echo "kmsg capture unbuffered"
 	# A boundary this run writes itself. A fresh read of /dev/kmsg replays
 	# the whole retained ring, so the capture opens on every earlier run in
@@ -718,9 +719,9 @@ out=$(ssh "$GUEST_SSH" '
 	# The counts from here to the unmount are vouched for as they are read;
 	# the --end after the unmount covers the rest.
 	sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log
-	echo "data blocks rewritten $(cat /sys/module/hammer2/parameters/data_rewrites), filled $(command grep -c "filled around" /tmp/kmsg.log)"
-	echo "block folios refused $(command grep -c "no block folio" /tmp/kmsg.log), free pages by order $(command grep Normal /proc/buddyinfo | sed "s/.*zone *Normal *//")"
-	command grep "enospace refuses" /tmp/kmsg.log | tail -3 | sed "s/^.*hammer2: enospace /refusal /"
+	echo "data blocks rewritten $(cat /sys/module/hammer2/parameters/data_rewrites), filled $(kl | command grep -c "filled around")"
+	echo "block folios refused $(kl | command grep -c "no block folio"), free pages by order $(command grep Normal /proc/buddyinfo | sed "s/.*zone *Normal *//")"
+	kl | command grep "enospace refuses" | tail -3 | sed "s/^.*hammer2: enospace /refusal /"
 	echo "locks after sync $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	# The free space read before the sync includes what dirty pages will
 	# take; the refusal counts them, statfs does not. After the sync the
@@ -743,7 +744,7 @@ out=$(ssh "$GUEST_SSH" '
 	# has the VFS refuse root the open of a file another user owns in
 	# a sticky world-writable directory, EACCES, read once as the
 	# reserve refusing root.
-	n0=$(wc -l < /tmp/kmsg.log)
+	n0=$(kl | wc -l)
 	msg=$(setpriv --reuid=65534 --regid=65534 --clear-groups \
 	    dd if=/dev/urandom of=/mnt/h2enospc/user.after bs=64K count=1 \
 	    status=none 2>&1); st=$?
@@ -755,10 +756,10 @@ out=$(ssh "$GUEST_SSH" '
 	# charged, dirty pages included, and an admission on the exact dirty
 	# sum names both counts.  The admissions of the whole run are counted.
 	sleep 1
-	tail -n +$((n0 + 1)) /tmp/kmsg.log | command grep "enospace refuses" | sed "s/^.*hammer2: enospace /after-sync refusal /"
-	tail -n +$((n0 + 1)) /tmp/kmsg.log | command grep "enospace admits" | sed "s/^.*hammer2: enospace /after-sync /"
-	echo "exact-sum admissions $(command grep -c "enospace admits" /tmp/kmsg.log)"
-	command grep "enospace admits" /tmp/kmsg.log | tail -1 | sed "s/^.*hammer2: enospace /last exact-sum /"
+	kl | tail -n +$((n0 + 1)) | command grep "enospace refuses" | sed "s/^.*hammer2: enospace /after-sync refusal /"
+	kl | tail -n +$((n0 + 1)) | command grep "enospace admits" | sed "s/^.*hammer2: enospace /after-sync /"
+	echo "exact-sum admissions $(kl | command grep -c "enospace admits")"
+	kl | command grep "enospace admits" | tail -1 | sed "s/^.*hammer2: enospace /last exact-sum /"
 	# An accepted file joins the content check, flushed first so the
 	# check reads it from the media like the rest.
 	for f in user.after root.after; do
@@ -790,7 +791,7 @@ out=$(ssh "$GUEST_SSH" '
 	# A count of REPORTS, one banner line each. Counting every line that
 	# says DEADLOCK or circular counts a single report three times over,
 	# which is how one report came to be recorded as three.
-	echo "cycles $(command grep -c "possible circular locking dependency" /tmp/kmsg.log)"
+	echo "cycles $(kl | command grep -c "possible circular locking dependency")"
 
 	# lockdep disables itself for several reasons and only one of them is
 	# a cycle: an unlock imbalance, a held lock freed, and the three
@@ -798,7 +799,7 @@ out=$(ssh "$GUEST_SSH" '
 	# MAX_LOCK_DEPTH) all read as debug_locks 0 at the same site. The
 	# reason is what tells them apart, so it is reported rather than
 	# assumed.
-	echo "shutdown-reason $(command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" /tmp/kmsg.log || echo none-found)"
+	echo "shutdown-reason $(kl | command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" || echo none-found)"
 	# A run that cannot name what shut lockdep down is refused rather than
 	# scored, and a refusal that cannot say why costs a full fill and
 	# teaches nothing. Print what the log holds whenever the four banners
@@ -806,14 +807,14 @@ out=$(ssh "$GUEST_SSH" '
 	# instead of another reproduction. The kernel killing a process out
 	# from under this script reads as a driver failure otherwise, so it is
 	# counted whether or not anything else went wrong.
-	echo "oom kills $(command grep -c "Out of memory: Killed\|oom-kill:" /tmp/kmsg.log || true)"
-	echo "drop-with-lock warns $(command grep -c "holds its lock" /tmp/kmsg.log || true)"
+	echo "oom kills $(kl | command grep -c "Out of memory: Killed\|oom-kill:" || true)"
+	echo "drop-with-lock warns $(kl | command grep -c "holds its lock" || true)"
 	if [ "$(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)" = 0 ] &&
-	   ! command grep -q "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" /tmp/kmsg.log; then
+	   ! kl | command grep -q "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed"; then
 		echo "=== unattributed begins"
 		# head succeeds on empty input, so the emptiness is tested rather
 		# than left to a || that could never fire.
-		u=$(command grep -o "WARNING:.*\|BUG:.*\|INFO: task.*\|Out of memory:.*\|oom-kill:.*\|turning off the locking correctness validator.*" /tmp/kmsg.log | head -20)
+		u=$(kl | command grep -o "WARNING:.*\|BUG:.*\|INFO: task.*\|Out of memory:.*\|oom-kill:.*\|turning off the locking correctness validator.*" | head -20)
 		if [ -n "$u" ]; then
 			printf "%s\n" "$u"
 		else
@@ -824,10 +825,10 @@ out=$(ssh "$GUEST_SSH" '
 
 	# The instrument prints through hprintf, so its lines carry the
 	# module name; summarize them by site rather than repeating each.
-	if command grep -q "sync_pmp entry" /tmp/kmsg.log; then
-		echo "lockdebug lines $(command grep -c "sync_pmp entry" /tmp/kmsg.log)"
-		command grep -o "sync_pmp entry: chain type [0-9]* key [0-9a-f]* .*" \
-		    /tmp/kmsg.log | sort | uniq -c | sort -rn | head -4
+	if kl | command grep -q "sync_pmp entry"; then
+		echo "lockdebug lines $(kl | command grep -c "sync_pmp entry")"
+		kl | command grep -o "sync_pmp entry: chain type [0-9]* key [0-9a-f]* .*" \
+		    | sort | uniq -c | sort -rn | head -4
 	else
 		echo "lockdebug lines 0"
 	fi
@@ -836,7 +837,7 @@ out=$(ssh "$GUEST_SSH" '
 	# Follow whichever banner fired, not the cycle alone: a run whose
 	# fault is a different one printed an empty section and read as a run
 	# with nothing to show.
-	command sed -n "/$(command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" /tmp/kmsg.log || echo possible circular locking dependency)/,+220p" /tmp/kmsg.log |
+	kl | command sed -n "/$(kl | command grep -m1 -o "BUG: MAX_[A-Z_]* too low!\|possible circular locking dependency\|bad unlock balance\|held lock freed" || echo possible circular locking dependency)/,+220p" /tmp/kms
 	    command sed "s/^[0-9,;]*;//"
 	echo "=== first report ends"
 
@@ -855,7 +856,7 @@ out=$(ssh "$GUEST_SSH" '
 	# capture cost, because a guest killed for memory by its own harness
 	# reads as a driver that hung the unmount.
 	echo "mem available $(sed -n "s/^MemAvailable: *//p" /proc/meminfo)"
-	echo "kmsg capture $(wc -c < /tmp/kmsg.log) bytes"
+	echo "kmsg capture $(kl | wc -c) bytes"
 	ustart=$(cut -d. -f1 /proc/uptime)
 	umount /mnt/h2enospc & upid=$!
 	for at in 15 30; do
@@ -875,9 +876,9 @@ out=$(ssh "$GUEST_SSH" '
 	if [ -d /proc/$upid ]; then
 		echo w > /proc/sysrq-trigger 2>/dev/null
 		sleep 5
-		if command grep -q "Show Blocked State" /tmp/kmsg.log; then
+		if kl | command grep -q "Show Blocked State"; then
 			echo "=== blocked tasks begin"
-			command sed -n "/Show Blocked State/,$p" /tmp/kmsg.log |
+			kl | command sed -n "/Show Blocked State/,$p" |
 			    command sed "s/^[0-9,;]*;//" | head -80
 			echo "=== blocked tasks end"
 		else
@@ -899,13 +900,13 @@ out=$(ssh "$GUEST_SSH" '
 	# again here, and show the end of the log whenever the unmount did not
 	# return cleanly, since a process killed by something this script does
 	# not name reads as a driver that hung.
-	echo "oom kills after umount $(command grep -c "Out of memory: Killed\|oom-kill:\|Killed process" /tmp/kmsg.log || true)"
+	echo "oom kills after umount $(kl | command grep -c "Out of memory: Killed\|oom-kill:\|Killed process" || true)"
 	# Whether the unmount was signalled and whether the filesystem went
 	# away are different questions, and rmmod failing answers neither.
 	# The failures downstream of an oops all describe the wreckage:
 	# the module will not unload because the superblock survives
 	# because the unmount died. Name the fault itself.
-	echo "oops $(command grep -c "Oops: " /tmp/kmsg.log || true)"
+	echo "oops $(kl | command grep -c "Oops: " || true)"
 	# Every WARN prints a cut-here line, whatever printed it. The
 	# readings above name the faults this script was written for, and
 	# the warning from the compaction daemon that the file mapping does not
@@ -921,10 +922,10 @@ out=$(ssh "$GUEST_SSH" '
 	# its UBSAN line (lib/ubsan.c, ubsan_prologue()) and is counted by it,
 	# its own line shown below. On the sanitizer kernel this capture, not a
 	# dmesg of the ring afterwards, is what holds the whole run.
-	anchor=$(command grep -an "$(cat /tmp/h2mark)" /tmp/kmsg.log | tail -1 | cut -d: -f1)
-	w=$(tail -n +"${anchor:-0}" /tmp/kmsg.log | command grep -c "cut here\|page allocation failure\|BUG: KASAN: " || true)
+	anchor=$(kl | command grep -an "$(cat /tmp/h2mark)" | tail -1 | cut -d: -f1)
+	w=$(kl | tail -n +"${anchor:-0}" | command grep -c "cut here\|page allocation failure\|BUG: KASAN: " || true)
 	if [ -n "$anchor" ]; then
-		echo "kernel warnings $w after the run marker $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "WARNING: .*\|BUG: KASAN: .*\|UBSAN: .*" | cut -c1-90)"
+		echo "kernel warnings $w after the run marker $(kl | tail -n +"$anchor" | command grep -m1 -o "WARNING: .*\|BUG: KASAN: .*\|UBSAN: .*" | cut -c1-90)"
 	else
 		w=0
 		echo "kernel warnings COULD-NOT-RUN the run marker is not in the capture, so nothing can be attributed to this run"
@@ -939,15 +940,15 @@ out=$(ssh "$GUEST_SSH" '
 	# a clean run. Counted separately, by the fault lines the module
 	# prints, and asserted below with the rest.
 	if [ -n "$anchor" ]; then
-		m=$(tail -n +"$anchor" /tmp/kmsg.log | command grep -c "hammer2_chain_testcheck: failed\|device in error, see the message above" || true)
-		echo "module faults $m after the run marker $(tail -n +"$anchor" /tmp/kmsg.log | command grep -m1 -o "hammer2_chain_testcheck: failed.*\|device in error, see the message above" | cut -c1-90)"
+		m=$(kl | tail -n +"$anchor" | command grep -c "hammer2_chain_testcheck: failed\|device in error, see the message above" || true)
+		echo "module faults $m after the run marker $(kl | tail -n +"$anchor" | command grep -m1 -o "hammer2_chain_testcheck: failed.*\|device in error, see the message above" | cut -c1-90)"
 	else
 		m=0
 		echo "module faults COULD-NOT-RUN the run marker is not in the capture, so nothing can be attributed to this run"
 	fi
 	if [ "$w" -gt 0 ]; then
 		echo "=== first warning begins"
-		tail -n +"${anchor:-1}" /tmp/kmsg.log | command sed -n "/cut here\|BUG: KASAN: /,+60p" | command sed "s/^[0-9,;]*;//" | command grep -v "^ SUBSYSTEM=\|^ DEVICE=\|Modules linked in" | head -60
+		kl | tail -n +"${anchor:-1}" | command sed -n "/cut here\|BUG: KASAN: /,+60p" | command sed "s/^[0-9,;]*;//" | command grep -v "^ SUBSYSTEM=\|^ DEVICE=\|Modules linked in" | head -60
 		echo "=== first warning ends"
 	fi
 	# Scoped to the oops. Taking the first match in the whole log reads
@@ -955,19 +956,19 @@ out=$(ssh "$GUEST_SSH" '
 	# and it did: a healthy run reported a faulting address belonging
 	# to a page-allocator warning it had printed hours of writing
 	# earlier.
-	command sed -n "/Oops: /,\$p" /tmp/kmsg.log > /tmp/oops.log
+	kl | command sed -n "/Oops: /,\$p" > /tmp/oops.log
 	echo "faulted in $(command grep -m1 -o "RIP: [0-9]*:[a-zA-Z0-9_]*+0x[0-9a-f]*" /tmp/oops.log || echo nowhere)"
-	echo "faulted on $(command grep -m1 -o "page fault for address: [0-9a-f]*" /tmp/kmsg.log || echo nothing)"
+	echo "faulted on $(kl | command grep -m1 -o "page fault for address: [0-9a-f]*" || echo nothing)"
 	# Debug builds only: which PFS the teardown released, and which the
 	# oops faulted on, in the same units so they can be compared.
 	echo "faulting rcx $(command grep -m1 -o "RCX: [0-9a-f]*" /tmp/oops.log || echo none)"
-	command grep -o "freeing pmp [0-9a-fx]*\|pfsfree_scan which [0-9] syncing pmp [0-9a-fx]*" \
-	    /tmp/kmsg.log | tail -12
+	kl | command grep -o "freeing pmp [0-9a-fx]*\|pfsfree_scan which [0-9] syncing pmp [0-9a-fx]*" \
+	    | tail -12
 	# Which chain carries the dead pointer. The oops reports the
 	# address and the instruction and nothing about the chain.
-	echo "chains on a freed pmp $(command grep -c "holds freed pmp" /tmp/kmsg.log || true)"
-	command grep -o "[a-z]* chain [0-9a-f]*/[0-9]* holds freed pmp, flags [0-9a-f]*" \
-	    /tmp/kmsg.log | sort | uniq -c | head -6
+	echo "chains on a freed pmp $(kl | command grep -c "holds freed pmp" || true)"
+	kl | command grep -o "[a-z]* chain [0-9a-f]*/[0-9]* holds freed pmp, flags [0-9a-f]*" \
+	    | sort | uniq -c | head -6
 	echo "still mounted $(command grep -c h2enospc /proc/mounts || true)"
 	echo "module refs $(cat /sys/module/hammer2/refcnt 2>/dev/null || echo unreadable)"
 	# What the module still holds, printed by the driver at unmount
@@ -978,18 +979,18 @@ out=$(ssh "$GUEST_SSH" '
 	# get that far, which is what a fault inside it looks like; it does
 	# not say the counters were clean, and it does not say the
 	# superblock was never touched. The backtrace below says which.
-	o=$(command grep -o "after unmount: .*" /tmp/kmsg.log | tail -1)
+	o=$(kl | command grep -o "after unmount: .*" | tail -1)
 	if [ -n "$o" ]; then
 		echo "outstanding $o"
 	else
 		echo "outstanding no line, so kill_sb did not reach its end"
 	fi
-	echo "busy inodes $(command grep -c "Busy inodes after unmount\|VFS: Busy" /tmp/kmsg.log || true)"
+	echo "busy inodes $(kl | command grep -c "Busy inodes after unmount\|VFS: Busy" || true)"
 	echo "=== log tail begins"
 	# Wide enough for a whole backtrace. At 25 lines this window cut
 	# the head off the one oops that explains the failure and left the
 	# register dump with nothing above it, on a guest since reset.
-	tail -150 /tmp/kmsg.log | command sed "s/^[0-9,;]*;//"
+	kl | tail -150 | command sed "s/^[0-9,;]*;//"
 	echo "=== log tail ends"
 	timeout 30 rmmod hammer2; echo "rmmod $?"
 	kill $kpid 2>/dev/null

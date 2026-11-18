@@ -401,9 +401,10 @@ if [ "${1:-}" = "--selftest" ]; then
 	# without, and an errored target's print between, which a count of
 	# prints against targets taken would have passed.
 	l=$(command grep -m1 '^	echo "snap-target-prints ' "$0")
-	K=$t/pair; printf '%s\n' 'syncsnap: snapshot CL.h2sync-tgt blockset equal' \
+	printf '%s\n' 'syncsnap: snapshot CL.h2sync-tgt blockset equal' \
 	    'syncsnap: target CL.h2sync-tgt taken' 'syncsnap: snapshot CL.h2sync-tgt blockset stale' \
-	    'syncsnap: target CL.h2sync-tgt error 5' 'syncsnap: target CL.h2sync-tgt taken' > "$K"
+	    'syncsnap: target CL.h2sync-tgt error 5' 'syncsnap: target CL.h2sync-tgt taken' > "$t/pair"
+	kl() { cat "$t/pair"; }	# the guest's kl reads its klog through kmsg-stream.sh
 	l=$(eval "${l#	}")
 	[ "$l" = "snap-target-prints 1" ] || bad "the target pairing over taken, errored and unprinted targets gave: ${l:-nothing}"
 	# cluster-wire.sh carries the same program, which this case is the
@@ -865,8 +866,8 @@ finish() {
 	# written: MEASURED 2026-10-19 on the KASAN kernel, 9.3 s for the stamp
 	# over 20107 root entries after the resume, 0.4 s at most on the debug
 	# kernel.
-	p1=$(klog 'syncsnap: pass clindex'); l1=$(wc -l < $K); n=0
-	idles() { tail -n +$((l1 + 1)) $K | awk '/syncsnap: idlestamp/ { n = 0 } /syncsnap: idle clindex/ { n++ } END { print n + 0 }'; }
+	p1=$(klog 'syncsnap: pass clindex'); l1=$(kl | wc -l); n=0
+	idles() { kl | tail -n +$((l1 + 1)) | awk '/syncsnap: idlestamp/ { n = 0 } /syncsnap: idle clindex/ { n++ } END { print n + 0 }'; }
 	until [ "$(idles)" -ge 2 ] || [ $n -ge 60 ]; do sleep 1; n=$((n + 1)); done
 	echo "idle-window-seconds $n"
 	echo "idle-window-passes $(( $(klog 'syncsnap: pass clindex') - p1 ))"
@@ -886,15 +887,15 @@ finish() {
 	# taken targets, each with the print its own snapshot made: an outcome
 	# line closes the print before it, so an errored target's print
 	# cannot stand in for a taken one's
-	echo "snap-target-prints $(awk '/syncsnap: snapshot [^ ]*\.h2sync-tgt blockset (equal|stale)/ { p = 1 } /syncsnap: target/ { if ($NF == "taken" && p) n++; p = 0 } END { print n + 0 }' $K)"
-	echo "snap-verify-rounds $(grep 'syncsnap: verified' $K | sed 's/.*rounds //' | sort -n | tail -1)"
-	echo "snap-last-idle $(grep 'syncsnap: idle clindex' $K | tail -1 | sed 's/.*master //')"
+	echo "snap-target-prints $(kl | awk '/syncsnap: snapshot [^ ]*\.h2sync-tgt blockset (equal|stale)/ { p = 1 } /syncsnap: target/ { if ($NF == "taken" && p) n++; p = 0 } END { print n + 0 }')"
+	echo "snap-verify-rounds $(kl | grep 'syncsnap: verified' | sed 's/.*rounds //' | sort -n | tail -1)"
+	echo "snap-last-idle $(kl | grep 'syncsnap: idle clindex' | tail -1 | sed 's/.*master //')"
 	# 1a over the whole run: the root's stamps taken alone, and the scans
 	# begun past key 0 that run to the last key, which only a resumed
 	# segment does; a narrowed scan (1b) ends at its own key and is
 	# counted fourth, and a START_SCAN without its end and beg fields
 	# third, as neither.
-	echo "walks-run $(awk '/root stamp without a rescan/ { s++ } /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ } END { print s + 0, r + 0, m + 0, n + 0 }' $K)"
+	echo "walks-run $(kl | awk '/root stamp without a rescan/ { s++ } /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ } END { print s + 0, r + 0, m + 0, n + 0 }')"
 	# The master device's free blocks at the end and after two bulkfree
 	# scans (a delete frees nothing until the second, script/bulkfree.sh),
 	# beside the count at the first mount: every snapshot pass creates and
@@ -918,8 +919,8 @@ finish() {
 	# scrapped, with no "suppressed" line, which prints only on a later call.
 	# Every teardown prints one unlimited summary, which is the count; a run
 	# with no summary line read nothing and cannot pass as zero.
-	echo "scrapped $(grep -o 'unmount scrapped [0-9]* chain' $K | awk '{s += $3} END {print s + 0}')"
-	echo "scrap-summaries $(grep -c 'unmount scrapped [0-9]* chain' $K)"
+	echo "scrapped $(kl | grep -o 'unmount scrapped [0-9]* chain' | awk '{s += $3} END {print s + 0}')"
+	echo "scrap-summaries $(kl | grep -c 'unmount scrapped [0-9]* chain')"
 	echo "kept-left-modified $(klog 'kept chain.s. left modified')"
 	# The census of the pass the knob interposed in: the first
 	# completed line of its clindex after the sync_interflush line ends
@@ -927,20 +928,20 @@ finish() {
 	# to flush), and the next sync_flush line of that clindex is
 	# its census or the next pass's start. The knob spends only on a pass
 	# that kept chains, so a 0 here is a census over a non-empty set.
-	echo "interflush-left $(awk '
+	echo "interflush-left $(kl | awk '
 		c == "" && /sync_interflush: clindex/ {
 			for (i = 1; i < NF; i++) if ($i == "clindex") c = $(i + 1); next }
 		c == "" || !index($0, "sync_flush: clindex " c " ") { next }
 		!seen { if ($0 ~ / completed / || index($0, " no element chain")) seen = 1; next }
 		{ if ($0 ~ /kept chain.s. left modified/) { for (i = 1; i < NF; i++) if ($i == "clindex") v = $(i + 2) } else v = 0; exit }
-		END { if (v != "") print v; else if (seen) print 0 }' $K)"
+		END { if (v != "") print v; else if (seen) print 0 }')"
 	# The guest's virtual GPU times out waiting for a vblank under a heavy
 	# write (drm_vblank.c and drm_atomic_helper.c WARNINGs, two in one run on
 	# 2026-10-18), which is the guest's and not the port's. Those lines name
 	# drivers/gpu/drm/ and are counted apart, so they neither hide a report of
 	# the port's nor fail the run on their own.
-	echo "kernel-warnings $(grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K | grep -vc 'drivers/gpu/drm/')"
-	echo "gpu-warnings $(grep -c 'WARNING.*drivers/gpu/drm/' $K)"
+	echo "kernel-warnings $(kl | grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' | grep -vc 'drivers/gpu/drm/')"
+	echo "gpu-warnings $(kl | grep -c 'WARNING.*drivers/gpu/drm/')"
 	# Before rmmod, so the report's %pS resolves the module's own symbols. The
 	# scan used to follow rmmod, where those symbols print as addresses and only
 	# a process named hammer2 could match, and to run without the wait the
@@ -1028,7 +1029,8 @@ insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP sync_walks=$w0 || { 
 echo "sync-snapshot $(cat /sys/module/hammer2/parameters/sync_snapshot)"
 echo "sync-walks $(cat /sys/module/hammer2/parameters/sync_walks 2>/dev/null || echo absent)"
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c /mnt/h2l
-klog() { grep -c "$1" $K; }
+kl() { sh /tmp/kmsg-stream.sh --read $K; }	# every read waits for the reader first
+klog() { kl | grep -c "$1"; }
 # A mount the guest cannot drop leaves its volume held, and the next unmount
 # then blocks instead of returning. Counted on every phase so a wedged guest
 # is visible in the probe output rather than only in the final failure.
@@ -1056,7 +1058,7 @@ passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clinde
 # a refused snapshot closes without an end is passed over, so the reading
 # is the last begin before the first end.
 bracket() {
-	tail -n +$(($1 + 1)) $K | awk '
+	kl | tail -n +$(($1 + 1)) | awk '
 	{ t = $0; sub(/^\[ */, "", t); sub(/\].*/, "", t) }
 	/syncsnap: begin clindex/ { b = t; p = ""; v = ""; w = "none"; r = 0; mx = 0; next }
 	b == "" { next }
@@ -1104,8 +1106,8 @@ if [ "$TREE" != 0 ]; then
 	echo "tree-files $(find /mnt/h2c/t -type f | wc -l)"
 	# Settled once two idle lines follow the last idle stamp, as finish()
 	# reads the idle window, bounded by H2_TREE_SECS.
-	l1=$(wc -l < $K); n=0
-	idles() { tail -n +$((l1 + 1)) $K | awk '/syncsnap: idlestamp/ { n = 0 } /syncsnap: idle clindex/ { n++ } END { print n + 0 }'; }
+	l1=$(kl | wc -l); n=0
+	idles() { kl | tail -n +$((l1 + 1)) | awk '/syncsnap: idlestamp/ { n = 0 } /syncsnap: idle clindex/ { n++ } END { print n + 0 }'; }
 	until [ "$(idles)" -ge 2 ] || [ $n -ge "$TREE_SECS" ]; do sleep 1; n=$((n + 1)); done
 	echo "tree-settle-seconds $n"
 	echo "tree-settle-idles $(idles)"
@@ -1115,7 +1117,7 @@ if [ "$TREE" != 0 ]; then
 	# destroyed local key is the same skip seen from the other side: the
 	# source had not ended below that key, so the key was passed over, not
 	# swept. Equal is the shape measured, the source holding the key.
-	echo "kept-absent-skips $(awk '
+	echo "kept-absent-skips $(kl | awk '
 	/filekeys |START_SCAN|sync_slaves |syncsnap: pass |syncthr: update inode/ { pf = "" }
 	/syncsnap: kept absent / {
 		l = $0; sub(/.*kept absent /, "", l); sub(/\/.*/, "", l)
@@ -1126,7 +1128,7 @@ if [ "$TREE" != 0 ]; then
 		l = $0; sub(/.* local /, "", l); sub(/\/.*/, "", l)
 		a = $0; sub(/.* last /, "", a)
 		if (("x" a) >= ("x" l)) s++ }
-	END { print s + 0 }' $K)"
+	END { print s + 0 }')"
 	if [ "$H2_NARROW" = 1 ]; then
 		[ -e /sys/module/hammer2/parameters/sync_assert_cn ] || {
 			echo "cluster: COULD-NOT-RUN: no sync_assert_cn knob; the module needs H2_LOCKDEBUG=1" >&2; exit 2; }
@@ -1153,7 +1155,7 @@ if [ "$TREE" != 0 ]; then
 		esac
 		sync
 		timeout 600 umount /mnt/h2c
-		l0=$(wc -l < $K); e0=$(klog 'syncsnap: end clindex')
+		l0=$(kl | wc -l); e0=$(klog 'syncsnap: end clindex')
 		# N3.5's memory reading: the FIFO's peak across the pass. The
 		# sampler starts here, before the slave's remount below starts
 		# the pass, so the baseline is the idle state immediately
@@ -1195,9 +1197,9 @@ if [ "$TREE" != 0 ]; then
 		rm -rf "$memdir"
 		echo "change-$c-pass $(bracket $l0)"
 		[ -n "$knob" ] && echo "change-$c-knob-left $(cat /sys/module/hammer2/parameters/$knob)"
-		echo "change-$c-rescan-all $(tail -n +$((l0 + 1)) $K | grep -c 'syncthr: rescan all')"
-		echo "change-$c-root-scans $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: verify clindex .* round 1 / { exit } /sync_slaves error/ { n++ } END { print n + 0 }')"
-		echo "change-$c-stamp-failed $(tail -n +$((l0 + 1)) $K | grep -c 'root stamp failed on demand')"
+		echo "change-$c-rescan-all $(kl | tail -n +$((l0 + 1)) | grep -c 'syncthr: rescan all')"
+		echo "change-$c-root-scans $(kl | tail -n +$((l0 + 1)) | awk '/syncsnap: verify clindex .* round 1 / { exit } /sync_slaves error/ { n++ } END { print n + 0 }')"
+		echo "change-$c-stamp-failed $(kl | tail -n +$((l0 + 1)) | grep -c 'root stamp failed on demand')"
 		# Root walks of the pass, every round: scans from key 0, scans
 		# resumed elsewhere after the deferral cap, and stamps with no
 		# rescan (1a); then each root scan's iterations, whose sum against
@@ -1205,9 +1207,9 @@ if [ "$TREE" != 0 ]; then
 		# A narrowed round's scans run from a key to that key, so a scan
 		# whose end is not the last key is one of them (1b) and counted
 		# apart from 1a's resumed segments.
-		echo "change-$c-root-walks $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0, m + 0, n + 0 }')"
-		echo "change-$c-narrowed $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /syncsnap: narrowed clindex/ { n++; k += $NF } /syncsnap: carried round clindex/ { sub(/.*: /, ""); gsub(/ /, "_"); c = c $0 "," } END { print n + 0, (c == "" ? "-" : c), k + 0 }')"
-		echo "change-$c-detached $(tail -n +$((l0 + 1)) $K | grep -c 'syncsnap: detached clindex')"
+		echo "change-$c-root-walks $(kl | tail -n +$((l0 + 1)) | awk '/syncsnap: end clindex/ { exit } /START_SCAN/ { if ($(NF - 1) != "beg" || $(NF - 3) != "end") m++; else if ($(NF - 2) !~ /^f+$/) n++; else if ($NF ~ /^0+$/) f++; else r++ } /root stamp without a rescan/ { s++ } END { print f + 0, r + 0, s + 0, m + 0, n + 0 }')"
+		echo "change-$c-narrowed $(kl | tail -n +$((l0 + 1)) | awk '/syncsnap: end clindex/ { exit } /syncsnap: narrowed clindex/ { n++; k += $NF } /syncsnap: carried round clindex/ { sub(/.*: /, ""); gsub(/ /, "_"); c = c $0 "," } END { print n + 0, (c == "" ? "-" : c), k + 0 }')"
+		echo "change-$c-detached $(kl | tail -n +$((l0 + 1)) | grep -c 'syncsnap: detached clindex')"
 		if [ "$H2_NARROW_ALTER" != 0 ]; then
 			# The slave's inodes against the master's on media, before the
 			# next change's pass can put one back.
@@ -1218,9 +1220,9 @@ if [ "$TREE" != 0 ]; then
 			# line an inode prints and a dirent does not.
 			cli='/filename "CL"$/ && !on && !past { on = 1; next } on && /^ *} \(inode\.[0-9]*, "CL"\)/ { on = 0; past = 1 } on && $1 == "mode" { n++ } END { print n + 0 }'
 			echo "change-$c-inodes $(hammer2 -v show /dev/vdb 2>/dev/null | awk "$cli") $(hammer2 -v show /dev/vdc 2>/dev/null | awk "$cli")"
-			echo "change-$c-altered $(tail -n +$((l0 + 1)) $K | grep -c 'syncsnap: narrow alter destroyed [0-9a-f]* error 0$')"
+			echo "change-$c-altered $(kl | tail -n +$((l0 + 1)) | grep -c 'syncsnap: narrow alter destroyed [0-9a-f]* error 0$')"
 		fi
-		echo "change-$c-root-iters $(tail -n +$((l0 + 1)) $K | awk '/syncsnap: end clindex/ { exit } /^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters") printf "%s ", $(i + 1) } END { print "" }')"
+		echo "change-$c-root-iters $(kl | tail -n +$((l0 + 1)) | awk '/syncsnap: end clindex/ { exit } /^\[[^]]*\] filekeys / { for (i = 1; i < NF; i++) if ($i == "iters") printf "%s ", $(i + 1) } END { print "" }')"
 		c=$((c + 1))
 	done
 	echo "tree-errors $(klog 'hammer2_sync_slaves: error')"
@@ -1296,7 +1298,7 @@ mount -t hammer2 /dev/vdc@ROOT /mnt/h2s || exit 1
 # regardless, so a refused copy compared equal on every later pass and was
 # never retried; that reads here as `fault-failed` above zero and the slave
 # short by those keys at the end, with no pass reporting an error.
-fcount() { grep 'filekeys' $K | tail -1 | sed -n 's/.* failed \([0-9]*\) .*/\1/p'; }
+fcount() { kl | grep 'filekeys' | tail -1 | sed -n 's/.* failed \([0-9]*\) .*/\1/p'; }
 if [ "${H2_FAULT:-0}" != 0 ]; then
 	[ -e /sys/module/hammer2/parameters/fail_alloc_count ] || {
 		echo "cluster: COULD-NOT-RUN: H2_FAULT needs the fail_alloc_count knob, which only a module built with H2_LOCKDEBUG=1 has" >&2; exit 2; }
@@ -1431,7 +1433,7 @@ fi
 # in those two arms rather than in inserts; the window and settle are 2b's.
 # The counts are deltas of the module's own per-arm counters on the filekeys
 # line; a zero delta means the arm never ran and the phase fails.
-fieldc() { grep 'filekeys' $K | tail -1 | sed -n "s/.* $1 \([0-9]*\).*/\1/p"; }
+fieldc() { kl | grep 'filekeys' | tail -1 | sed -n "s/.* $1 \([0-9]*\).*/\1/p"; }
 i=0; while [ $i -lt 5 ]; do head -c $(( i * 3001 + 500 )) /dev/urandom > /mnt/h2c/set/d$i; i=$((i + 1)); done
 sync
 n=0; last=-1; still=0
@@ -1564,7 +1566,7 @@ echo "h2probe: bigdir write end" > /dev/kmsg
 sh /tmp/kmsg-stream.sh --end $K	# the range ends at the probe line, which must be read first
 # Destroys the thread made while the write ran, and in all. Both read 0
 # unless H2_DEBUG carries 0x0001, which is what prints a destroy.
-echo "write-destroys $(sed -n '/h2probe: bigdir write start/,/h2probe: bigdir write end/p' $K | grep -c 'destroy rec')"
+echo "write-destroys $(kl | sed -n '/h2probe: bigdir write start/,/h2probe: bigdir write end/p' | grep -c 'destroy rec')"
 # 4b. A backlog the thread must copy: the one pass of the run long enough to
 # mutate the master inside (3b), to interrupt (4c) and, under H2_CRASH=1, to
 # crash (6). MEASURED 2026-10-18: with the cluster mounted the slave's device
@@ -1598,7 +1600,7 @@ sync
 echo "h2probe: bigdir2 write end" > /dev/kmsg
 timeout 60 umount /mnt/h2c
 verdicts() { echo $(( $(klog 'syncsnap: verified') + $(klog 'syncsnap: newer clindex') + $(klog 'syncsnap: unverified') )); }
-copied() { grep -c 'syncthr: update inode' $K; }
+copied() { kl | grep -c 'syncthr: update inode'; }
 p0=$(passes CL); v0=$(verdicts); ins0=$(fieldc 'n>0'); k0=$(fieldc kept); ri0=$(klog 'syncsnap: reinsert'); nd0=$(klog 'syncsnap: newer inode'); r10=$(klog 'syncsnap: verify clindex 1 round 1 '); ir0=$(klog 'syncsnap: interrupted clindex'); db0=$(klog didbreak)
 # Set before the slave's device returns, so the knob is read by the copy;
 # under H2_COLLAPSE_LATE=1 it is written in the stop's wait instead.
@@ -1651,13 +1653,13 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	sh /tmp/kmsg-stream.sh --end $K
 	echo "crash-copied $(( $(copied) - u1 ))"
 	echo "crash-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
-	echo "crash-last-target $(awk '/syncsnap: target/ { v = $NF } END { print v }' $K)"
+	echo "crash-last-target $(kl | awk '/syncsnap: target/ { v = $NF } END { print v }')"
 	# The cut pass's own target line: a pass whose target an earlier pass
 	# left valid prints none, so the last line above can be another pass's.
 	# Its pass lines before the cut go into the report, since the guest's
 	# log dies with it.
-	echo "crash-cut-target $(awk '/syncsnap: begin/ { v = "none" } /syncsnap: target/ { v = $NF } END { print v }' $K)"
-	grep -E 'syncsnap: (begin|stale|target|pass|verify|verified|unverified|newer|end)' $K | tail -n 12 | sed 's/^/crash-klog /'
+	echo "crash-cut-target $(kl | awk '/syncsnap: begin/ { v = "none" } /syncsnap: target/ { v = $NF } END { print v }')"
+	kl | grep -E 'syncsnap: (begin|stale|target|pass|verify|verified|unverified|newer|end)' | tail -n 12 | sed 's/^/crash-klog /'
 	echo "crash-armed"
 	sleep 600
 	exit 0
@@ -1721,7 +1723,7 @@ sh /tmp/kmsg-stream.sh --end $K	# the counts below include the teardown's lines
 echo "interrupt-copied $(( $(copied) - u1 ))"
 echo "interrupt-threads $(ps -eo comm | grep -c '^h2nod-CL')"
 echo "interrupt-didbreak $(( $(klog didbreak) - db0 ))"
-echo "interrupt-rounds $(awk -v n="$ir0" '/syncsnap: interrupted clindex/ { if (++c > n) v = $(NF - 2) } END { print v + 0 }' $K)"
+echo "interrupt-rounds $(kl | awk -v n="$ir0" '/syncsnap: interrupted clindex/ { if (++c > n) v = $(NF - 2) } END { print v + 0 }')"
 echo "interrupt-src-cleaned $(klog 'syncsnap: unmount deleted CL.h2sync-src error 0')"
 # The target the interrupted pass meant to keep is on the slave's media, read
 # on the device the teardown closed.
@@ -1744,15 +1746,15 @@ echo "mutate-kept $(( $(fieldc kept) - ${k0:-0} ))"
 # MEASURED 2026-10-15: the destroying pass printed `sweep 127` on its own
 # line and the last line `sweep 0`, and reading the tail put a sweep count
 # of 0 into five records as a finding. Both readings are printed.
-maxsweep() {	# the filekeys line carrying the largest `sweep`, or empty
-	sed -n 's/^\[[^]]*\] //p' "$1" | grep '^filekeys' | \
+maxsweep() {	# the filekeys line on stdin carrying the largest `sweep`, or empty
+	sed -n 's/^\[[^]]*\] //p' | grep '^filekeys' | \
 		awk 'BEGIN { m = -1 }
 		     { for (i = 1; i <= NF; i++) if ($i == "sweep") s = $(i + 1) + 0
 		       if (s > m) { m = s; line = $0 } }
 		     END { if (line) print line }'
 }
-echo "interrupt-actions $(grep 'filekeys' $K | tail -1 | sed 's/^\[[^]]*\] //')"
-echo "interrupt-sweep-max $(maxsweep $K)"
+echo "interrupt-actions $(kl | grep 'filekeys' | tail -1 | sed 's/^\[[^]]*\] //')"
+echo "interrupt-sweep-max $(kl | maxsweep)"
 # 5. Resume: the slave's device returns, its thread starts, finds the target
 # by name and copies the rest; the cluster is mounted on top for the run's
 # end, which is the same mount-during-a-pass the mutation made.
@@ -1768,7 +1770,7 @@ echo "collapse-done $(klog 'syncsnap: collapse of .* on demand')"
 echo "collapse-guard $(klog 'syncsnap: scan parent .* deleted')"
 # The failures of the round the first such scan ended in, which must not
 # verify: the next verify line after it.
-echo "collapse-round-failed $(awk '/syncsnap: scan parent .* deleted/ { g = 1 } g && /syncsnap: verify clindex/ { sub(/.* failed /, ""); print $1 + 0; exit }' $K)"
+echo "collapse-round-failed $(kl | awk '/syncsnap: scan parent .* deleted/ { g = 1 } g && /syncsnap: verify clindex/ { sub(/.* failed /, ""); print $1 + 0; exit }')"
 [ "$H2_COLLAPSE" != 0 ] && echo "collapse-knob-left $(cat /sys/module/hammer2/parameters/sync_collapse_parent)"
 echo "mutate-reinserts $(( $(klog 'syncsnap: reinsert') - ${ri0:-0} ))"
 echo "mutate-newer-inodes $(( $(klog 'syncsnap: newer inode') - ${nd0:-0} ))"
@@ -1789,7 +1791,8 @@ trap 'kill $KPID 2>/dev/null' EXIT
 w0=$H2WALKS; [ "$w0" = alt ] && w0=1
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own
 insmod /tmp/hammer2.ko debug=$H2DEBUG sync_snapshot=$H2SNAP sync_walks=$w0 || { echo "insmod failed"; exit 1; }
-klog() { grep -c "$1" $K; }
+kl() { sh /tmp/kmsg-stream.sh --read $K; }	# every read waits for the reader first
+klog() { kl | grep -c "$1"; }
 passes() { echo $(( $(klog "sync_slaves pfs $1") + $(klog 'syncsnap: idle clindex') - $(klog 'syncsnap: idlestamp') )); }
 . /tmp/h2cluster-tail.sh
 mkdir -p /mnt/h2m /mnt/h2s /mnt/h2c

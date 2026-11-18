@@ -815,22 +815,80 @@ fi
 # whole. A harness that starts it must wait for its marker with --started
 # before it prints a line, call --end, carry the refusal, and
 # neither clear nor read the ring, which no marker of its own vouches for;
-# no other script may stream the log. A reader is any use of /dev/kmsg but a
+# no other script may stream the log, and the harness reads its klog only
+# through kmsg-stream.sh --read. A reader is any use of /dev/kmsg but a
 # write to it (a marker), /proc/kmsg, dmesg following, or journalctl; a `pkill` of an
-# old reader reads nothing and is not one. Nor can this tell a second
-# stream no count reads from one a count reads without its --end, so a
-# harness may start the reader more than once. What this cannot read is whether each count sits
-# before an --end, or whether the refusal comes before the run's failure
-# exit: the stream's harnesses judge on the host from what the guest
-# printed, in shapes too unlike one another for one text rule.
+# old reader reads nothing and is not one. A harness may start the reader
+# more than once. What this cannot read is whether the refusal comes
+# before the run's failure exit: the stream's harnesses judge on the host
+# from what the guest printed, in shapes too unlike one another for one
+# text rule.
 STREAM_REFUSE="the guest's kernel log stream lost records"
 STREAM_READER='dmesg +(-[A-Za-z]*[wW]|--follow)|journalctl|/(dev|proc)/kmsg'
 # A pkill names the reader it stops, so the command is cut from its line,
 # up to the next ; & or |, and the rest of the line is still read; so is a
 # write to /dev/kmsg, which every marker is.
 code_of() { command grep -v '^[[:space:]]*#' "$1" | sed -E 's/pkill [^;&|]*//g; s/[0-9]*>>? *\/dev\/kmsg//g'; }
+# A count read from the klog at once misses what the reader has yet to
+# write, so a baseline reads low and a delta after an act reads high; three
+# review rounds swept such counts by hand and missed every baseline. Every
+# read goes through kmsg-stream.sh --read, which waits for a marker first.
+# The klog's names are the --start redirect's target and what an assignment
+# ties to it (the variable a literal path is held in, the path a variable
+# holds). A name may appear as an argument of kmsg-stream.sh, after a write
+# redirect, in an assignment, after a test's =, and on an scp line, which
+# copies the klog off the guest; anywhere else it is read. Names are found
+# with index(), so none is read as a pattern.
+klog_reads() {	# klog_reads <harness>: the lines that name its klog, but not to write, assign, test or copy it
+	awk '
+function ok(pre,   p) {
+	p = pre; sub(/["{]$/, "", p); sub(/[ \t]+$/, "", p)
+	return p ~ /kmsg-stream\.sh --[a-z]+$/ || p ~ />$/ || p ~ /(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=$/ || p ~ /[ \t]!?=$/
+}
+function after(c, n) { return n ~ /^\$/ ? c !~ /[A-Za-z0-9_]/ : c !~ /[A-Za-z0-9_.\/-]/ }
+NR == FNR {
+	if ($0 ~ /^[ \t]*#/) next
+	if (match($0, /kmsg-stream\.sh --start[ \t]*>/)) {	# not --started
+		t = substr($0, RSTART + RLENGTH); sub(/^[ \t]*/, "", t); sub(/[ \t;&)\047].*/, "", t); gsub(/"/, "", t)
+		if (t != "") tg[t] = 1
+	}
+	s = $0
+	while (match(s, /[A-Za-z_][A-Za-z0-9_]*=[^ \t;&)]+/)) {
+		a = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+		v = substr(a, 1, index(a, "=") - 1); x = substr(a, index(a, "=") + 1); gsub(/"/, "", x)
+		as[v "=" x] = 1
+	}
+	next
+}
+FNR == 1 {
+	for (t in tg) {
+		nm[t] = 1
+		for (a in as) {
+			v = substr(a, 1, index(a, "=") - 1); x = substr(a, index(a, "=") + 1)
+			if (t == "$" v || t == "${" v "}") { if (x ~ /^\//) nm[x] = 1 }
+			else if (x == t) { nm["$" v] = 1; nm["${" v "}"] = 1 }
+		}
+		if (t ~ /^\$[A-Za-z_]/) nm["${" substr(t, 2) "}"] = 1
+	}
+}
+/^[ \t]*#/ { next }
+{
+	l = $0; sub(/^[ \t]+/, "", l)
+	if (l ~ /^scp /) next
+	for (n in nm) {
+		s = $0; off = 0
+		while ((i = index(s, n)) > 0) {
+			if (after(substr(s, i + length(n), 1), n) && !ok(substr($0, 1, off + i - 1))) { bad[FNR] = 1; break }
+			off += i + length(n) - 1; s = substr(s, i + length(n))
+		}
+	}
+}
+END { for (k in bad) printf "%s ", k }' "$1" "$1" | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//'
+}
 stream_rule() {	# stream_rule <harness>: prints why it fails the rule, nothing when it passes
 	code=$(code_of "$1")
+	r=$(klog_reads "$1")
+	[ -z "$r" ] || echo "a read of its klog outside kmsg-stream.sh --read, line(s) $r"
 	printf '%s\n' "$code" | command grep -qE "$STREAM_READER" &&
 		echo "a reader other than kmsg-stream.sh"
 	printf '%s\n' "$code" | command grep -qF 'kmsg-stream.sh --started' || echo "no --started"
@@ -864,7 +922,16 @@ done
 nstreamctl=0
 if [ -n "$stream_first" ]; then
 	stream_tmp=$(mktemp -d) || exit 2
+	# its klog's name, from its --start redirect, and the path a variable holds
+	kn=$(sed -n 's/.*kmsg-stream\.sh --start *> *"\{0,1\}\([^ "&;)]*\).*/\1/p' "$stream_first" | head -1)
+	case $kn in
+	\$*) kp=$(sed -n "s|^[[:space:]]*${kn#\$}=\(/[^ ;]*\).*|\1|p" "$stream_first" | head -1) ;;
+	*) kp=$kn ;;
+	esac
 	for m in '{ while ((i = index($0, "kmsg-stream.sh --end")) > 0) $0 = substr($0, 1, i - 1) "kmsg-stream.sh --stop" substr($0, i + 20); print }::no --end::every --end dropped' \
+	    '{ gsub(/sh \/tmp\/kmsg-stream\.sh --read/, "cat"); print }::a read of its klog outside::every read through --read turned to cat' \
+	    '{ print } END { print "n=$(grep -c BUG: " kn ")" }::a read of its klog outside::a count of its klog appended' \
+	    '{ print } END { print "tail -1 " kp }::a read of its klog outside::a read of the path its klog variable holds appended' \
 	    'index($0, rf) { next } { print }::no refusal when the stream lost records::the refusal dropped' \
 	    'index($0, "kmsg-stream.sh --started") { next } { print }::no --started::every --started dropped' \
 	    '{ print } END { print "dmesg -w > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dmesg -w reader appended' \
@@ -878,7 +945,10 @@ if [ -n "$stream_first" ]; then
 	    '{ gsub(/sh \/tmp\/kmsg-stream.sh --start >/, "tail -f /dev/kmsg >"); print }::a reader other than kmsg-stream.sh::its reader swapped for tail -f'; do
 		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
 		nstreamctl=$((nstreamctl + 1))
-		awk -v rf="$STREAM_REFUSE" "$prog" "$stream_first" > "$stream_tmp/changed.sh"
+		awk -v rf="$STREAM_REFUSE" -v kn="$kn" -v kp="$kp" "$prog" "$stream_first" > "$stream_tmp/changed.sh"
+		cmp -s "$stream_first" "$stream_tmp/changed.sh" && {
+			echo "  FAIL control: $stream_first with $how is unchanged, so it shows nothing"
+			fail=$((fail + 1)); continue; }
 		why=$(stream_rule "$stream_tmp/changed.sh")
 		case "$why" in
 		*"$want"*) ;;
@@ -886,6 +956,13 @@ if [ -n "$stream_first" ]; then
 		   fail=$((fail + 1)) ;;
 		esac
 	done
+	# and the read the rule sends counts to passes it
+	nstreamctl=$((nstreamctl + 1))
+	{ cat "$stream_first"; echo "n=\$(sh /tmp/kmsg-stream.sh --read $kn | grep -c BUG:)"; } > "$stream_tmp/changed.sh"
+	why=$(stream_rule "$stream_tmp/changed.sh")
+	[ -z "$why" ] || {
+		echo "  FAIL control: $stream_first with a count through --read appended read as $why"
+		fail=$((fail + 1)); }
 	# A script that streams outside the rule is found: a copy of the first
 	# ring reader with a reader added.
 	for r in "dmesg -w > /tmp/x.klog &" "tail -f /dev/kmsg > /tmp/x.klog &"; do
@@ -898,8 +975,8 @@ if [ -n "$stream_first" ]; then
 	done
 	rm -rf "$stream_tmp"
 fi
-[ "$nstreamctl" = 14 ] || {
-	echo "  FAIL $nstreamctl stream control(s) ran, not the 14 the gate lists"
+[ "$nstreamctl" = 18 ] || {
+	echo "  FAIL $nstreamctl stream control(s) ran, not the 18 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it

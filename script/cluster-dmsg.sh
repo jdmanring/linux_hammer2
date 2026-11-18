@@ -198,7 +198,8 @@ sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
 sh /tmp/kmsg-stream.sh --started $K
 trap 'kill $KPID 2>/dev/null' EXIT
-klog() { grep -c "$1" $K; }
+kl() { sh /tmp/kmsg-stream.sh --read $K; }	# every read waits for the reader first
+klog() { kl | grep -c "$1"; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
 A=/tmp/h2attach
 M=/mnt/h2d
@@ -209,7 +210,7 @@ echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
 # The end of every mode: warnings, kmemleak before and after the unload.
 finish() {
 sh /tmp/kmsg-stream.sh --end $K
-echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive' $K)"
+echo "kernel-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
 # Before rmmod, so the report's %pS resolves the module's own symbols, and
 # after the wait the scanner's age rule needs (kmemleak.c MSECS_MIN_AGE,
 # 5000 ms), as cluster-sync.sh does. The message core allocates a state and
@@ -372,7 +373,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		[ -w $PH/link_hold_ms ] && [ -w $PH/volconf_hold_ms ] || { echo "dmsg: COULD-NOT-RUN: the module has no link_hold_ms or volconf_hold_ms; it is not a HAMMER2_LOCKDEBUG build" >&2; exit 2; }
 		S=/tmp/h2service
 		lines() { awk -v p="$1" '{ print p "-" NR " " $0 }'; }
-		lnum() { awk -v s="$1" -v p="$2" 'NR > s && index($0, p) { print NR; exit }' $K; }	# lnum <after line> <text>: the first line past it naming it
+		lnum() { kl | awk -v s="$1" -v p="$2" 'NR > s && index($0, p) { print NR; exit }'; }	# lnum <after line> <text>: the first line past it naming it
 		wait_n() {	# wait_n <target> <pattern> <tenths>
 			t=0; while [ "$(klog "$2")" -lt "$1" ] && [ $t -lt "$3" ]; do sleep 0.1; t=$((t + 1)); done
 		}
@@ -436,7 +437,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		wait_n $((vh0 + 1)) 'volconf held' 100
 		echo 0 > $PH/volconf_hold_ms	# the held send keeps its own; the new link's dump is not held
 		echo "s2-in-hold held=$(($(klog 'volconf held') - vh0)) threads=$(threads) terminated=$(klog 'CONN WAS TERMINATED')"
-		ib=$(wc -l < $K)
+		ib=$(kl | wc -l)
 		$P --attach $M --action tlspeer --key $K1 --send none --port 7974 --linger-ms 2000 --wait-ms $((HOLD + 30000)) > /tmp/h2peer-s2b.out 2>&1 &
 		PB=$!
 		wait $PS; echo "s2-add-rc $? $(tr '\n' ' ' < /tmp/h2s2-add.out)"
@@ -478,7 +479,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	arm_link arm2 7996 --keyring $RING --admit $K1 --key $K2
 	echo "arm2-wait-refused $(until_n 150 $((p0 + 2)) refused 'the handshake failed')"
 	sleep 8; after arm2
-	grep 'cluster link refused: the handshake failed' $K | tail -n +$((p0 + 1)) | sed 's/^/arm2-line /'
+	kl | grep 'cluster link refused: the handshake failed' | tail -n +$((p0 + 1)) | sed 's/^/arm2-line /'
 
 	# arm 4, a client identity held only in .nvme
 	if [ -n "$K3" ]; then
@@ -488,7 +489,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 		echo "arm4-wait-handed $(until_n 50 $((h0 + 1)) handed)"
 		sleep 2; after arm4
 		echo "arm4-k3 $K3"
-		grep 'cluster link refused: the peer.s key is not one' $K | tail -n +$((p0 + 1)) | sed 's/^/arm4-line /'
+		kl | grep 'cluster link refused: the peer.s key is not one' | tail -n +$((p0 + 1)) | sed 's/^/arm4-line /'
 	else
 		echo "arm4-driven 0"
 	fi
@@ -532,7 +533,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "arm5-wait-refused $(until_n 150 $((r0 + 1)) refused)"
 	sleep 1; after arm5; client_end arm5
 	echo "arm5-keyfail $(($(tlog_any 'Key has been revoked') - kf0))"
-	grep 'cluster link refused:' $K | tail -1 | sed 's/^/arm5-line /'
+	kl | grep 'cluster link refused:' | tail -1 | sed 's/^/arm5-line /'
 
 	# arm 6, no agent at all
 	s6-rc -d change tlshd-srv
@@ -564,7 +565,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "arm7-ms $(( ($(date +%s%N) - t0) / 1000000 ))"
 	sleep 1; after arm7; client_end arm7
 	echo "arm7-cancels $(cancels)"
-	grep 'cluster link refused: the handshake timed out' $K | tail -n +$((to0 + 1)) | sed 's/^/arm7-line /'
+	kl | grep 'cluster link refused: the handshake timed out' | tail -n +$((to0 + 1)) | sed 's/^/arm7-line /'
 
 	# arm 8, an unmount under a pending request
 	: > $T/trace; snap arm8; to0=$(refused 'the handshake timed out'); late0=$to0
@@ -689,7 +690,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "s55b-held n=$(($(klog 'left by the link deleted') - lb)) listed=$(pl ROOT.h2sync-peer)"
 	hsnap s55c --pfs ROOT --snapdel 1
 	sleep 2
-	echo "s55b-left n=$(($(klog 'left by the link deleted') - lb)) err0=$(grep 'left by the link deleted' $K | tail -n +$((lb + 1)) | grep -c 'ROOT.h2sync-peer left by the link deleted, error 0')"
+	echo "s55b-left n=$(($(klog 'left by the link deleted') - lb)) err0=$(kl | grep 'left by the link deleted' | tail -n +$((lb + 1)) | grep -c 'ROOT.h2sync-peer left by the link deleted, error 0')"
 	echo "s55c-left listed=$(pl ROOT.h2sync-peer) deleted=$(klog 'peer deleted ROOT.h2sync-peer error 0')"
 
 	# a SNAPSHOT naming the link's own snapshot: served by its entry
@@ -840,7 +841,7 @@ if [ "${H2_DMSG_TLS:-0}" = 1 ]; then
 	echo "s55p-wait $(until_n 300 $((se0 + 1)) klog 'syncsnap: stale CL.h2sync-src error 17')"
 	echo "s55p-lines kept=$(($(klog 'PFS CL.h2sync-src kept: a stale delete takes only a snapshot') - sk0)) error17=$(($(klog 'syncsnap: stale CL.h2sync-src error 17') - se0)) deleted=$(($(klog 'syncsnap: stale CL.h2sync-src deleted') - sd0)) listed=$(pl 'CL\.h2sync-src')"
 	umount $M2; umount $M
-	echo "s55-left-total n=$(($(klog 'left by the link deleted') - lb)) lines=$(grep 'left by the link deleted' $K | tail -n +$((lb + 1)) | tr '\n' '|')"
+	echo "s55-left-total n=$(($(klog 'left by the link deleted') - lb)) lines=$(kl | grep 'left by the link deleted' | tail -n +$((lb + 1)) | tr '\n' '|')"
 	echo $((0x100)) > /sys/module/hammer2/parameters/debug
 	echo "threads-end $(threads)"
 	tail -n +$((TL0 + 1)) $TL | sed 's/^/tlshd-log /'	# kept whole in the report
@@ -881,9 +882,9 @@ if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
 	echo "fdmount-tasks $n"
 	sleep 1
 	sh /tmp/kmsg-stream.sh --end $K
-	echo "fdmount-lockdep $(grep -c 'possible recursive locking detected' $K)"
-	echo "fdmount-mntlk-lines $(grep -c '(h2_mnt)' $K)"	# hammer2_mntlk's lockdep name
-	echo "fdmount-badfd $(grep -c 'bad cluster_fd' $K)"
+	echo "fdmount-lockdep $(kl | grep -c 'possible recursive locking detected')"
+	echo "fdmount-mntlk-lines $(kl | grep -c '(h2_mnt)')"	# hammer2_mntlk's lockdep name
+	echo "fdmount-badfd $(kl | grep -c 'bad cluster_fd')"
 	if ! kill -0 $MPID 2>/dev/null; then
 		# The link is up when its two message threads run, which only the
 		# reconnect tail starts; the work runs after the mount returns.
@@ -981,7 +982,7 @@ echo "log-badcrc $(klog 'bad crc')"
 echo "log-proto2 $(klog 'peer speaks DMSG_SPAN_PROTO_2')"
 echo "log-spantab3 $(klog 'H2 SPANTAB 3')"
 echo "log-spantab0 $(klog 'H2 SPANTAB 0')"
-echo "log-spanlabels $(grep -o 'H2 SPAN type=6 label=h2attach-span-[123] pfs' $K | sort -u | wc -l)"
+echo "log-spanlabels $(kl | grep -o 'H2 SPAN type=6 label=h2attach-span-[123] pfs' | sort -u | wc -l)"
 echo "log-span9 $(klog 'label=h2attach-span-9 ')"
 echo "log-hm2proto1 $(klog 'on a PROTO_1 connection')"
 echo "log-nostate $(klog 'no state match for REPLY|DELETE')"

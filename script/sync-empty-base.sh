@@ -222,7 +222,8 @@ sh /tmp/kmsg-stream.sh --stop
 sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
 sh /tmp/kmsg-stream.sh --started $K
-klog() { grep -c "$1" $K; }
+kl() { sh /tmp/kmsg-stream.sh --read $K; }	# every read waits for the reader first
+klog() { kl | grep -c "$1"; }
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 
 insmod /tmp/hammer2.ko debug=$H2DEBUG || { echo "insmod-failed"; exit 1; }
@@ -286,7 +287,7 @@ while [ $c -lt $CYCLES ]; do
 	# from the log rather than from the guest's stdout. grep -c prints its
 	# count and exits 1 on no match, so the count is kept and the status
 	# discarded on every read below.
-	echo "cycle-$c-unmount-left $(grep 'after unmount' $K | tail -1 | sed 's/.*after unmount: //')"
+	echo "cycle-$c-unmount-left $(kl | grep 'after unmount' | tail -1 | sed 's/.*after unmount: //')"
 	echo "cycle-$c-empty-base $(klog 'from empty base')"
 	[ "$(klog 'from empty base')" -gt 0 ] && break
 	# The syncer's period is 30 s; wait past one so the master's sync_work
@@ -307,7 +308,7 @@ sh /tmp/kmsg-stream.sh --end $K
 echo "empty-base $(klog 'from empty base')"
 echo "passes-after $(( $(klog 'sync_slaves pfs CL') ))"
 echo "pass-errors $(klog 'hammer2_sync_slaves: error')"
-echo "defer-nonzero $(grep -c 'defer [1-9a-f]' $K)"
+echo "defer-nonzero $(kl | grep -c 'defer [1-9a-f]')"
 echo "device-in-error $(klog 'device in error')"
 echo "gave-up $(klog 'gave up')"
 # Leave the guest clean whatever happened.
@@ -320,7 +321,7 @@ sync
 # A second end marker after the teardown, so the warnings count covers the
 # unmounts and the unload and a record lost during them is a stream line.
 sh /tmp/kmsg-stream.sh --end $K
-echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:' $K)"
+echo "kernel-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:')"
 kill $KPID 2>/dev/null
 GUEST
 
