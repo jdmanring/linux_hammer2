@@ -380,6 +380,7 @@ st=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)
 	cp "$W/out" "$FIXDIR/sync-empty-unread-$(date +%Y%m%d-%H%M%S).out" 2>/dev/null
 	echo "sync-empty: COULD-NOT-READ: the guest's kernel log stream lost records: ${st:-no stream line}" >&2
 	exit 2; }
+echo "  ok    the guest's kernel log stream is whole: $(command grep -c '^stream ' "$W/out") stream line(s), each whole"
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 fail=0; checks=0

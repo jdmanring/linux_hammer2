@@ -1972,6 +1972,7 @@ sw=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)
 [ -z "$sw" ] && command grep -q '^stream ' "$W/out" || {
 	echo "cluster: COULD-NOT-READ: the guest's kernel log stream lost records: ${sw:-no stream line}" >&2
 	exit 2; }
+echo "  ok    the guest's kernel log stream is whole: $(command grep -c '^stream ' "$W/out") stream line(s), each whole"
 
 val() { sed -n "s/^$1 //p" "$W/out" | head -1; }
 nval() { grep -c -E "^$1( |$)" "$W/out"; }	# how many lines carry the name, with or without a value
