@@ -27,6 +27,8 @@
 #
 #   sh kmsg-stream.sh --start > klog &        on the guest: writes the start
 #                                             marker; $! is the reader to kill
+#   sh kmsg-stream.sh --started klog          waits until the marker is read,
+#                                             before the caller prints a line
 #   sh kmsg-stream.sh --end klog              writes the end marker, waits up
 #                                             to 30 s for it, prints "stream
 #                                             whole" or "stream COULD-NOT-READ"
@@ -72,6 +74,15 @@ EOF
 	m="h2kmsg-start $(cat /proc/sys/kernel/random/uuid)" || exit 2
 	echo "$m" > /dev/kmsg || exit 2
 	exec awk -v start="$m" -v src='exec cat /dev/kmsg 2>&1' "$PROG" ;;
+--started)
+	# --start runs in the background and writes its marker on its own
+	# time, and a line the caller prints before the marker is before the
+	# stream: a run marker written just after --start was lost that way.
+	# So a caller waits here, up to 10 s, for the marker to reach the
+	# klog; a reader that never started is refused by --end.
+	k=${2:-}; n=0
+	until grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$k" 2>/dev/null || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+	exit 0 ;;
 --end)
 	k=${2:-}
 	[ -f "$k" ] || { echo "stream COULD-NOT-READ: no klog $k"; exit 0; }

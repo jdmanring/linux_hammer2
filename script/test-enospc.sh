@@ -525,6 +525,7 @@ out=$(ssh "$GUEST_SSH" '
 	# a fresh read of the ring replays.
 	sh /tmp/kmsg-stream.sh --start > /tmp/kmsg.log 2>&1 &
 	kpid=$!
+	sh /tmp/kmsg-stream.sh --started /tmp/kmsg.log
 	echo "kmsg capture unbuffered"
 	# A boundary this run writes itself. A fresh read of /dev/kmsg replays
 	# the whole retained ring, so the capture opens on every earlier run in
@@ -716,7 +717,7 @@ out=$(ssh "$GUEST_SSH" '
 	echo "allocated after sync $(cat /sys/module/hammer2/parameters/alloc_data_bytes) data $(cat /sys/module/hammer2/parameters/alloc_meta_bytes) meta"
 	# The counts from here to the unmount are vouched for as they are read;
 	# the --end after the unmount covers the rest.
-	echo "stream $(sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log)"
+	sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log
 	echo "data blocks rewritten $(cat /sys/module/hammer2/parameters/data_rewrites), filled $(command grep -c "filled around" /tmp/kmsg.log)"
 	echo "block folios refused $(command grep -c "no block folio" /tmp/kmsg.log), free pages by order $(command grep Normal /proc/buddyinfo | sed "s/.*zone *Normal *//")"
 	command grep "enospace refuses" /tmp/kmsg.log | tail -3 | sed "s/^.*hammer2: enospace /refusal /"
@@ -981,7 +982,7 @@ out=$(ssh "$GUEST_SSH" '
 		echo "outstanding no line, so kill_sb did not reach its end"
 	fi
 	echo "busy inodes $(command grep -c "Busy inodes after unmount\|VFS: Busy" /tmp/kmsg.log || true)"
-	echo "stream $(sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log)"
+	sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log
 	echo "=== log tail begins"
 	# Wide enough for a whole backtrace. At 25 lines this window cut
 	# the head off the one oops that explains the failure and left the

@@ -196,6 +196,7 @@ K=/tmp/h2dmsg.klog
 pkill -x dmesg 2>/dev/null; sh /tmp/kmsg-stream.sh --stop; sleep 0.2
 sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
+sh /tmp/kmsg-stream.sh --started $K
 trap 'kill $KPID 2>/dev/null' EXIT
 klog() { grep -c "$1" $K; }
 threads() { ps -eo comm | grep -c '^hammer2-msg'; }
@@ -207,7 +208,7 @@ echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
 # The end of every mode: warnings, kmemleak before and after the unload.
 finish() {
-echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
+sh /tmp/kmsg-stream.sh --end $K
 echo "kernel-warnings $(grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive' $K)"
 # Before rmmod, so the report's %pS resolves the module's own symbols, and
 # after the wait the scanner's age rule needs (kmemleak.c MSECS_MIN_AGE,
@@ -879,7 +880,7 @@ if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
 	done
 	echo "fdmount-tasks $n"
 	sleep 1
-	echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
+	sh /tmp/kmsg-stream.sh --end $K
 	echo "fdmount-lockdep $(grep -c 'possible recursive locking detected' $K)"
 	echo "fdmount-mntlk-lines $(grep -c '(h2_mnt)' $K)"	# hammer2_mntlk's lockdep name
 	echo "fdmount-badfd $(grep -c 'bad cluster_fd' $K)"

@@ -934,7 +934,7 @@ finish() {
 	# 2026-10-18), which is the guest's and not the port's. Those lines name
 	# drivers/gpu/drm/ and are counted apart, so they neither hide a report of
 	# the port's nor fail the run on their own.
-	echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
+	sh /tmp/kmsg-stream.sh --end $K
 	echo "kernel-warnings $(grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' $K | grep -vc 'drivers/gpu/drm/')"
 	echo "gpu-warnings $(grep -c 'WARNING.*drivers/gpu/drm/' $K)"
 	# Before rmmod, so the report's %pS resolves the module's own symbols. The
@@ -1015,6 +1015,7 @@ K=/tmp/h2cluster.klog
 pkill -x dmesg 2>/dev/null; sh /tmp/kmsg-stream.sh --stop; sleep 0.2
 sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
+sh /tmp/kmsg-stream.sh --started $K
 trap 'kill $KPID 2>/dev/null' EXIT
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 w0=$H2WALKS; [ "$w0" = alt ] && w0=1
@@ -1642,7 +1643,7 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	done
 	echo "crash-copied $(( $(copied) - u1 ))"
 	echo "crash-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
-	echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
+	sh /tmp/kmsg-stream.sh --end $K
 	echo "crash-last-target $(awk '/syncsnap: target/ { v = $NF } END { print v }' $K)"
 	# The cut pass's own target line: a pass whose target an earlier pass
 	# left valid prints none, so the last line above can be another pass's.
@@ -1773,6 +1774,7 @@ K=/tmp/h2cluster.klog
 pkill -x dmesg 2>/dev/null; sh /tmp/kmsg-stream.sh --stop; sleep 0.2
 sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
+sh /tmp/kmsg-stream.sh --started $K
 trap 'kill $KPID 2>/dev/null' EXIT
 w0=$H2WALKS; [ "$w0" = alt ] && w0=1
 { echo scan > /sys/kernel/debug/kmemleak && echo scan > /sys/kernel/debug/kmemleak && echo clear > /sys/kernel/debug/kmemleak; } 2>/dev/null; echo "kmemleak-cleared"	# an earlier run's leaks are its own

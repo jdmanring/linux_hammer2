@@ -221,6 +221,7 @@ K=/tmp/h2empty.klog
 sh /tmp/kmsg-stream.sh --stop
 sh /tmp/kmsg-stream.sh --start > $K 2>&1 &
 KPID=$!
+sh /tmp/kmsg-stream.sh --started $K
 klog() { grep -c "$1" $K; }
 echo "mounts-before $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 
@@ -314,7 +315,7 @@ timeout 60 umount /mnt/m 2>/dev/null
 echo "mounts-after $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 sync
-echo "stream $(sh /tmp/kmsg-stream.sh --end $K)"
+sh /tmp/kmsg-stream.sh --end $K
 kill $KPID 2>/dev/null
 GUEST
 

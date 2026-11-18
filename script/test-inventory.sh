@@ -812,7 +812,8 @@ fi
 # dmesg -w retries without a word (util-linux dmesg.c, read_kmsg_one()) and
 # cat stops at unseen. kmsg-stream.sh is the one reader: it says in the
 # stream when records were lost, and its --end prints whether the stream is
-# whole. A harness that starts it must call --end, carry the refusal, and
+# whole. A harness that starts it must wait for its marker with --started
+# before it prints a line, call --end, carry the refusal, and
 # neither clear nor read the ring, which no marker of its own vouches for;
 # no other script may stream the log. A `pkill` of an old reader reads
 # nothing and is not one. What this cannot read is whether each count sits
@@ -825,6 +826,7 @@ stream_rule() {	# stream_rule <harness>: prints why it fails the rule, nothing w
 	code=$(command grep -v '^[[:space:]]*#' "$1")
 	printf '%s\n' "$code" | command grep -E "$STREAM_READER" | command grep -qv pkill &&
 		echo "a reader other than kmsg-stream.sh"
+	printf '%s\n' "$code" | command grep -qF 'kmsg-stream.sh --started' || echo "no --started"
 	printf '%s\n' "$code" | command grep -qF 'kmsg-stream.sh --end' || echo "no --end"
 	printf '%s\n' "$code" | command grep -qF "$STREAM_REFUSE" || echo "no refusal when the stream lost records"
 	printf '%s\n' "$code" | command grep -qE 'dmesg (-[cC]|--clear)|dmesg *\|' && echo "a read or a clear of the ring"
@@ -857,6 +859,7 @@ if [ -n "$stream_first" ]; then
 	stream_tmp=$(mktemp -d) || exit 2
 	for m in '{ while ((i = index($0, "kmsg-stream.sh --end")) > 0) $0 = substr($0, 1, i - 1) "kmsg-stream.sh --stop" substr($0, i + 20); print }::no --end::every --end dropped' \
 	    'index($0, rf) { next } { print }::no refusal when the stream lost records::the refusal dropped' \
+	    'index($0, "kmsg-stream.sh --started") { next } { print }::no --started::every --started dropped' \
 	    '{ print } END { print "dmesg -w > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dmesg -w reader appended' \
 	    '{ print } END { print "cat /dev/kmsg > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a cat reader appended' \
 	    '{ print } END { print "n=$(dmesg | grep -c BUG:)" }::a read or a clear of the ring::a ring count appended'; do
@@ -880,8 +883,8 @@ if [ -n "$stream_first" ]; then
 		fail=$((fail + 1)); }
 	rm -rf "$stream_tmp"
 fi
-[ "$nstreamctl" = 6 ] || {
-	echo "  FAIL $nstreamctl stream control(s) ran, not the 6 the gate lists"
+[ "$nstreamctl" = 7 ] || {
+	echo "  FAIL $nstreamctl stream control(s) ran, not the 7 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it
