@@ -1978,12 +1978,11 @@ detach_disks
 # Every count the checks below read comes from the stream of the guest's
 # kernel log. The klog is a prefix of the record sequence, so a count holds
 # every record before the newest line the reader had written when it read.
-# --end writes a marker and waits for the reader to write it, so a count
-# read after it holds every record before the marker: each guest half's
-# finish reads after one, and so does each count a check passes on zero
-# that is read straight after the act whose lines it counts. The other
-# zero-pass counts read after a wait for a later line, a quiet interval or
-# a fixed sleep. A stream that is not whole is a run this script cannot read, refused
+# Every read goes through kmsg-stream.sh --read, which writes a marker and
+# waits for the reader to write it, so a count holds every record written
+# before it was read. A read whose marker did not arrive in 30 s leaves a
+# lag file the next --end refuses, and each guest half's last --end
+# follows its last read. A stream that is not whole is a run this script cannot read, refused
 # before any check can fail on what survived; so is a guest that finished
 # without saying.
 sw=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)

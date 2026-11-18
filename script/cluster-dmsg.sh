@@ -1043,8 +1043,8 @@ stamp=$(date +%Y%m%d-%H%M%S)
 scp -q "$GUEST_SSH:/tmp/h2dmsg.klog" "$FIXDIR/dmsg-run-$stamp.klog" 2>/dev/null && echo "  kept  the guest kernel log beside the images as dmsg-run-$stamp.klog"
 { echo "guest-kernel $guest_rel"; echo "module-vermagic $(modinfo -F vermagic "$KO" 2>/dev/null)"; cat "$W/out"; } > "$FIXDIR/dmsg-run-$stamp.out" 2>/dev/null
 # Every count the checks below read comes from the stream of the guest's
-# kernel log, and finish() writes the stream's end marker before the last of
-# them. A stream that is not whole is a run this script cannot read, refused
+# kernel log through --read, and each run's last end marker, in finish() or
+# in the arm that exits before it, follows the last of them. A stream that is not whole is a run this script cannot read, refused
 # before any check can fail on what survived; a guest half that finished
 # (exit 0) without saying is refused the same way.
 st=$(sed -n 's/^stream //p' "$W/out" | command grep -vx whole | head -1)
