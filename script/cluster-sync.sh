@@ -1646,9 +1646,6 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 		[ "$(verdicts)" != "$v0" ] && break
 		sleep 0.05; n=$((n + 1))
 	done
-	# Read after the end marker: a verdict the reader has yet to write
-	# would read as a cut inside the pass.
-	sh /tmp/kmsg-stream.sh --end $K
 	echo "crash-copied $(( $(copied) - u1 ))"
 	echo "crash-in-pass $([ "$(verdicts)" = "$v0" ]; echo $?)"
 	echo "crash-last-target $(kl | awk '/syncsnap: target/ { v = $NF } END { print v }')"
@@ -1658,6 +1655,10 @@ if [ "${H2_CRASH:-0}" = 1 ]; then
 	# log dies with it.
 	echo "crash-cut-target $(kl | awk '/syncsnap: begin/ { v = "none" } /syncsnap: target/ { v = $NF } END { print v }')"
 	kl | grep -E 'syncsnap: (begin|stale|target|pass|verify|verified|unverified|newer|end)' | tail -n 12 | sed 's/^/crash-klog /'
+	# This half ends at the cut: its end marker follows its last read, which
+	# waits for the reader, so a verdict not yet written cannot read as a
+	# cut inside the pass and a read that waited out its 30 s is refused.
+	sh /tmp/kmsg-stream.sh --end $K
 	echo "crash-armed"
 	sleep 600
 	exit 0

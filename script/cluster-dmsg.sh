@@ -881,10 +881,10 @@ if [ "${H2_DMSG_CLUSTERFD:-0}" = 1 ]; then
 	done
 	echo "fdmount-tasks $n"
 	sleep 1
-	sh /tmp/kmsg-stream.sh --end $K
 	echo "fdmount-lockdep $(kl | grep -c 'possible recursive locking detected')"
 	echo "fdmount-mntlk-lines $(kl | grep -c '(h2_mnt)')"	# hammer2_mntlk's lockdep name
 	echo "fdmount-badfd $(kl | grep -c 'bad cluster_fd')"
+	sh /tmp/kmsg-stream.sh --end $K	# this arm exits below without finish: after its last read
 	if ! kill -0 $MPID 2>/dev/null; then
 		# The link is up when its two message threads run, which only the
 		# reconnect tail starts; the work runs after the mount returns.
