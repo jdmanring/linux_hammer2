@@ -909,11 +909,6 @@ finish() {
 	timeout 60 umount /mnt/h2c; timeout 60 umount /mnt/h2s; timeout 60 umount /mnt/h2m
 	echo "cluster-umount ok"
 	echo "cluster-threads-after $(ps -eo comm | grep -c '^h2nod')"
-	# The teardown's lines (the scrap summary, the chains kept modified)
-	# print from the unmount above, and no line read since was printed after
-	# them, so the reader can still be behind them: every count from here on
-	# reads the klog after the end marker, which follows them.
-	sh /tmp/kmsg-stream.sh --end $K
 	# The per-chain scrap print is rate-limited, so its lines cap a count at
 	# the burst: two KASAN runs on 2026-11-09 printed ten each for thousands
 	# scrapped, with no "suppressed" line, which prints only on a later call.
@@ -942,6 +937,9 @@ finish() {
 	# the port's nor fail the run on their own.
 	echo "kernel-warnings $(kl | grep -E 'WARNING|BUG:|UBSAN:|circular locking|possible recursive' | grep -vc 'drivers/gpu/drm/')"
 	echo "gpu-warnings $(kl | grep -c 'WARNING.*drivers/gpu/drm/')"
+	# After the last read of the run, so a read that waited out its 30 s,
+	# the teardown's counts above among them, is refused.
+	sh /tmp/kmsg-stream.sh --end $K
 	# Before rmmod, so the report's %pS resolves the module's own symbols. The
 	# scan used to follow rmmod, where those symbols print as addresses and only
 	# a process named hammer2 could match, and to run without the wait the

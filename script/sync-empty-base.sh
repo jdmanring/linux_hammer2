@@ -318,10 +318,11 @@ timeout 60 umount /mnt/m 2>/dev/null
 echo "mounts-after $(( $(mount 2>/dev/null | grep -c ' type hammer2') ))"
 timeout 120 rmmod hammer2 && echo "rmmod ok"
 sync
-# A second end marker after the teardown, so the warnings count covers the
-# unmounts and the unload and a record lost during them is a stream line.
-sh /tmp/kmsg-stream.sh --end $K
+# A second end marker after the teardown and the last read, so a record lost
+# during the unmounts and the unload, or a read that waited out its 30 s, is
+# a stream line.
 echo "kernel-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:')"
+sh /tmp/kmsg-stream.sh --end $K
 kill $KPID 2>/dev/null
 GUEST
 

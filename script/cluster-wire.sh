@@ -1475,7 +1475,6 @@ fi
 sleep 2
 echo "h2wire end of unload" > /dev/kmsg
 echo "klog-alive $(klog 'h2wire end of unload')"
-sh /tmp/kmsg-stream.sh --end $K
 # every snapshot this side took, by whether the root it copied was its
 # element's as last flushed (a power-cut guest's first boot is in its
 # precut klog, not counted here)
@@ -1499,6 +1498,8 @@ echo "kernel-warnings $(kl | grep -v -e 'MAX_LOCKDEP_ENTRIES too low' -e 'hammer
 echo "lockdep-saturated $(klog 'MAX_LOCKDEP_ENTRIES too low')"
 # the connection device's own refusals, warnings by design
 echo "conn-warnings $(kl | grep 'WARNING' | grep -c -E 'hammer2_io_getblk_conn|hammer2_io\.c:')"
+# after the run's last read, so a read that waited out its 30 s is refused
+sh /tmp/kmsg-stream.sh --end $K
 echo "threads-final $(threads)"
 sh /tmp/kmsg-stream.sh --stop
 GUEST

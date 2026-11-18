@@ -209,8 +209,8 @@ echo 256 > /sys/module/hammer2/parameters/debug 2>/dev/null
 echo "debug $(cat /sys/module/hammer2/parameters/debug 2>/dev/null)"
 # The end of every mode: warnings, kmemleak before and after the unload.
 finish() {
-sh /tmp/kmsg-stream.sh --end $K
 echo "kernel-warnings $(kl | grep -c -E 'WARNING|BUG:|UBSAN:|KASAN|circular locking|possible recursive')"
+sh /tmp/kmsg-stream.sh --end $K	# after the last read, so a read that waited out its 30 s is refused
 # Before rmmod, so the report's %pS resolves the module's own symbols, and
 # after the wait the scanner's age rule needs (kmemleak.c MSECS_MIN_AGE,
 # 5000 ms), as cluster-sync.sh does. The message core allocates a state and

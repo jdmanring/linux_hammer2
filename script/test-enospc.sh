@@ -992,6 +992,10 @@ out=$(ssh "$GUEST_SSH" '
 	# register dump with nothing above it, on a guest since reset.
 	kl | tail -150 | command sed "s/^[0-9,;]*;//"
 	echo "=== log tail ends"
+	# The counts above follow the --end after the unmount, and a stuck one can
+	# still print after it; a read among them that waited out its 30 s is
+	# refused here, before the unload prints.
+	sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log
 	timeout 30 rmmod hammer2; echo "rmmod $?"
 	kill $kpid 2>/dev/null
 ' 2>&1)
