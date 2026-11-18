@@ -26207,3 +26207,130 @@ through a helper function or one split by a line continuation is
 outside what it reads, as is a check inside a branch that never runs;
 each of the twenty-one was read by hand, and the rule claims order on
 the counts it can see and nothing more.
+
+## A kernel log stream that lost records, 2026-11-17
+
+Five harnesses count kernel reports and their own lines from a stream
+of `/dev/kmsg` rather than the ring, because a run outgrows the ring
+many times over: `cluster-sync.sh`, `cluster-wire.sh`,
+`cluster-dmsg.sh`, `sync-empty-base.sh` and `test-enospc.sh`. The
+section above left them under a deferral. A stream loses records too.
+A reader that falls a whole ring behind gets `EPIPE` once from the
+read and resumes at the oldest record left (`kernel/printk/printk.c`,
+`devkmsg_read()`, in the kernel of record); `dmesg -w`, the reader of
+the first four, retries that read without a word (util-linux 2.42.4
+`sys-utils/dmesg.c`, `read_kmsg_one()`), and `cat`, the reader of
+`test-enospc.sh`, stops at it and leaves a capture that reads as whole
+up to the point it stopped.
+
+Measured on `h2debug-7.3tls` with the guest's 8 MiB ring: a `dmesg -w`
+reader stopped with `SIGSTOP` across 100000 records of about a hundred
+bytes, then resumed, held 74896 of them in one run and 74897 in the
+next, with the lines written before and after the flood both present
+and nothing printed about the loss (`kmsg-stream-run-bdeaf6b9.log`,
+`kmsg-stream-run-ebabe16d.log`, the old-reader arm).
+
+`script/kmsg-stream.sh` is the reader now. It reads the raw records,
+whose second field is the sequence number, through `cat` under awk,
+and prints them in the layout `dmesg` prints by default from a start
+marker that carries a fresh UUID, so a fresh read of the ring, which
+replays every earlier run in the boot, contributes nothing before it.
+A skipped number prints a line naming the records lost, a reader that
+ends prints a line, and `--end` writes an end marker and prints
+`stream whole` only when it arrives and no such line was printed.
+Its selftest renders a fixture holding an embedded newline, a tab, a
+backslash, control bytes, a dictionary line and a six-digit seconds
+stamp, and compares the expected text with what util-linux prints for
+the same records through `dmesg -K`: 2.42.4 on the host and 2.42.2 on
+the guest print the same bytes.
+
+The guest control, `kmsg-stream-run.sh` with `kmsg-stream-guest.sh`,
+at `ebabe16d` (`kmsg-stream-run-ebabe16d.log`): the guest's whole ring
+through `--render`, 911 records and 768 dictionary lines, rendered as
+911 lines byte-identical to the guest's own `dmesg`; a reader that
+keeps up with the same flood, `stream whole` with 100000 of 100000; a
+reader whose `cat` is stopped across it, `stream COULD-NOT-READ` with
+`cat: /dev/kmsg: Broken pipe` in the stream; `--stop`, the reader and
+its `cat` gone. The first run of this control, at `bdeaf6b9`, found a
+defect in the reader: with no start marker it checked the first record
+against sequence zero before reading one, so the ring read from boot,
+which begins at record 0, printed a loss; `ebabe16d` fixed it and the
+selftest reads a stream from record 0, which fails on the earlier
+reader.
+
+`b5b5be30` moves the five onto it. Each ends its counts with `--end`
+and refuses with exit 2 on any `stream` line that is not whole, before
+any check reads a count; a guest half that finished without one is
+refused the same way. `cluster-wire.sh` vouches for the cut guest's
+stream before its power cut and for a live stream before `restart.sh`
+truncates it, reads its source-gate counts from the stream where it
+read the ring, and asks whether the boot already holds a KASAN report
+from taint `B`, which every report sets in `end_report()`
+(`mm/kasan/report.c`), where it asked a ring that may have dropped the
+report. `test-enospc.sh` no longer counts the earlier runs a fresh read
+of the ring replays. `test-inventory.sh` holds a script that starts the
+reader to `--started`, `--end`, the refusal and no read or clear of
+the ring, refuses any other script that streams the log, and runs
+seven controls. Those print nothing when they pass, so
+`inventory-stream-controls-b7e2ff6e.out` shows them able to fail: each
+of the rule's five checks removed from a copy of the gate in a
+worktree fails that copy on its own control, exit 1, and the gate at
+the tip run over `b5b5be30^` refuses all five harnesses as streaming
+without the reader.
+
+The first fleet batch, at `10f5fab3` (`stream-gates-run-10f5fab3.log`),
+refused every run, the plain ones included, on two defects of
+`b5b5be30`. Each harness printed `stream` before the line `--end`
+prints, which already begins with it, so the host read `stream stream
+whole`, which is not whole, and exited 2
+(`stream-gates-cluster-dmsg-10f5fab3.out` and the others; in
+`cluster-wire.sh` the line it requires was missing). And
+`test-enospc.sh` wrote its run marker as soon as it had started the
+reader in the background, before the reader's start marker reached the
+log, so the run marker fell before the stream and each count read
+`COULD-NOT-RUN the run marker is not in the capture`
+(`stream-gates-enospc-plain-10f5fab3.out`). The flood arm read `ok`
+there, its refusal naming `cat: /dev/kmsg: Broken pipe`; the plain
+arm's exit 2 and the plant and mutant arms' failures are what showed
+the subject broken, which is why the four arms are read together.
+`8a095257` prints `--end`'s line as it stands, under a prefix where a
+harness reads several, and adds `--started`, which waits up to 10 s
+for the start marker to reach the klog; every harness calls it after
+`--start`, and the inventory rule requires it with a seventh control.
+
+The second batch, at `8a095257` (`stream-gates-run-8a095257.log`), on
+`h2debug-7.3tls`. The control through `test-enospc.sh`: plain exit 0;
+plant exit 1, the planted warning counted; flood exit 2, refused with
+`the guest's kernel log stream lost records: COULD-NOT-READ: cat:
+/dev/kmsg: Broken pipe`; mutant exit 0, a reader that reopens
+`/dev/kmsg` and checks no sequence number reading the same flood as
+whole. Each arm read `ring-flood: ok` (`stream-gates-enospc-*-8a095257.out`).
+The other four passed: `sync-empty-base.sh` 18 checks,
+`cluster-dmsg.sh` 87, `cluster-sync.sh` 60, `cluster-wire.sh` 36, none
+failed. Two keep their guest half's output, and it holds the verdict:
+`fixtures/dmsg-run-20261117-181928.out` has `stream whole`,
+`fixtures/wire-run-20261117-182801.out` has `A stream whole` and `B
+stream whole`. `cluster-sync.sh` and `sync-empty-base.sh` keep it
+nowhere, so a pass of theirs could not show that its stream was read
+rather than skipped. `b7e2ff6e`, which touches those two scripts and
+nothing else, has each print the count of stream lines it passed on,
+and both ran again there (`stream-gates-run-b7e2ff6e.log`):
+`sync-empty-base.sh` 18 checks and `cluster-sync.sh` 60, none failed,
+each printing `the guest's kernel log stream is whole: 1 stream
+line(s), each whole` (`stream-gates-{sync-empty-base,cluster-sync}-b7e2ff6e.out`).
+One is the count a default run of either makes: `cluster-sync.sh`
+starts a second stream only on the restart of an `H2_CRASH=1` run,
+which this batch did not take.
+
+What this reaches back to: a `dmesg -w` capture carries no sequence
+numbers, so no kept klog of these five can say whether it lost
+records. A loss needs a reader stalled for a whole ring's worth of
+output, 8 MiB since 2026-11-16 and 128 KiB before it.
+
+What the rule cannot read: whether each count sits before an `--end`,
+and whether the refusal comes before the run's failure exit, which the
+five decide on the host from what the guest printed in shapes too
+unlike for one text rule. Each was read by hand. The renderer matches
+`dmesg` under the C locale, which is how the harnesses run it; `dmesg`
+in a UTF-8 locale prints a valid multibyte character where the reader
+keeps the kernel's escape.
