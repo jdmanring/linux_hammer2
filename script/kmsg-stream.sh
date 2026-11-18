@@ -72,7 +72,7 @@ EOF
 # selftest reads it: whole only with both markers in the klog and no line
 # from the reader saying it lost records or ended, nor from cat.
 verdict() {	# verdict <klog> <end marker>
-	if grep -qF "] $2" "$1" && grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$1" && ! grep -q '^h2kmsg: \|^cat: ' "$1"; then
+	if grep -q "^\[ *[0-9]*\.[0-9]*\] $2\$" "$1" && grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$1" && ! grep -q '^h2kmsg: \|^cat: ' "$1"; then
 		echo "stream whole"
 	else
 		why=$(grep -m1 '^h2kmsg: \|^cat: ' "$1")
@@ -120,7 +120,7 @@ started() {	# started <klog>: the marker of a reader now running is in it
 	# ring-flood.sh installs this file, which runs once, for its control
 	test -x /var/lib/h2stream-flood && /var/lib/h2stream-flood
 	echo "$m" > /dev/kmsg
-	n=0; until grep -qF "] $m" "$k" || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
+	n=0; until grep -q "^\[ *[0-9]*\.[0-9]*\] $m\$" "$k" || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
 	verdict "$k" "$m"
 	exit 0 ;;
 --render)
@@ -193,7 +193,7 @@ E='h2kmsg-end 99999999-0000-0000-0000-000000000000'
 st="[    1.000000] $S"; en="[    2.000000] $E"
 for c in "whole:$st|[    1.500000] a line|$en" "COULD-NOT-READ: h2kmsg: COULD-NOT-READ: records 3 to 4:$st|h2kmsg: COULD-NOT-READ: records 3 to 4 were lost|$en" \
     "COULD-NOT-READ: h2kmsg: the reader ended:$st|h2kmsg: the reader ended" "COULD-NOT-READ: cat: /dev/kmsg: Broken pipe:$st|cat: /dev/kmsg: Broken pipe" \
-    "COULD-NOT-READ: the end marker did not arrive:$st" "COULD-NOT-READ: the start marker is not in the klog:[    1.000000] an earlier line|$en"; do
+    "COULD-NOT-READ: the end marker did not arrive:$st" "COULD-NOT-READ: the end marker did not arrive:$st|${en}0" "COULD-NOT-READ: the start marker is not in the klog:[    1.000000] an earlier line|$en"; do
 	want=${c%%:\[*}; printf '%s\n' "${c#"$want":}" | tr '|' '\n' > "$T/v"
 	got=$(verdict "$T/v" "$E")
 	case "$got" in
