@@ -26578,8 +26578,9 @@ series closes the class by construction rather than by a fourth sweep.
 since, and prints the klog. A wait that runs out after 30 s leaves
 `<klog>.lag`, which the verdict refuses and which spares every later read
 its wait; `--started` removes it. A read after a run's last `--end` that
-runs out is refused by nothing, and needs nothing: that `--end` vouched
-for the klog up to its marker, which is all such a count covers. The
+runs out leaves a lag file no verdict reads, so the run's last act on its
+klog must be an `--end`; review round 1 below found it was not, in any
+of the five. The
 selftest drives the wait with a file for the device and a stand-in
 reader half a second behind. A line written before the read reads 0 at
 once and 1 when the read returns, and with no reader the wait leaves the
@@ -26630,3 +26631,41 @@ two `stream whole` on each guest and the host's precut stream whole
 0 files on B, and `B first-stream whole`
 (`fixtures/wire-run-20261118-090947.out`). None failed, and each count is
 the one the batch at `97385a85` or `2f03c966` read.
+
+Review round 1 (`review-read-round1.md`, FIX-FIRST; dispositions in
+`review-read-round1-dispositions.md`). `6dab8d76` broke a pipeline in
+`test-enospc.sh`: the lockdep report window's first `sed` read a file
+named `/tmp/kms` and lost the pipe to the second, which became a command
+reading the ssh session's stdin. dash and busybox ash parse it as both
+script and remote block (`posix-e9228881.out`), and all four enospc arms
+of the batch above print `sed: can't read /tmp/kms` where a fired report
+would be. `68440b6d` restores the pipe. On the host, the window cut from
+each tree and run with a klog holding a lockdep banner: at `e9228881` it
+prints the error and the line fed to its stdin, at `ed5a17bd` the banner
+and the two lines after it (`report-window-check-ed5a17bd.out`).
+`3ddbc07f` has `test-inventory.sh` refuse a filter indented as a
+pipeline's continuation after a line that does not continue: 26 such
+lines in `script/`, none refused; the window at `e9228881` is refused at
+line 841, and the rule with its predecessor test disabled, or with a
+pattern that matches nothing, fails the gate through its control or its
+population check (`orphan-rule-controls-ed5a17bd.out`). All five
+harnesses read counts after their run's last `--end`, and in
+`test-enospc.sh` those follow an unmount that, stuck, can still print.
+`ed5a17bd` makes the last act on each run's klog an `--end`; no gate
+checks that order, and the sweep that found the reads is
+`block-end-ed5a17bd.out`.
+
+The batch at `ed5a17bd` (`stream-gates-run-ed5a17bd.log`), on
+`h2debug-7.3tls`: the enospc control plain exit 0, plant exit 1, flood
+exit 2 with the refusal printed and the plant gone from the ring, mutant
+exit 0, each arm with three stream lines where the batch above had two,
+and no `/tmp/kms` line. `sync-empty-base.sh` 18 checks, two stream lines
+each whole; `cluster-dmsg.sh` 87, five `stream whole`
+(`fixtures/dmsg-run-20261118-131930.out`); `cluster-sync.sh` 60, five
+stream lines each whole; `cluster-wire.sh` 36, two `stream whole` on each
+guest (`fixtures/wire-run-20261118-132817.out`); under `H2_WIRE_CUT=slave`
+44, the same and the host's precut stream whole
+(`fixtures/wire-run-20261118-133021.out`); under
+`H2_WIRE_SNAPROUTE=control` 36, 36 of 36 snapshots refused `EOPNOTSUPP`
+and `B first-stream whole` (`fixtures/wire-run-20261118-133512.out`).
+None failed.
