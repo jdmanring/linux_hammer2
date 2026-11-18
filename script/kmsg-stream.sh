@@ -68,6 +68,28 @@ BEGIN {
 EOF
 )
 
+# --end's verdict on a klog whose end marker it wrote, apart so the
+# selftest reads it: whole only with both markers in the klog and no line
+# from the reader saying it lost records or ended, nor from cat.
+verdict() {	# verdict <klog> <end marker>
+	if grep -qF "] $2" "$1" && grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$1" && ! grep -q '^h2kmsg: \|^cat: ' "$1"; then
+		echo "stream whole"
+	else
+		why=$(grep -m1 '^h2kmsg: \|^cat: ' "$1")
+		if [ -n "$why" ]; then :
+		elif ! grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$1"; then why="the start marker is not in the klog"
+		else why="the end marker did not arrive in 30 s"; fi
+		echo "stream COULD-NOT-READ: $why"
+	fi
+}
+
+started() {	# started <klog>: the marker of a reader now running is in it
+	for u in $(pgrep -af 'h2kmsg[-]start ' | grep -o 'h2kmsg-start [0-9a-f-]*' | sed 's/.* //'); do
+		grep -qF "] h2kmsg-start $u" "$1" 2>/dev/null && return 0
+	done
+	return 1
+}
+
 # The selftest is named in the form pre-push-check.sh and CI find it by.
 [ "${1:-}" = "--selftest" ] || case ${1:-} in
 --start)
@@ -78,10 +100,14 @@ EOF
 	# --start runs in the background and writes its marker on its own
 	# time, and a line the caller prints before the marker is before the
 	# stream: a run marker written just after --start was lost that way.
-	# So a caller waits here, up to 10 s, for the marker to reach the
-	# klog; a reader that never started is refused by --end.
+	# So a caller waits here, up to 10 s, for the marker of a reader now
+	# running, read from its command line, to reach the klog; an earlier
+	# run's marker left in a klog the new reader has yet to truncate does
+	# not count. A wait that runs out says so as a stream line, which every
+	# caller refuses.
 	k=${2:-}; n=0
-	until grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$k" 2>/dev/null || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+	until started "$k" || [ $n -ge 100 ]; do sleep 0.1; n=$((n + 1)); done
+	started "$k" || echo "stream COULD-NOT-READ: no running reader's start marker reached $k in 10 s"
 	exit 0 ;;
 --end)
 	k=${2:-}
@@ -91,11 +117,7 @@ EOF
 	test -x /var/lib/h2stream-flood && /var/lib/h2stream-flood
 	echo "$m" > /dev/kmsg
 	n=0; until grep -qF "] $m" "$k" || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
-	if grep -qF "] $m" "$k" && grep -q '^\[ *[0-9]*\.[0-9]*\] h2kmsg-start ' "$k" && ! grep -q '^h2kmsg: ' "$k"; then
-		echo "stream whole"
-	else
-		echo "stream COULD-NOT-READ: $(grep -m1 '^h2kmsg: \|^cat: ' "$k" || echo "the end marker did not arrive in 30 s")"
-	fi
+	verdict "$k" "$m"
 	exit 0 ;;
 --render)
 	exec awk -v start= -v src='exec cat' "$PROG" ;;
@@ -161,5 +183,31 @@ printf '%s\n' '6,0,1,-;first' '6,1,2,-;second' > "$T/zero"
 awk -v start= -v src="cat $T/zero" "$PROG" > "$T/zerok"
 if command grep -q '^h2kmsg: COULD' "$T/zerok"; then echo "  FAIL a stream from sequence 0 printed a gap:"; sed 's/^/        /' "$T/zerok"; fail=1
 else echo "  ok   a stream from sequence 0 prints no gap"; fi
+# --end's verdict, on a klog per case: whole only with both markers and
+# nothing from the reader or cat between them.
+E='h2kmsg-end 99999999-0000-0000-0000-000000000000'
+st="[    1.000000] $S"; en="[    2.000000] $E"
+for c in "whole:$st|[    1.500000] a line|$en" "COULD-NOT-READ: h2kmsg: COULD-NOT-READ: records 3 to 4:$st|h2kmsg: COULD-NOT-READ: records 3 to 4 were lost|$en" \
+    "COULD-NOT-READ: h2kmsg: the reader ended:$st|h2kmsg: the reader ended" "COULD-NOT-READ: cat: /dev/kmsg: Broken pipe:$st|cat: /dev/kmsg: Broken pipe" \
+    "COULD-NOT-READ: the end marker did not arrive:$st" "COULD-NOT-READ: the start marker is not in the klog:[    1.000000] an earlier line|$en"; do
+	want=${c%%:\[*}; printf '%s\n' "${c#"$want":}" | tr '|' '\n' > "$T/v"
+	got=$(verdict "$T/v" "$E")
+	case "$got" in
+	"stream $want"*) echo "  ok   a klog of $(wc -l < "$T/v") line(s) reads $got" ;;
+	*) echo "  FAIL a klog of $(wc -l < "$T/v") line(s) read \"$got\", not stream $want"; fail=1 ;;
+	esac
+done
+# --started waits for the marker of a reader now running: a stand-in whose
+# command line carries one, beside an earlier run's marker in the klog.
+U=0000aaaa-1111-2222-3333-444455556666
+sh -c 'sleep 30; :' h2kmsg "h2kmsg-start $U" & sp=$!
+sleep 0.2
+echo "[    1.000000] h2kmsg-start 0000bbbb-1111-2222-3333-444455556666" > "$T/s"
+if started "$T/s"; then echo "  FAIL an earlier run's marker counts as the running reader's"; fail=1
+else echo "  ok   an earlier run's marker does not count as the running reader's"; fi
+echo "[    2.000000] h2kmsg-start $U" >> "$T/s"
+if started "$T/s"; then echo "  ok   the running reader's marker counts"
+else echo "  FAIL the running reader's marker does not count"; fail=1; fi
+kill "$sp" 2>/dev/null
 [ "$fail" = 0 ] || { echo "kmsg-stream: selftest FAILED"; exit 1; }
 echo "kmsg-stream: selftest ok"
