@@ -816,7 +816,7 @@ fi
 # before it prints a line, call --end, carry the refusal, and
 # neither clear nor read the ring, which no marker of its own vouches for;
 # no other script may stream the log. A reader is any use of /dev/kmsg but a
-# write to it (a marker), dmesg following, or journalctl; a `pkill` of an
+# write to it (a marker), /proc/kmsg, dmesg following, or journalctl; a `pkill` of an
 # old reader reads nothing and is not one. Nor can this tell a second
 # stream no count reads from one a count reads without its --end, so a
 # harness may start the reader more than once. What this cannot read is whether each count sits
@@ -824,7 +824,7 @@ fi
 # exit: the stream's harnesses judge on the host from what the guest
 # printed, in shapes too unlike one another for one text rule.
 STREAM_REFUSE="the guest's kernel log stream lost records"
-STREAM_READER='dmesg +(-[A-Za-z]*[wW]|--follow)|journalctl|/dev/kmsg'
+STREAM_READER='dmesg +(-[A-Za-z]*[wW]|--follow)|journalctl|/(dev|proc)/kmsg'
 # A pkill names the reader it stops, so the command is cut from its line,
 # up to the next ; & or |, and the rest of the line is still read; so is a
 # write to /dev/kmsg, which every marker is.
@@ -874,6 +874,7 @@ if [ -n "$stream_first" ]; then
 	    '{ print } END { print "dmesg > /tmp/x.ring" }::a read or a clear of the ring::a ring snapshot to a file appended' \
 	    '{ print } END { print "dd if=/dev/kmsg of=/tmp/x.klog &" }::a reader other than kmsg-stream.sh::a dd reader appended' \
 	    '{ print } END { print "journalctl -kf > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a journalctl reader appended' \
+	    '{ print } END { print "cat /proc/kmsg > /tmp/x.klog &" }::a reader other than kmsg-stream.sh::a /proc/kmsg reader appended' \
 	    '{ gsub(/sh \/tmp\/kmsg-stream.sh --start >/, "tail -f /dev/kmsg >"); print }::a reader other than kmsg-stream.sh::its reader swapped for tail -f'; do
 		prog=${m%%::*}; rest=${m#*::}; want=${rest%::*}; how=${rest#*::}
 		nstreamctl=$((nstreamctl + 1))
@@ -897,8 +898,8 @@ if [ -n "$stream_first" ]; then
 	done
 	rm -rf "$stream_tmp"
 fi
-[ "$nstreamctl" = 13 ] || {
-	echo "  FAIL $nstreamctl stream control(s) ran, not the 13 the gate lists"
+[ "$nstreamctl" = 14 ] || {
+	echo "  FAIL $nstreamctl stream control(s) ran, not the 14 the gate lists"
 	fail=$((fail + 1)); }
 
 # A harness that scans kmemleak must clear it before the load and scan it
