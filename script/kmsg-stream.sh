@@ -83,9 +83,13 @@ verdict() {	# verdict <klog> <end marker>
 	fi
 }
 
+# Only a whole UUID is taken from a command line and only a whole marker
+# line matches it: a shorter token, from any command line that names the
+# marker's word, would match an earlier run's marker that begins with it.
 started() {	# started <klog>: the marker of a reader now running is in it
-	for u in $(pgrep -af 'h2kmsg[-]start ' | grep -o 'h2kmsg-start [0-9a-f-]*' | sed 's/.* //'); do
-		grep -qF "] h2kmsg-start $u" "$1" 2>/dev/null && return 0
+	x='[0-9a-f]\{8\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{12\}'
+	for u in $(pgrep -af 'h2kmsg[-]start ' | grep -o "h2kmsg-start $x" | sed 's/.* //'); do
+		grep -q "^\[ *[0-9]*\.[0-9]*\] h2kmsg-start $u\$" "$1" 2>/dev/null && return 0
 	done
 	return 1
 }
@@ -201,10 +205,13 @@ done
 # command line carries one, beside an earlier run's marker in the klog.
 U=0000aaaa-1111-2222-3333-444455556666
 sh -c 'sleep 30; :' h2kmsg "h2kmsg-start $U" & sp=$!
+# and a command line whose token is a prefix of the earlier run's marker
+sh -c 'sleep 30; :' h2kmsg "h2kmsg-start 0000bbbb" & sq=$!
 sleep 0.2
 echo "[    1.000000] h2kmsg-start 0000bbbb-1111-2222-3333-444455556666" > "$T/s"
 if started "$T/s"; then echo "  FAIL an earlier run's marker counts as the running reader's"; fail=1
-else echo "  ok   an earlier run's marker does not count as the running reader's"; fi
+else echo "  ok   an earlier run's marker does not count as the running reader's, nor for a prefix of it"; fi
+kill "$sq" 2>/dev/null
 echo "[    2.000000] h2kmsg-start $U" >> "$T/s"
 if started "$T/s"; then echo "  ok   the running reader's marker counts"
 else echo "  FAIL the running reader's marker does not count"; fail=1; fi
