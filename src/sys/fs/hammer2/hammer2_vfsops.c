@@ -3097,16 +3097,16 @@ again:
 /*
  * Linux: the sync loop below drops what the chain sync and flush return,
  * as every tree does, and sync(2) returns zero unconditionally in the
- * kernel of record; what syncfs(2) and fsync(2) read is the writeback
- * error sequence, set by a data write's completion and by nothing on the
- * metadata side.  A flush that cannot make room for a PFS root's update
- * on a full volume fails there and nowhere a user reads, so the error is
- * recorded where the kernel's own callers look for it: on the inode's
- * mapping when it has one, on the superblock otherwise.  The kernel's
- * mapping_set_error() records it on the superblock in either case, and
- * the superblock's sequence is what syncfs(2) reads and what fsync(2)
- * reads for the commit it runs, since hammer2_vfs_sync_pmp() returns no
- * error of its own.
+ * kernel of record; syncfs(2) and fsync(2) read the writeback error
+ * sequence, which a data write's completion sets and the metadata side
+ * never does.  A flush that cannot make room for a PFS root's update on
+ * a full volume fails where no user reads, so the error is recorded on
+ * the inode's mapping when it has one, on the superblock otherwise, and
+ * mapping_set_error() puts it on the superblock in either case.  The
+ * superblock's sequence is what syncfs(2) reads and what fsync(2) reads
+ * for its commit, since hammer2_vfs_sync_pmp() returns no error of its
+ * own; hammer2_vfs_sync_devs() records a device's write error there, the
+ * third route.
  */
 static void
 hammer2_sync_error(hammer2_pfs_t *pmp, hammer2_inode_t *ip, int error)
