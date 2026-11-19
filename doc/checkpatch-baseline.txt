@@ -310,6 +310,9 @@
 # 1,679 to 1,680: the prototype of hammer2_io_push_bufs() in hammer2.h
 # leaves its argument unnamed, as every prototype there does. No category
 # is new. See README.kernel-style.md.
+# 1,680 to 1,681: `no spaces at the start of a line` 252 -> 253, the
+# second parameter line of hammer2_enospace_dirty(), the dirty count the
+# fault's debug print reads. No category is new. See README.kernel-style.md.
 23 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -338,7 +341,7 @@
 528 function definition argument 'X' should also have an identifier name
 14 plain inline is preferred over __inline
 4 please, no space before tabs
-252 please, no spaces at the start of a line
+253 please, no spaces at the start of a line
 86 quoted string split across lines
 400 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)

@@ -1078,22 +1078,25 @@ hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact)
  * is the check as it was before the sum.  On the cheap count alone a
  * user's 64 KiB write after syncfs(2) was refused while statfs still
  * reported three blocks free past the reserve, the counter's error the
- * candidate cause.
+ * candidate cause.  *dirtyp is the count the verdict was judged on.
  */
 static int
-hammer2_enospace_dirty(hammer2_inode_t *ip, struct inode *inode, loff_t bytes)
+hammer2_enospace_dirty(hammer2_inode_t *ip, struct inode *inode, loff_t bytes,
+    loff_t *dirtyp)
 {
 	struct backing_dev_info *bdi = inode->i_sb->s_bdi;
 	loff_t cheap, exact;
 	int r;
 
 	cheap = hammer2_bdi_dirty_bytes(bdi, false);
+	*dirtyp = cheap;
 	r = hammer2_vfs_enospace(ip, bytes + cheap, current_cred());
 	if (r < 2)
 		return (r);
 	exact = hammer2_bdi_dirty_bytes(bdi, true);
 	if (exact >= cheap)
 		return (r);
+	*dirtyp = exact;
 	r = hammer2_vfs_enospace(ip, bytes + exact, current_cred());
 	if (r < 2)
 		pr_debug("hammer2: enospace admits %lld bytes on the exact dirty count %lld, the cheap count %lld refused\n",
@@ -1122,6 +1125,7 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct inode *inode = file_inode(iocb->ki_filp);
 	hammer2_inode_t *ip = VTOI(inode);
+	loff_t dirty;
 	ssize_t ret;
 
 	if (READ_ONCE(hammer2_device_error))	/* Linux */
@@ -1146,7 +1150,8 @@ hammer2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	 * found the reserve already eaten by data the count had not seen.
 	 */
 	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */
-	switch (hammer2_enospace_dirty(ip, inode, iov_iter_count(from))) {
+	switch (hammer2_enospace_dirty(ip, inode, iov_iter_count(from),
+	    &dirty)) {
 	case 2:
 		return (-ENOSPC);
 	case 1:
@@ -1563,21 +1568,31 @@ hammer2_vop_fsync(struct file *file, loff_t start, loff_t end,
  * read back with nothing asked while write(2) beside it was refused,
  * so a mapping could take the whole reserve the flush needs.  Any
  * other cgroup's dirty pages are counted as the write entry counts
- * them.
+ * them.  Each verdict is printed for the debug log with the folio size,
+ * the dirty count it was judged on, and the free count and reserve as
+ * the check left them cached; only another caller at a later tick can
+ * move those two before the print reads them.
  */
 static vm_fault_t
 hammer2_page_mkwrite(struct vm_fault *vmf)
 {
 	struct inode *inode = file_inode(vmf->vma->vm_file);
 	hammer2_inode_t *ip = VTOI(inode);
+	loff_t bytes, dirty;
+	int r;
 
 	if (READ_ONCE(hammer2_device_error))	/* Linux */
 		return (VM_FAULT_SIGBUS);
 	if (ip->pmp->rdonly)
 		return (VM_FAULT_SIGBUS);
 	hammer2_pfs_memory_wait(ip->pmp);	/* Linux: hammer2_vfs_modifying() */
-	if (hammer2_enospace_dirty(ip, inode,
-	    folio_size(page_folio(vmf->page))) > 1)
+	bytes = folio_size(page_folio(vmf->page));
+	r = hammer2_enospace_dirty(ip, inode, bytes, &dirty);
+	pr_debug("hammer2: fault %s %lld bytes on the dirty count %lld, %lld free, reserve %lld\n",
+	    r > 1 ? "refuses" : "admits", (long long)bytes, (long long)dirty,
+	    (long long)ip->pmp->free_nominal,
+	    (long long)ip->pmp->free_reserved);
+	if (r > 1)
 		return (VM_FAULT_SIGBUS);
 	return (filemap_page_mkwrite(vmf));
 }
