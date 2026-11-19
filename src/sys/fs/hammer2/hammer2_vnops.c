@@ -1042,13 +1042,16 @@ const struct file_operations hammer2_dir_fops = {
  * wb_stat_error() pages (nr_cpu_ids * WB_STAT_BATCH, 384 on twelve CPUs)
  * from the count either way, so the two counters of one bdi_writeback can
  * be off by twice that, 768 pages.  exact asks wb_stat_sum() instead,
- * which takes each counter's lock and adds every CPU's part.
+ * which takes each counter's lock and adds every CPU's part.  A cheap
+ * read stores that bound, summed over the writebacks it read, in *errp.
  */
 static loff_t
-hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact)
+hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact,
+    loff_t *errp)
 {
 	struct bdi_writeback *wb;
 	s64 pages = 0;
+	loff_t err = 0;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(wb, &bdi->wb_list, bdi_node) {
@@ -1060,46 +1063,74 @@ hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact)
 		} else {
 			pages += wb_stat(wb, WB_RECLAIMABLE);
 			pages += wb_stat(wb, WB_WRITEBACK);
+			err += 2 * wb_stat_error();
 		}
 		wb_put(wb);
 	}
 	rcu_read_unlock();
+	if (errp != NULL)
+		*errp = err << PAGE_SHIFT;
 	return ((loff_t)pages << PAGE_SHIFT);
+}
+
+/*
+ * Linux: whether bytes falls under hammer2_vfs_enospace()'s refusal
+ * threshold on the free count and reserve it cached this tick: the
+ * reserve for a user, half of it for root.  It repeats that function's
+ * test so a margin can be read without a call that prints a refusal;
+ * a drift between the two changes only whether the exact sum is taken,
+ * since the verdict is always hammer2_vfs_enospace()'s.
+ */
+static bool
+hammer2_enospace_under(hammer2_pfs_t *pmp, loff_t bytes)
+{
+	int64_t floor = (int64_t)pmp->free_reserved;
+
+	if (uid_eq(current_cred()->fsuid, GLOBAL_ROOT_UID))
+		floor /= 2;
+	return ((int64_t)(pmp->free_nominal - bytes) < floor);
 }
 
 /*
  * Linux: hammer2_vfs_enospace() for a write of bytes, with what is dirty
  * on the device counted against the reserve beside it.  The cheap count
- * decides unless it refuses; every refusal is judged again on the exact
- * sum, where the kernel's dirty throttle (wb_dirty_limits()) sums only
- * when its threshold is within the counter's error.  The sum is two
- * per-CPU walks per bdi_writeback, taken only after a refusal.  A cheap
- * read below the sum admits on that read and is not judged again, which
- * is the check as it was before the sum.  On the cheap count alone a
- * user's 64 KiB write after syncfs(2) was refused while statfs still
- * reported three blocks free past the reserve, the counter's error the
- * candidate cause.  *dirtyp is the count the verdict was judged on.
+ * decides only where its error cannot change the verdict: a refusal, or
+ * an admission whose margin is within the error, is judged again on the
+ * exact sum, as the kernel's dirty throttle (wb_dirty_limits()) sums when
+ * its threshold is within 2 * wb_stat_error().  The sum is two per-CPU
+ * walks per bdi_writeback, so it is taken only near the threshold.  The
+ * error grows with the CPU count and the reserve with the volume: on 256
+ * CPUs the cheap count can be 144 MiB low, past root's half reserve on a
+ * volume under 5.6 GiB, and an admission on it alone could spend the
+ * space the commit's flush needs.  On the cheap count alone a user's
+ * 64 KiB write after syncfs(2) was also refused while statfs reported
+ * three blocks free past the reserve.  *dirtyp is the count the verdict
+ * was judged on.
  */
 static int
 hammer2_enospace_dirty(hammer2_inode_t *ip, struct inode *inode, loff_t bytes,
     loff_t *dirtyp)
 {
 	struct backing_dev_info *bdi = inode->i_sb->s_bdi;
-	loff_t cheap, exact;
-	int r;
+	loff_t cheap, exact, err;
+	int r, was;
 
-	cheap = hammer2_bdi_dirty_bytes(bdi, false);
+	cheap = hammer2_bdi_dirty_bytes(bdi, false, &err);
 	*dirtyp = cheap;
 	r = hammer2_vfs_enospace(ip, bytes + cheap, current_cred());
-	if (r < 2)
+	if (r < 2 && !hammer2_enospace_under(ip->pmp, bytes + cheap + err))
 		return (r);
-	exact = hammer2_bdi_dirty_bytes(bdi, true);
-	if (exact >= cheap)
+	exact = hammer2_bdi_dirty_bytes(bdi, true, NULL);
+	if (r < 2 ? exact <= cheap : exact >= cheap)
 		return (r);
 	*dirtyp = exact;
+	was = r;
 	r = hammer2_vfs_enospace(ip, bytes + exact, current_cred());
-	if (r < 2)
+	if (was > 1 && r < 2)
 		pr_debug("hammer2: enospace admits %lld bytes on the exact dirty count %lld, the cheap count %lld refused\n",
+		    (long long)bytes, (long long)exact, (long long)cheap);
+	else if (was < 2 && r > 1)
+		pr_debug("hammer2: exact sum refuses %lld bytes on the dirty count %lld, the cheap count %lld admitted\n",
 		    (long long)bytes, (long long)exact, (long long)cheap);
 	return (r);
 }
