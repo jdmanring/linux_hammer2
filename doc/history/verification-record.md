@@ -26779,3 +26779,31 @@ as at `e8864cb8` with line numbers set aside; the compile database 24
 entries for `hammer2-y`'s 24. `3afd0059` corrects
 `hammer2_sync_error()`'s comment, which named two of the three places a
 sync error is recorded.
+
+Correction to this entry's ruling, read against the kernel of record.
+"Both are the reserve judging page by page within the counter's error"
+is true, but the error was compared with the reserve on this guest
+alone. `hammer2_enospace_dirty()` judges on the exact sum only after the
+cheap count refuses (`hammer2_vnops.c:1093-1096`), so a cheap read that
+admits is never checked, however close it sits to the threshold. Each
+counter's cheap read can be off by up to `wb_stat_error()`,
+`nr_cpu_ids * WB_STAT_BATCH` pages (`include/linux/backing-dev.h:82-88`),
+with `WB_STAT_BATCH` at `8*(1+ilog2(nr_cpu_ids))`
+(`include/linux/backing-dev-defs.h:41`), and the dirty count adds two
+such counters per `bdi_writeback`. The error grows with the CPU count;
+the reserve is a twentieth of the volume (`hammer2_vfsops.c:1549`), and
+root is refused under half of it (`:2426`). On twelve CPUs the two
+counters can be off by 768 pages, 3 MiB. On 256 CPUs the batch is 72
+and the two can be off by 36,864 pages, 144 MiB, which is more than
+root's half reserve on any volume under 5.6 GiB, the guest's 4 GiB test
+volumes among them. There a fill admitted inside the error can take the
+space the commit's flush needs, and nothing measured here says it
+cannot. The kernel's dirty throttle meets the same error by summing
+exactly whenever its threshold is within `2 * wb_stat_error()`
+(`wb_dirty_limits()`, `mm/page-writeback.c:1681-1683`). The gate is
+kept and the harness's check stands. What is withdrawn is the reading
+that an error the dirty count's comment states needs no change: the
+admission is an error the check can close, and the next change to
+`hammer2_enospace_dirty()` re-judges an admission whose margin is
+within the error on the exact sum, with a probe inside that margin as
+its reading and the same build without the new branch as its control.
