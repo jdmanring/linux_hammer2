@@ -26698,3 +26698,84 @@ The two arms at `44a377bf` (`stream-gates-run-44a377bf.log`), on
 its guest output ending its counts with `stream whole`
 (`fixtures/dmsg-run-20261118-143724.out`); `H2_CRASH=1` 49 checks, 0
 failed, three stream lines each whole.
+
+## What the mapped write's fault is judged by, 2026-11-18
+
+One run at `61c02fbf` admitted a 128 KiB mapped write on a full volume
+where `write(2)` of 128K beside it was refused, and `test-enospc.sh`
+failed it; the other 41 runs kept before this series, every output
+under `p7-notes/crash-instrument/` that reaches the probe, took the
+`SIGBUS` the fault's refusal becomes. The kept output could not say what the fault had
+charged or which dirty count had judged it: an admission printed
+nothing. The two candidates, a fault charging one small folio where the
+write charges 128K and a cheap dirty count that read low, were written
+down with what each predicts before the first run
+(`p7-notes/crash-instrument/mmap-admit-diagnosis.md`).
+
+`c4fe1097` has `hammer2_enospace_dirty()` return the count a verdict was
+judged on, the cheap one or the exact sum after a refusal is judged
+again, and `hammer2_page_mkwrite()` print every verdict with the folio's
+size, that count, the free count and the reserve the check left cached.
+`a8295bc7` prints the probes' window of the klog. Batch at `a8295bc7`
+(`fault-print-run-a8295bc7.log`, per-run logs under
+`fault-print-{debug,kasan}-a8295bc7/`): twelve runs on `h2debug-7.3tls`
+and three on `h2kasan-7.3tls` passed, each with kernel warnings 0 after
+the run marker. Every fault charged 4096 bytes, one page, in all
+fifteen. Thirteen runs stopped the fill at 50085888 or 50118656 free and
+one at 50102272, all under root's threshold of half the 100243865
+reserve, 50121932, and their one fault refused on a dirty count of 0.
+The first KASAN run stopped at 50151424: seven faults admitted on exact
+counts of 0 to 24576 and the eighth refused on 28672, the exact sum
+taking in the mapping's own pages one by one. In all fifteen the
+exerciser's exit was its last verdict's.
+
+What admitted the whole 128 KiB at `61c02fbf`, 62260 bytes above the
+threshold, is the cheap count. It is `percpu_counter_read_positive()`
+(`include/linux/backing-dev.h:69-72`), a folio enters `WB_RECLAIMABLE`
+when it is marked dirty after `->page_mkwrite` returns
+(`mm/page-writeback.c:2622`), and a CPU folds its share into the global
+count only at `WB_STAT_BATCH` pages (`include/linux/backing-dev-defs.h:41`,
+`lib/percpu_counter.c:100`, the `CONFIG_HAVE_CMPXCHG_LOCAL` arm x86
+builds), 32 on the guest's twelve vCPUs, which is the
+probe's 128 KiB. Read on a volume with room
+(`fault-count-probe-a8295bc7.out`), two 128 KiB stores pinned to CPU 0
+printed 32 fault lines each, every one admitted on a cheap count of 0.
+So once the first page admits on a cheap read, no fault of the store
+sees the pages before it, and the free count does not move until a
+flush allocates. Within 128K of the threshold the mapping is admitted
+where `write(2)` of 128K is refused whenever the cheap read admits, and
+otherwise is refused part way through, as in the first KASAN run. Both
+are the reserve judging page by page within the counter's error, which
+the dirty count's comment already states (`wb_stat_error()`, 384 pages per
+counter here, against a half reserve of about 50 MB). DragonFly has no
+fault gate at all. The gate is kept and the harness's check is what was
+wrong: it asked for the mapping's refusal wherever the write's was.
+
+`7d78271e` checks instead that every fault verdict is the reserve's on
+the numbers it printed, that the exerciser's exit is the last
+verdict's, and that a store which completes has admitted folios summing
+to its 128 KiB, since each folio is judged once. So a mapped write no
+fault judged fails, and so does one whose gate judged its first folio
+and let the rest through, which review round 1 found the first form of
+the check passed. The check is a function `--selftest` drives with
+twelve outputs, three of them the numbers above; the selftest reads 29,
+0 failures. Five mutants of the function (the comparison never made,
+the user's threshold ignored, a refusal and an admission each accepted
+with any exit, a completed store's admissions not summed) each fail at
+least one case (`fault-check-mutants-7d78271e.out`). On the guest, with the
+fault's refusal printed and ignored, and with the gate removed, each
+built in a clone, the run exits 1 on the mapped-write check alone: the
+first read 32 refusals and exit 0, the second no verdict and exit 0
+(`fault-gate-controls-7d78271e.log`, `fault-gate-control-M{1,2}-7d78271e.out`).
+A gate that judges only the first folio is not driven on the guest: on
+the fill's usual free count the first fault refuses, and only a run in
+the window above the threshold reaches the rest, so the selftest's case
+is its control.
+
+At `7d78271e`: `make W=1` 0 warnings over 24 objects
+(`final-w1-7d78271e.out`); the analyzer's 8 candidates and smatch's 59
+lines (44 the `neighbour.h` assertion, 15 in the source) the same sets
+as at `e8864cb8` with line numbers set aside; the compile database 24
+entries for `hammer2-y`'s 24. `3afd0059` corrects
+`hammer2_sync_error()`'s comment, which named two of the three places a
+sync error is recorded.
