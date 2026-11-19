@@ -1061,7 +1061,7 @@ strategy write ends its folios only inside its storage function
 would leave every buffered write under writeback until unmount, and the
 buffered writes and attribute changes dispatch no XOP at all
 (`hammer2_vnops.c` starts one at `:136`, `:260`, `:557`, `:714`, `:755`,
-`:1678`, `:1765`, `:2068` and `:2919`), so they would have returned 0 and lost
+`:1709`, `:1796`, `:2099` and `:2950`), so they would have returned 0 and lost
 the update at the next `inode_chain_sync`, which clears `MODIFIED`
 before it starts and on error only prints (`hammer2_inode.c:1927-1937`).
 The slave's pass writes its element through chain calls and its own
@@ -1319,12 +1319,12 @@ rather than from the design document alone.
   `open` and in the path calls through `mnt_want_write`, not on the
   `write(2)` or `ftruncate` path (`fs/open.c:170` tests only
   `FMODE_WRITE`), and the port's own arms test `pmp->rdonly`
-  (`hammer2_vnops.c:405`, `:531`, `:662`, `:873`, `:1133`, `:1331`,
-  `:1586`, `:2411`, `:3305`), which a mount sets and only a remount
+  (`hammer2_vnops.c:405`, `:531`, `:662`, `:873`, `:1164`, `:1362`,
+  `:1617`, `:2442`, `:3336`), which a mount sets and only a remount
   rewrites (`hammer2_vfsops.c:1926`, `:2811`, `:2841`);
   with it set, `fsync` returns 0 before the sync without reading the
-  mapping's error (`hammer2_vnops.c:1499-1500`), and with it clear
-  `fsync` syncs and flushes the inode's chain (`:1506-1511`). ext4 sets
+  mapping's error (`hammer2_vnops.c:1530-1531`), and with it clear
+  `fsync` syncs and flushes the inode's chain (`:1537-1542`). ext4 sets
   no `SB_RDONLY` at run time for this reason, keeping its own flag
   (`fs/ext4/super.c:742-749`); the port's one run-time flip sits inside
   `->sync_fs` with `s_umount` held (`hammer2_vfsops.c:3528`).
@@ -1339,7 +1339,7 @@ rather than from the design document alone.
   property of the write path's design, not of a flag.
 - **C14. A read served from the caches never reaches the quorum
   check.** Cached folios, the dentry cache and the in-memory inode
-  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:3230`) with no
+  answer `read`, `stat` and `getattr` (`hammer2_vnops.c:3261`) with no
   XOP; only an uncached lookup and `readdir`, which is an XOP per call
   (`:215`), reach the check. "A read under quorum loss" means those.
 - **C15. The carried kernel answers no one-way `LNK_PING`.** The
@@ -1694,9 +1694,9 @@ keep (`EXT4_IOC_SHUTDOWN`, `XFS_IOC_GOINGDOWN`, `fs/ext4/ioctl.c:858-868`,
 those two test theirs: every VOP that modifies, since the port's
 create, unlink, rename, link, setattr, fallocate and time update modify
 local chains before the collect (C6), `open` and `mmap` for writing (the port has no `.open` and its
-`.read_iter` is the generic one, `hammer2_vnops.c:2608`, so those two are
+`.read_iter` is the generic one, `hammer2_vnops.c:2639`, so those two are
 new wrappers, and the mmap hook on the kernel of record is
-`.mmap_prepare`, `:2612`), `write_iter`, `page_mkwrite`, `writepages`,
+`.mmap_prepare`, `:2643`), `write_iter`, `page_mkwrite`, `writepages`,
 and the reads, which both refuse after a shutdown (`fs/ext4/file.c:136`, `fs/xfs/xfs_file.c:321`)
 so that a cut-off holder never serves cached data as current; `fsync`
 never returns 0 after the shutdown, as neither does (`fs/ext4/fsync.c:134`
