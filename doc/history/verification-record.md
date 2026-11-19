@@ -26776,7 +26776,8 @@ At `7d78271e`: `make W=1` 0 warnings over 24 objects
 (`final-w1-7d78271e.out`); the analyzer's 8 candidates and smatch's 59
 lines (44 the `neighbour.h` assertion, 15 in the source) the same sets
 as at `e8864cb8` with line numbers set aside; the compile database 24
-entries for `hammer2-y`'s 24. `3afd0059` corrects
+entries, the 22 objects `hammer2-y` names and the two units the build
+generates (`hammer2.mod.c`, `module-common.c`). `3afd0059` corrects
 `hammer2_sync_error()`'s comment, which named two of the three places a
 sync error is recorded.
 
@@ -26807,3 +26808,11 @@ admission is an error the check can close, and the next change to
 `hammer2_enospace_dirty()` re-judges an admission whose margin is
 within the error on the exact sum, with a probe inside that margin as
 its reading and the same build without the new branch as its control.
+
+Correction to the entries of 2026-11-16 and 2026-11-17 on `fsync`'s
+final instruments: each says the compile database "holds 24 entries,
+as `hammer2-y` names 24 objects". `hammer2-y` in
+`src/sys/fs/hammer2/Makefile` names 22, as it did then; the other two
+entries are the units the build generates, `hammer2.mod.c` and
+`module-common.c`. The count of 24 stands, and the database covered
+every source file in both.
