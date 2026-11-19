@@ -26818,3 +26818,22 @@ entries are `hammer2.mod.c`, which the build generates, and the
 kernel's `scripts/module-common.c`, compiled into every module. The
 count of 24 stands, and the database covered
 every source file in both.
+
+Read, 2026-11-19, `aa6ac896` on `inc5`: the probe and the control are
+run. The control is `86bb073c`'s source built against the TLS tree
+(sha256 `4a52c20b8e8cf4cb`; the first control build was against the
+plain 7.3 tree and insmod refused it, kept as
+`margin-control-86bb073c-void-vermagic.out`; a second control run's
+first fill overshot and the volume fell under the threshold before any
+burst, kept as `margin-control-86bb073c-void-overshoot.out`, the fill
+now halves the distance each step). Driver
+`p7-notes/crash-instrument/inc5/margin-probe.sh`, exerciser `h2burst.c`
+in the same directory, readings in `inc5/readings.md`, the expectation
+in the driver's header written before the first run. On the guest's
+twelve CPUs the control admits the 12-CPU burst whole, 527,564 bytes
+past the measured margin, into root's half reserve, in three rounds.
+With the exact sum the burst is refused at every CPU, one fault and one
+"exact sum refuses" line each, and admitted to within 15,564 bytes of
+the margin, inside the one-page-per-CPU allowance. `test-enospc.sh`, 12
+debug and 3 KASAN runs on the fix (`inc5-enospc-{debug,kasan}-aa6ac896`),
+exit 0 in all 15. The commitment above is met.

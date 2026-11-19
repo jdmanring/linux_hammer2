@@ -2276,10 +2276,19 @@ guest's shell. The fill ends in 64 KiB
 pieces, which leaves less than the write's 128 KiB above the
 threshold and can leave more than the single page a fault charges, and
 the cheap dirty count leaves out fewer than `WB_STAT_BATCH` pages per CPU,
-the mapping's own among them, so the mapping is admitted where
-`write(2)` is refused on some runs: one of the 42 runs kept before the
-check changed, at `61c02fbf`, 62260 bytes above root's threshold. The check required the mapping's
-refusal wherever `write(2)`'s was until that run. The reserve refuses a user with twice
+the mapping's own among them. The counter's error is
+`2 * nr_wbs * nr_cpu_ids * WB_STAT_BATCH` pages and grows with the CPU
+count, so on a machine with many CPUs it can exceed root's half reserve
+on a small volume; the gate therefore judges near-threshold verdicts on
+the exact sum, which walks every counter and is taken only near the
+threshold, so an admission inside the error is overturned. Before the
+exact sum, on the one-sided check, the mapping was admitted where
+`write(2)` was refused on some runs: one of the 42 runs kept before the
+check changed, at `61c02fbf`, 62260 bytes above root's threshold, and
+without the sum a pinned burst on every CPU was admitted 527564 bytes
+into root's half reserve in three rounds. The check now requires the
+mapping's refusal wherever `write(2)`'s is, and its admission nowhere
+the exact sum refuses one. The reserve refuses a user with twice
 the free space it refuses root at, so `H2_ENOSPC_USER=1` runs the fill
 and both probes as `nobody` under `setpriv`, `H2_ENOSPC_MODARGS` is
 handed to the guest's `insmod` so `io_buf_only=1` puts the whole fill
