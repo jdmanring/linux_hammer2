@@ -2266,10 +2266,20 @@ since its freemap, read on the host with `hammer2 freemap`, is what a
 loss is diagnosed from. After the fill it writes 128 KiB through a shared mapping of
 a file sized while there was room, with `test/hammer2-mmap-exercise.c`
 in its `existing` mode, and 128 KiB through `write(2)` into another
-such file, and fails the run if `write(2)` is refused and the mapping
-is not; the refusal at the fault is a `SIGBUS`, 135 from the guest's
-shell. The fill ends in 64 KiB pieces so that less than either probe
-is left above the threshold. The reserve refuses a user with twice
+such file. Each write fault prints its verdict with the folio's size,
+the dirty count it was judged on, the free count and the reserve, and
+the run fails unless every verdict is the reserve's on those numbers,
+the exerciser's exit is the last one's, and a store that completes
+has admitted folios summing to its 128 KiB, since each folio is
+judged once; a refusal at the fault is a `SIGBUS`, 135 from the
+guest's shell. The fill ends in 64 KiB
+pieces, which leaves less than the write's 128 KiB above the
+threshold and can leave more than the single page a fault charges, and
+the cheap dirty count leaves out up to `WB_STAT_BATCH` pages per CPU,
+the mapping's own among them, so the mapping is admitted where
+`write(2)` is refused on some runs: one of the 42 runs kept before the
+check changed, at `61c02fbf`, 62260 bytes above root's threshold. The check required the mapping's
+refusal wherever `write(2)`'s was until that run. The reserve refuses a user with twice
 the free space it refuses root at, so `H2_ENOSPC_USER=1` runs the fill
 and both probes as `nobody` under `setpriv`, `H2_ENOSPC_MODARGS` is
 handed to the guest's `insmod` so `io_buf_only=1` puts the whole fill

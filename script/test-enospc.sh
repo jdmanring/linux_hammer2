@@ -43,6 +43,37 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
+# The mapped write's check, read from the run's output on stdin, with the
+# user's threshold when $1 is nonempty. Prints why it fails, or nothing.
+# A function so --selftest drives it with outputs no run has to produce.
+fault_verdicts() {
+	fv_in=$(cat)
+	fv_fl=$(printf '%s\n' "$fv_in" | command grep '^probe fault ')
+	fv_mx=$(printf '%s\n' "$fv_in" | sed -n 's/^mmap on the full volume exit \([0-9]*\) .*/\1/p')
+	# probe fault VERDICT B bytes on the dirty count D, F free, reserve R
+	fv_bad=$(printf '%s\n' "$fv_fl" | awk -v u="${1:-}" 'NF {
+	    d = $10; sub(",", "", d); t = u ? $14 : int($14 / 2)
+	    if ($3 != (($11 - $4 - d < t) ? "refuses" : "admits")) print }')
+	fv_last=$(printf '%s\n' "$fv_fl" | tail -1 | awk '{ print $3 }')
+	# Each folio of the 128 KiB store is judged once, so a store that
+	# completes has admitted folios summing to the whole of it: a gate
+	# that judged the first folio and let the rest through unasked
+	# would otherwise pass on one admission.
+	fv_adm=$(printf '%s\n' "$fv_fl" | awk '$3 == "admits" { s += $4 } END { print s + 0 }')
+	# No fault line leaves no last verdict, which no exit matches.
+	if [ -n "$fv_bad" ]; then
+		echo "a fault verdict is not the reserve's on its own numbers:"
+		printf '%s\n' "$fv_bad"
+	elif ! { [ "$fv_last" = refuses ] && [ "$fv_mx" = 135 ]; } &&
+	    ! { [ "$fv_last" = admits ] && [ "$fv_mx" = 0 ]; }; then
+		echo "the mapped write's exit ${fv_mx:-unread} is not its last fault verdict, ${fv_last:-none}:"
+		printf '%s\n' "$fv_in" | command grep -e '^mmap on the full volume' -e '^probe fault ' | tail -2
+	elif [ "$fv_mx" = 0 ] && [ "$fv_adm" != 131072 ]; then
+		echo "the mapped write of 131072 bytes completed with $fv_adm admitted by its faults:"
+		printf '%s\n' "$fv_fl" | tail -1
+	fi
+}
+
 # --selftest: the control this script did not have. Every gate in this
 # tree carries one; the reproducer did not, and its readings are exactly
 # the kind that fail silently. Several have never been observed to take a
@@ -163,6 +194,54 @@ if [ "${1:-}" = "--selftest" ]; then
 		echo "        so a LOCKDEBUG run skipping its media-only checks passes"
 		sfail=$((sfail + 1))
 	fi
+	# The mapped write's check on an output of each shape, the first three
+	# numbers as runs printed them: the two must pass, the rest must fail.
+	fcase() { # label pass|fail user output-line...
+		nread=$((nread + 1))
+		fl=$1 fw=$2 fu=$3; shift 3
+		got=$(printf '%s\n' "$@" | fault_verdicts "$fu")
+		if { [ "$fw" = pass ] && [ -z "$got" ]; } ||
+		    { [ "$fw" = fail ] && [ -n "$got" ]; }; then
+			echo "  ok    the mapped-write check, $fl: $fw"
+		else
+			echo "  FAIL  the mapped-write check should $fw $fl, and read: ${got:-nothing}"
+			sfail=$((sfail + 1))
+		fi
+	}
+	m135='mmap on the full volume exit 135 :'
+	m0='mmap on the full volume exit 0 : mmap test ok'
+	pf='probe fault'
+	r='reserve 100243865'
+	fcase "a refused fault and its SIGBUS" pass "" "$m135" \
+	    "$pf refuses 4096 bytes on the dirty count 0, 50085888 free, $r"
+	fcase "pages admitted until the exact count reached the threshold" pass "" "$m135" \
+	    "$pf admits 4096 bytes on the dirty count 0, 50151424 free, $r" \
+	    "$pf admits 4096 bytes on the dirty count 24576, 50151424 free, $r" \
+	    "$pf refuses 4096 bytes on the dirty count 28672, 50151424 free, $r"
+	pg="$pf admits 4096 bytes on the dirty count 0, 50184192 free, $r"
+	fcase "32 pages admitted within 128K of the threshold" pass "" "$m0" \
+	    "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" \
+	    "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" \
+	    "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" \
+	    "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg" "$pg"
+	fcase "two 64 KiB folios admitted" pass "" "$m0" \
+	    "$pf admits 65536 bytes on the dirty count 0, 50300000 free, $r" \
+	    "$pf admits 65536 bytes on the dirty count 0, 50300000 free, $r"
+	fcase "a store that completed on one admitted page" fail "" "$m0" "$pg"
+	fcase "a mapped write no fault judged" fail "" "$m0"
+	fcase "an admission its numbers refuse" fail "" "$m0" \
+	    "$pf admits 4096 bytes on the dirty count 0, 50085888 free, $r"
+	fcase "a SIGBUS no fault verdict gave" fail "" "$m135" \
+	    "$pf admits 4096 bytes on the dirty count 0, 50184192 free, $r"
+	fcase "a refusal the exerciser survived" fail "" "$m0" \
+	    "$pf refuses 4096 bytes on the dirty count 28672, 50151424 free, $r"
+	fcase "a refusal and an exit that is not its SIGBUS" fail "" \
+	    'mmap on the full volume exit 1 : msync: Input/output error' \
+	    "$pf refuses 4096 bytes on the dirty count 28672, 50151424 free, $r"
+	fcase "a user refused above root's threshold" pass 1 "$m135" \
+	    "$pf refuses 4096 bytes on the dirty count 0, 60000000 free, $r"
+	fcase "root refused above root's threshold" fail "" "$m135" \
+	    "$pf refuses 4096 bytes on the dirty count 0, 60000000 free, $r"
 	[ "$nread" -gt 0 ] || {
 		echo "enospc: FAIL: the selftest checked no reading at all" >&2
 		exit 1; }
@@ -1064,16 +1143,24 @@ printf '%s\n' "$out" | command grep -q '^blocks available after sync 0$' ||
 	{ echo "  FAIL  the volume reports free space after the sync, so the refusal came early:"
 	  printf '%s\n' "$out" | sed -n 's/^blocks available/        blocks available/p'
 	  fail=$((fail + 1)); }
-# A writer through a mapping is told what write(2) is told. The fault
-# handler refuses under the same reserve the write entry does, and the
-# exerciser dies of the SIGBUS the refusal becomes, 135 from the shell.
-# Before the check was carried the mapping accepted every byte on a
-# volume where write(2) was refused.
+# A writer through a mapping is judged by the reserve check write(2) is,
+# one write fault per folio it dirties, and a refusal is the SIGBUS that
+# kills the exerciser, 135 from the shell. Before the check was carried
+# the mapping accepted every byte on a volume where write(2) was refused.
+# The fault charges its folio, a page here, against the cheap dirty
+# count, which leaves out up to WB_STAT_BATCH pages per CPU, the
+# mapping's own among them, so within 128K of the threshold a mapped
+# 128K is admitted where write(2) of 128K is refused: one of 42 kept
+# runs did. Each fault prints its verdict with its numbers, so the
+# check is that every verdict is the reserve's on those numbers, the
+# exit is the last verdict's, and a completed store's admissions sum to
+# its 128K. A fault that asked nothing prints nothing, so a mapped
+# write with no verdict, or with folios no verdict covers, fails.
 if printf '%s\n' "$out" | command grep -q '^write of 128K on the full volume exit [1-9]'; then
-	printf '%s\n' "$out" | command grep -q '^mmap on the full volume exit 135 ' ||
-		{ echo "  FAIL  write(2) was refused and the mapped write was not:"
-		  printf '%s\n' "$out" | sed -n 's/^\(write of 128K\|mmap\) on the full volume/        &/p'
-		  fail=$((fail + 1)); }
+	fv=$(printf '%s\n' "$out" | fault_verdicts "${H2_ENOSPC_USER:+1}")
+	[ -z "$fv" ] || {
+		printf '%s\n' "$fv" | sed '1s/^/  FAIL  /; 2,$s/^/        /'
+		fail=$((fail + 1)); }
 else
 	echo "  FAIL  write(2) of 128K was accepted after the fill, so the volume was not full:"
 	printf '%s\n' "$out" | sed -n 's/^write of 128K on the full volume/        &/p'
