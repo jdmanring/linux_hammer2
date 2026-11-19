@@ -1148,7 +1148,7 @@ printf '%s\n' "$out" | command grep -q '^blocks available after sync 0$' ||
 # kills the exerciser, 135 from the shell. Before the check was carried
 # the mapping accepted every byte on a volume where write(2) was refused.
 # The fault charges its folio, a page here, against the cheap dirty
-# count, which leaves out up to WB_STAT_BATCH pages per CPU, the
+# count, which leaves out fewer than WB_STAT_BATCH pages per CPU, the
 # mapping's own among them, so within 128K of the threshold a mapped
 # 128K is admitted where write(2) of 128K is refused: one of 42 kept
 # runs did. Each fault prints its verdict with its numbers, so the

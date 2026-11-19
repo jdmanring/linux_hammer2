@@ -26776,8 +26776,9 @@ At `7d78271e`: `make W=1` 0 warnings over 24 objects
 (`final-w1-7d78271e.out`); the analyzer's 8 candidates and smatch's 59
 lines (44 the `neighbour.h` assertion, 15 in the source) the same sets
 as at `e8864cb8` with line numbers set aside; the compile database 24
-entries, the 22 objects `hammer2-y` names and the two units the build
-generates (`hammer2.mod.c`, `module-common.c`). `3afd0059` corrects
+entries, the 22 objects `hammer2-y` names, `hammer2.mod.c`, which the
+build generates, and the kernel's `scripts/module-common.c`, which
+`scripts/Makefile.modfinal:28` compiles into every module. `3afd0059` corrects
 `hammer2_sync_error()`'s comment, which named two of the three places a
 sync error is recorded.
 
@@ -26796,8 +26797,8 @@ the reserve is a twentieth of the volume (`hammer2_vfsops.c:1549`), and
 root is refused under half of it (`:2426`). On twelve CPUs the two
 counters can be off by 768 pages, 3 MiB. On 256 CPUs the batch is 72
 and the two can be off by 36,864 pages, 144 MiB, which is more than
-root's half reserve on any volume under 5.6 GiB, the guest's 4 GiB test
-volumes among them. There a fill admitted inside the error can take the
+root's half reserve on any volume under 5.6 GiB, the 2 GiB volume
+`test-enospc.sh` fills among them. There a fill admitted inside the error can take the
 space the commit's flush needs, and nothing measured here says it
 cannot. The kernel's dirty throttle meets the same error by summing
 exactly whenever its threshold is within `2 * wb_stat_error()`
@@ -26813,6 +26814,7 @@ Correction to the entries of 2026-11-16 and 2026-11-17 on `fsync`'s
 final instruments: each says the compile database "holds 24 entries,
 as `hammer2-y` names 24 objects". `hammer2-y` in
 `src/sys/fs/hammer2/Makefile` names 22, as it did then; the other two
-entries are the units the build generates, `hammer2.mod.c` and
-`module-common.c`. The count of 24 stands, and the database covered
+entries are `hammer2.mod.c`, which the build generates, and the
+kernel's `scripts/module-common.c`, compiled into every module. The
+count of 24 stands, and the database covered
 every source file in both.

@@ -2275,7 +2275,7 @@ judged once; a refusal at the fault is a `SIGBUS`, 135 from the
 guest's shell. The fill ends in 64 KiB
 pieces, which leaves less than the write's 128 KiB above the
 threshold and can leave more than the single page a fault charges, and
-the cheap dirty count leaves out up to `WB_STAT_BATCH` pages per CPU,
+the cheap dirty count leaves out fewer than `WB_STAT_BATCH` pages per CPU,
 the mapping's own among them, so the mapping is admitted where
 `write(2)` is refused on some runs: one of the 42 runs kept before the
 check changed, at `61c02fbf`, 62260 bytes above root's threshold. The check required the mapping's
