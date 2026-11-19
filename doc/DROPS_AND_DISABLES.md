@@ -57,7 +57,7 @@ to make, and it is not made.
 | behavior | DragonFly | this port | classification |
 |---|---|---|---|
 | XOP thread pool | per-PFS worker threads | synchronous XOPs | deferred-with-trigger: multi-master |
-| dirty-chain throttle and syncer | `hammer2_vfs_modifying()` before every modifying VOP | the wait called at the seven places a write can begin, `trigger_syncer()` as delayed work | implemented, differently: Linux has no such hook |
+| dirty-chain throttle and syncer | `hammer2_vfs_modifying()` before every modifying VOP | the wait called at the eight places a write can begin, `trigger_syncer()` as delayed work | implemented, differently: Linux has no such hook |
 | `hammer2_lookup_device()` | three checks in one call | not carried; the Linux call already performs them | implemented, differently |
 | `hammer2_gaccess_devvp()`, `hammer2_getw_devvp()`, `hammer2_putw_devvp()` | adjust a GEOM consumer's write count | not carried; Linux states the access once as a `blk_mode_t` | implemented, differently |
 | `LOCKENTER` / `LOCKEXIT` | class CCMS's spin against the vnode locks | dropped; this port has no vnode lock in that sense | unavailable-with-reason: the annotation's subject does not exist here |

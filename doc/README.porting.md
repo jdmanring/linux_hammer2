@@ -370,7 +370,10 @@ the BSD ports dropped them. DragonFly's kernel calls
 dirty-chain or dirty-inode limit and stalls at the limit, woken with
 hysteresis by the flush as chains go clean. Linux has no such hook, so
 each modifying entry in `hammer2_vnops.c` calls the wait beside the
-reserve check, the seven places a write can begin. `trigger_syncer()`
+reserve check, at the eight places a write can begin: a create, a
+remove, a rename, a link, `write(2)`, an attribute change, a mapped
+write's fault, and an `fallocate()` that can grow the file.
+`trigger_syncer()`
 is a delayed work on the PFS, run at once by the stall and every
 thirty seconds otherwise, DragonFly's period, doing what `sync(2)`
 does: the page cache's dirty folios first, then the chains. Its
