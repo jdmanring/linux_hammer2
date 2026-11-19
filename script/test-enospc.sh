@@ -237,6 +237,7 @@ if [ "$repeat" -gt 1 ]; then
 		    s/^  \(syncfs returned .*\)$/      \1/p;\
 		    s/^  \(write of 128K on the full volume .*\)$/      \1/p;\
 		    s/^  \(mmap on the full volume .*\)$/      \1/p;\
+		    s/^  \(probe .*\)$/      \1/p;\
 		    s/^  \(user write after the sync .*\)$/      \1/p;\
 		    s/^  \(root write after the sync .*\)$/      \1/p;\
 		    s/^  \(after-sync .*\)$/      \1/p;\
@@ -704,11 +705,17 @@ out=$(ssh "$GUEST_SSH" '
 	# accepted, a failure at msync after all of them were.
 	# The control is write(2) of the same size at the same moment, into
 	# a file that exists, so the create path cannot be what answers.
+	np=$(kl | wc -l)
 	msg=$($as dd if=/dev/urandom of=/mnt/h2enospc/written bs=128K count=1 \
 	    conv=notrunc status=none 2>&1); st=$?
 	echo "write of 128K on the full volume exit $st : ${msg:-accepted}"
 	$as /tmp/h2mmaptest /mnt/h2enospc/mapped existing > /tmp/h2mmap.out 2>&1; st=$?
 	echo "mmap on the full volume exit $st : $(tail -1 /tmp/h2mmap.out)"
+	# What the two probes were judged by: a refusal of the write charges
+	# 128K plus the dirty count, and each write fault prints its folio
+	# size, the dirty count it was judged on, the free count and its
+	# verdict, admit or refuse.
+	kl | tail -n +$((np + 1)) | command grep -e "enospace refuses" -e "hammer2: fault " | sed "s/^.*hammer2: /probe /"
 	# What the freemap handed out, read around the sync that commits
 	# the fill, beside what the write entry saw when it refused: the
 	# difference between the two allocation readings is what the sync
