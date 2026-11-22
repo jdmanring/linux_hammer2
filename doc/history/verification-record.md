@@ -26963,3 +26963,66 @@ sets read at `7d78271e`, smatch's one difference the line its message
 names inside `hammer2_pfsalloc()`, moved by three lines of comment
 above it; the compile database 24 entries; QEMU cores 0 throughout
 (`final-{w1,analyze,smatch}-ebf6c752.out`).
+
+## A cluster mastered on two devices was counted on one of them, 2026-11-22
+
+1.0.107 gave every PFS superblock its mount device's bdi, so the reserve
+check counted every PFS mounted from the checking PFS's device. A
+cluster with a MASTER element on each of two local devices is mounted
+from one of them, keeps its dirty pages on that device's bdi, and
+allocates on both at writeback; a PFS on the second device counted only
+the second's bdi, and the cluster's own check counted only the first's.
+Found by reading the code after 1.0.107 was pushed, then measured.
+
+Driver `p7-notes/crash-instrument/inc5/cluster-probe.sh`, helper
+`h2fsync.c` beside it (holds the files open across the sync, then
+`fsync(2)` and `syncfs(2)` on those descriptors, and classes each 64 KiB
+block read back after a remount as unchanged, a hole, unreadable or
+foreign), expectations in its header written before each module's first
+run. The construction is `cluster-quorum.sh`'s: two fresh 2 GiB
+volumes, `ROOT` on each, `CL` a MASTER on both and mounted from the
+first; the second filled through its `ROOT` to 442,856,244 bytes above
+root's threshold; then, with dirty limits raised so the flusher does not
+allocate under the writes, X = 267,321,344 bytes written through one
+PFS and X through the other.
+
+| arm | `9c315b08` (1.0.107) | `3de12da3` |
+|---|---|---|
+| `same`: X and X through the second `ROOT` | (control) | second refused, 0 changed |
+| `cl-root`: X through `CL`, then the second `ROOT` | both admitted, 91,786,444 past; `CL` file `fsync` and `syncfs` 28, 718 of 4,079 blocks read EIO, 0 foreign | second refused, enospace 8 refusals, every return 0, 0 changed |
+| `root-cl`: the second `ROOT`, then `CL` | both admitted, `CL` file 718 blocks EIO | second refused, 9 refusals, 0 changed |
+| `cl-fill`: `CL` alone until refused | 401,276,928 admitted | 401,211,392 admitted |
+| `root-fill`: the second `ROOT` alone until refused | 396,492,800 | 396,558,336 |
+
+All on `h2debug-7.3tls`, QEMU cores 0
+(`inc5/cluster-probe{,2}-9c315b08.out`, `inc5/cluster-probe-3de12da3.out`,
+`inc5/cluster-probe-control-9c315b08.out`). The writeback that failed
+on 1.0.107 logged `hammer2_freemap_alloc: no block of radix 16` and
+`hammer2_xop_strategy_write: error 00000020`; on the fix neither
+appears. The two-PFS probe on one volume reads on the fix as it did on
+`9c315b08` (`inc5/pfs-probe-v2-debug-3de12da3.out`).
+
+The fill arms answer the design review's warning that summing a
+cluster's pages for each device it masters could refuse early: the fix
+admits within one 64 KiB block of the unfixed module through `CL`. The
+expectation written for them, `cl-fill` within 1 MiB of `root-fill`,
+missed: through `CL` 4.65 MB more is admitted than through `ROOT`, on
+both modules alike, so it is not this change's; why is not measured.
+Both stop 41 to 46 MB short of the margin.
+
+A block one master wrote and the other failed reads EIO through the
+cluster although one master holds it. That is the quorum read's answer
+to elements that disagree, the cluster work's subject, and is recorded
+here as found, not as fixed.
+
+Each device now keeps an RCU list of the mounted PFS slots mastered on
+it (`struct hammer2_bdiuse`, one per cluster slot of `hammer2_pfs`),
+linked beside each `mount_count` increment a mounted PFS makes, which
+are the mount helper and an element attached to a mounted PFS by
+`hammer2_pfsalloc()`, and unlinked at unmount, which waits out readers
+before a device can be freed. `hammer2_pfs_dirty_bytes()` sums, for each
+local master device of the checking PFS, the distinct bdis on its list,
+and takes the largest sum against the smallest free count. The design
+review that chose this over a walk of the PFS list under
+`hammer2_mntlk`, a reservation counter of the port's own, and leaving
+it stated is `inc5/design-reserve-span.md`.

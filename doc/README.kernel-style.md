@@ -372,7 +372,7 @@ new.
 depth argument, `hammer2_xops.c:1597`, is a continuation-line indent; the
 debug build's `seek_walked` count gives `hammer2_seek_walks()` a second
 `return (x);`; and the chunked scan's fatal-signal check returns a positive
-`EINTR` at `hammer2_vnops.c:1782`, which is the module's errno convention
+`EINTR` at `hammer2_vnops.c:1839`, which is the module's errno convention
 and is negated at the VFS boundary like every other. No category is new.
 
 1,659 to 1,661 with the seek's vote on several MASTERs
@@ -464,6 +464,11 @@ category is new.
 again on the exact sum: `hammer2_bdi_dirty_bytes()` returns a cheap
 read's error bound through a pointer on a second parameter line, with the
 same BSD continuation indent. No category is new.
+
+1,682 to 1,684 when the reserve check came to count a cluster's dirty
+pages on every device it masters: `hammer2_pfs_dirty_bytes()` wraps its
+parameters with the BSD continuation indent and returns `return (best);`,
+as the file's other functions do. No category is new.
 
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
