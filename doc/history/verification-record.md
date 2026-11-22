@@ -27026,3 +27026,40 @@ and takes the largest sum against the smallest free count. The design
 review that chose this over a walk of the PFS list under
 `hammer2_mntlk`, a reservation counter of the port's own, and leaving
 it stated is `inc5/design-reserve-span.md`.
+
+On `h2kasan-7.3tls` the fix reads as on debug: `same`, `cl-root`,
+`root-cl` and `cl-fill` refuse the second write or stop at ENOSPC,
+every `fsync` returns 0, no block changes, kernel warnings 0
+(`inc5/cluster-probe-kasan-3de12da3.out`), and the two-PFS probe's four
+arms match their hashes (`inc5/pfs-probe-v2-kasan-3de12da3.out`). The
+control does not fail there: `9c315b08`'s `cl-root` refused its second
+write after 165,085,184 bytes and lost nothing
+(`inc5/cluster-probe-kasan-control-9c315b08.out`). The probe was given
+read-only instruments for that (`cluster-probe.sh`, v1 kept beside it):
+each hammer2 bdi's `BdiWritten`, `vdc`'s available blocks and each
+write's time, before the first write and after each. On debug, CL's bdi
+wrote 0 kB across both writes and the control lost 718 blocks again
+(`inc5/cluster-probe-debug-window-control-9c315b08.out`). On KASAN it
+wrote 54,784 kB during the first write, which took 1.5 s, and 249,600
+kB by the end of the second, while `vdc`'s available space fell from
+5,992 blocks to 0 (`inc5/cluster-probe-kasan-window-control-9c315b08.out`):
+CL's pages were being allocated on `vdc` before the second write was
+judged, so the unfixed check refused on the free side. The KASAN build
+therefore cannot hold the window this control needs, and its runs here
+read memory safety, not the refusal. What starts the writeback with the
+dirty limits raised to 1.6 and 2.4 GB on a 4 GiB guest is not measured;
+reclaim under KASAN's larger footprint is the candidate. The same arm's
+"bdis before 6 after 7" on KASAN is the guest's hot-attached `vdc`
+(`254:32`) registering after the load-time count, read from the names.
+
+At the tip, `b5ccf1f9`: `test-enospc.sh` 12 of 12 on debug and 3 of 3
+on KASAN, kernel warnings and module faults 0
+(`inc6-enospc-{debug,kasan}-b5ccf1f9.out`); `test-fixtures.sh` 0
+failures (`inc5/fixtures-debug-b5ccf1f9.out`); W=1 24 objects, 0
+warnings; the analyzer's 8 and smatch's 59 candidates the same sets as
+at `ebf6c752` with line numbers set aside
+(`final-{w1,analyze,smatch}-b5ccf1f9.out`); the compile database 24
+entries; and the six multi-PFS harnesses (`pfs-domains`,
+`sync-empty-base`, `cluster-dmsg`, `cluster-sync`, `cluster-wire`,
+`cluster-quorum`) exit 0 (`stream-gates-*-b5ccf1f9.out`). QEMU cores 0
+throughout.
