@@ -495,7 +495,7 @@ after the correction against 256 before, and a median latency of 27.7 to
 28.5 us against 41.9 to 45.0. `doc/history/verification-record.md` has the table.
 
 The file mapping has `->readahead` as well: each folio of the window,
-4 MiB by the superblock's bdi as in btrfs, goes to an unbound
+4 MiB by the device's bdi as in btrfs, goes to an unbound
 workqueue of at most one worker per CPU, and `hammer2_read_folio()`
 runs there, so the checksum and the copy of one block no longer wait
 for the block before it. Two carried behaviors had to move for that.

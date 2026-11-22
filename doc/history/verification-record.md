@@ -26854,3 +26854,100 @@ gate's count moves from 1,681 to 1,682 on the new parameter line of
 `test-fixtures.sh` at `3824e3bb` on `h2debug-7.3tls`: 11 images, 43
 files, 0 failures, no kernel report, exit 0, QEMU cores 0 before and
 after (`p7-notes/crash-instrument/inc5/fixtures-debug-3824e3bb.out`).
+
+Correction, 2026-11-22, to the three rounds above. `margin-probe.sh`
+runs its rounds in one boot and wrote the same kernel-log markers in
+each, and its reader took the first match, so rounds 2 and 3 printed
+round 1's margins and judged their bursts against them. Each round's
+burst count was read after a marker that named the round and stands;
+the margins and the over and short figures of rounds 2 and 3 do not, in
+the fix's output and in the control's. The shortfalls were the
+instrument, not the counter, and the candidate named for them is
+withdrawn. The driver now writes a marker per run and round and
+refuses one seen twice; the stale version is kept as
+`margin-probe.v1-stale-marker.sh`. Rerun with it, each round on its own
+margin, on `9c315b08` (the next section's commit, whose fault path is
+`aa6ac896`'s and whose shared bdi does not change a single PFS's count)
+and on `86bb073c`'s source as the control:
+
+| module | kernel | rounds, bytes admitted past the margin |
+|---|---|---|
+| `9c315b08` | `h2debug-7.3tls` | 31,948; 23,756; 44,236 |
+| `9c315b08` | `h2kasan-7.3tls` | 31,948; 40,140; 23,756 |
+| `86bb073c` | `h2debug-7.3tls` | 593,100; 576,716; 560,332 |
+| `86bb073c` | `h2kasan-7.3tls` | 576,716; 576,716; 318,668 |
+
+Every round of the fix is inside the twelve pages, 49,152 bytes, that
+twelve CPUs can hold between another CPU's exact sum and its
+`filemap_page_mkwrite()`, with 11 or 12 exact-sum refusals per round;
+every round of the control is past it, with no exact-sum refusal.
+0 warnings in all twelve
+(`p7-notes/crash-instrument/inc5/margin-{debug,kasan}-{9c315b08,control-86bb073c}.out`).
+
+## Two PFS on one volume were judged on their own dirty pages alone, 2026-11-22
+
+Every PFS mount is its own superblock (`sget_fc()` with no test) and had
+a bdi of its own from `super_setup_bdi()`. The reserve check counts the
+dirty pages on its superblock's bdi against the device's free count,
+which every PFS on the volume shares, so one PFS could not see what
+another had dirtied. Read from the code while reviewing the two-sided
+check, then measured.
+
+Driver `p7-notes/crash-instrument/inc5/pfs-probe.sh`, expectations in
+its header written before each module's first run. One fresh 2 GiB
+volume per arm, PFS `MP` and a second PFS `P2` created on it, both
+mounted, the volume filled and synced to the arm's margin above root's
+threshold, then as root with no sync between: the `mmap` arms run a
+12-CPU burst of 31 pages per CPU on one PFS and then on the other (or on
+the same PFS twice), the `write` arms write X = free - 2R - 24 MiB with
+`dd` to one PFS and then X to the other (or to the same twice), so the
+first write stays above the twice-the-reserve line under which
+`write(2)` is made synchronous. Each arm then syncs, hashes what it
+wrote, remounts both PFS and hashes again. An earlier driver drove
+`write(2)` under that line, where each write is committed before it
+returns, and its later arms also read the first arm's markers; it is
+kept as `pfs-probe.v1-stale-marker.sh` and its outputs are not
+readings.
+
+| module | kernel | `mmap-cross`, second burst | `write-cross`, second write | `write-cross` hashes |
+|---|---|---|---|---|
+| `86bb073c` | `h2debug-7.3tls` | 1,523,712 | 267,321,344, no refusal | 2 of 2 mismatched |
+| `86bb073c` | `h2kasan-7.3tls` | 983,040 | 267,321,344, no refusal | 2 of 2 mismatched |
+| `aa6ac896` | `h2debug-7.3tls` | 970,752 | 267,321,344, no refusal | 2 of 2 mismatched |
+| `9c315b08` | `h2debug-7.3tls` | 49,152 | 134,348,800, ENOSPC | 0 mismatched |
+| `9c315b08` | `h2kasan-7.3tls` | 49,152 | 134,021,120, ENOSPC | 0 mismatched |
+
+On the modules before the fix the second PFS's write was admitted
+whole, 91,786,444 bytes past root's threshold, and writeback then
+logged `hammer2_freemap_alloc: no block of radix 16` and
+`hammer2_xop_strategy_write: error 00000020` for both files, which read
+back wrong after the remount; `sync` returned 0, as `sync(2)` always
+does. The `mmap-same` and `write-same` arms are the instrument's
+control and read the same on every module: a second burst of at most
+12 pages, a second write refused with ENOSPC, every hash equal. On the
+fix the cross arms read as the same arms.
+
+The device now owns one bdi, registered at the first mount of a PFS
+from it, and every PFS superblock takes a reference on it, as
+`setup_bdev_super()` gives each superblock on a block device that
+device's bdi (`fs/super.c:1821`) and fuse gives a submount its parent's
+(`fs/fuse/inode.c:1630`). `kill_anon_super()` writes back and drops the
+superblock's reference before `hammer2_unmount()` can free the device,
+where the bdi is unregistered. Metadata is not in it: it is dirtied in
+the block device's page cache, and its blocks are allocated when the
+chain is modified, before the free count is read, so counting the
+disk's bdi instead would have counted it twice and counted any other
+filesystem on the disk. On every arm of the fix the count of bdis under
+`/sys/class/bdi` after the module is unloaded equals the count before
+it is loaded, 6 and 6, and KASAN reported nothing
+(`p7-notes/crash-instrument/inc5/pfs-probe-v2-*.out`).
+
+Four outputs of the first KASAN batch booted the debug kernel: the
+kernel switch failed while the guest was still shutting down and the
+batch did not check it. They are kept with `-void-booted-debug` in
+their names, and both drivers now refuse a guest whose boot image is
+not the one `H2_BOOT` names.
+
+Not in the tree yet: an arm of `test-enospc.sh` that fills through two
+PFS, so that nothing in the gates would see this return. It is the next
+increment.
