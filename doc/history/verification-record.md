@@ -26833,7 +26833,24 @@ in the driver's header written before the first run. On the guest's
 twelve CPUs the control admits the 12-CPU burst whole, 527,564 bytes
 past the measured margin, into root's half reserve, in three rounds.
 With the exact sum the burst is refused at every CPU, one fault and one
-"exact sum refuses" line each, and admitted to within 15,564 bytes of
-the margin, inside the one-page-per-CPU allowance. `test-enospc.sh`, 12
-debug and 3 KASAN runs on the fix (`inc5-enospc-{debug,kasan}-aa6ac896`),
+"exact sum refuses" line each, and the three rounds admitted 15,564
+bytes past the margin, 49,972 short of it and 90,932 short of it. The
+first is inside the one-page-per-CPU allowance. The shortfalls refuse
+early, not late; a candidate cause, not measured, is the exact sum
+counting a page under writeback twice, as the comment above
+`hammer2_bdi_dirty_bytes()` states. `test-enospc.sh`, 12 debug and 3
+KASAN runs on the fix (`p7-notes/crash-instrument/inc5-enospc-{debug,kasan}-aa6ac896`),
 exit 0 in all 15. The commitment above is met.
+
+The instruments at the branch's source, read 2026-11-22 at `3824e3bb`,
+whose `src/` is byte-identical to `aa6ac896`'s, against the TLS tree
+(`p7-notes/crash-instrument/final-{w1,analyze,smatch}-3824e3bb.out`):
+`make W=1` compiles 24 objects with 0 warnings; the analyzer's 8
+candidates and smatch's 59 are the sets read at `7d78271e`, compared
+with line numbers stripped; the compile database holds 24 entries, the
+22 sources `hammer2-y` names and the two generated units. The style
+gate's count moves from 1,681 to 1,682 on the new parameter line of
+`hammer2_bdi_dirty_bytes()` (`doc/README.kernel-style.md`).
+`test-fixtures.sh` at `3824e3bb` on `h2debug-7.3tls`: 11 images, 43
+files, 0 failures, no kernel report, exit 0, QEMU cores 0 before and
+after (`p7-notes/crash-instrument/inc5/fixtures-debug-3824e3bb.out`).
