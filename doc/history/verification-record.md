@@ -26951,3 +26951,16 @@ not the one `H2_BOOT` names.
 Not in the tree yet: an arm of `test-enospc.sh` that fills through two
 PFS, so that nothing in the gates would see this return. It is the next
 increment.
+
+The final source, read at `ebf6c752`, whose `src/` is `9c315b08`'s:
+`test-enospc.sh` 12 runs of 12 pass on `h2debug-7.3tls` and 3 of 3 on
+`h2kasan-7.3tls`, each kernel read from the guest before its batch
+(`p7-notes/crash-instrument/inc5-enospc-{debug,kasan}-ebf6c752`);
+`test-fixtures.sh` 11 images, 43 files, 0 failures, no kernel report
+(`inc5/fixtures-debug-ebf6c752.out`); `make W=1` 24 objects, 0
+warnings, the module the same build, sha256 `1f1bda5a7fef761e`, as the
+one the probes loaded; the analyzer's 8 candidates and smatch's 59 the
+sets read at `7d78271e`, smatch's one difference the line its message
+names inside `hammer2_pfsalloc()`, moved by three lines of comment
+above it; the compile database 24 entries; QEMU cores 0 throughout
+(`final-{w1,analyze,smatch}-ebf6c752.out`).
