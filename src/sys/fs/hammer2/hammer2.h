@@ -1060,6 +1060,7 @@ struct hammer2_dev {
 	struct delayed_work	link_work;	/* XXX Linux: runs the reconnect tail */
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
+	struct backing_dev_info	*bdi;		/* Linux: every PFS sb's s_bdi */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */
 	hammer2_chain_t		fchain;		/* anchor chain (freemap) */
 	hammer2_volume_data_t	voldata;

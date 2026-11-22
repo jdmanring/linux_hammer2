@@ -1104,8 +1104,9 @@ hammer2_enospace_under(hammer2_pfs_t *pmp, loff_t bytes)
  * volume under 5.6 GiB, and an admission on it alone could spend the
  * space the commit's flush needs.  On the cheap count alone a user's
  * 64 KiB write after syncfs(2) was also refused while statfs reported
- * three blocks free past the reserve.  *dirtyp is the count the verdict
- * was judged on.
+ * three blocks free past the reserve.  The bdi is the device's, which
+ * every PFS mounted from it shares, so another PFS's dirty pages are
+ * counted too.  *dirtyp is the count the verdict was judged on.
  */
 static int
 hammer2_enospace_dirty(hammer2_inode_t *ip, struct inode *inode, loff_t bytes,

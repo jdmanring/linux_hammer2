@@ -76,6 +76,7 @@ static hammer2_pfslist_t hammer2_spmplist;
 
 hammer2_lk_t hammer2_mntlk;
 static unsigned int hammer2_unmount_gen;	/* Linux: under hammer2_mntlk */
+static atomic_long_t hammer2_bdi_seq;		/* Linux: device bdi names */
 
 uma_zone_t hammer2_zone_inode;
 uma_zone_t hammer2_zone_xops;
@@ -335,10 +336,12 @@ module_param_named(sync_interflush, hammer2_sync_interflush, int, 0644);
  *   already opens all of them with the super_block as holder.  So this port
  *   does NOT use get_tree_bdev(), which opens exactly one device and takes
  *   sb->s_bdev for it.  It follows btrfs, the multi-device filesystem in
- *   tree: sget_fc() with set_anon_super_fc(), super_setup_bdi(), and no
- *   sb->s_bdev at all.  Read against Linux v7.2, the kernel of record:
- *   fs/btrfs/super.c btrfs_get_tree_super(), and fs/super.c
- *   setup_bdev_super(), which is what get_tree_bdev() would have run and
+ *   tree: sget_fc() with set_anon_super_fc() and no sb->s_bdev at all.
+ *   Where btrfs gives its one superblock a bdi of its own, every PFS
+ *   superblock here takes a reference on its device's (see fill_super).
+ *   Read against Linux v7.2, the kernel of record: fs/btrfs/super.c
+ *   btrfs_get_tree_super(), and fs/super.c setup_bdev_super(), which is
+ *   what get_tree_bdev() would have run and
  *   which ends in sb_set_blocksize(sb, block_size(bdev)) -- the device's
  *   block size, not HAMMER2_PBUFSIZE.
  *
@@ -1866,9 +1869,35 @@ next_hmp:
 	snprintf(sb->s_id, sizeof(sb->s_id), "%pg",
 	    file_bdev(hmp->bdev_file));
 
-	error = super_setup_bdi(sb);
+	/*
+	 * Linux: one bdi per device, which every PFS superblock mounted from
+	 * it shares, as setup_bdev_super() gives each superblock on a block
+	 * device that device's bdi and fuse gives a submount its parent's.
+	 * The reserve check counts the dirty pages on its superblock's bdi
+	 * against the device's free count, so a bdi per superblock let each
+	 * PFS fill the space past the reserve that another PFS had already
+	 * dirtied: two PFS writing 255 MiB each past root's threshold were
+	 * both admitted, and writeback found no block for either.  The
+	 * device owns the bdi and unregisters it when it is freed, after
+	 * kill_anon_super() has written back and released every superblock.
+	 */
+	error = 0;
+	if (hmp->bdi == NULL) {
+		hmp->bdi = bdi_alloc(NUMA_NO_NODE);
+		if (hmp->bdi == NULL)
+			error = -ENOMEM;
+		else
+			error = bdi_register(hmp->bdi, "hammer2-%ld",
+			    atomic_long_inc_return(&hammer2_bdi_seq));
+		if (error && hmp->bdi) {
+			bdi_put(hmp->bdi);	/* never registered */
+			hmp->bdi = NULL;
+		}
+	}
+	if (error == 0)
+		sb->s_bdi = bdi_get(hmp->bdi);
 	if (error) {
-		hprintf("super_setup_bdi failed: %d\n", error);
+		hprintf("bdi setup failed: %d\n", error);
 		hammer2_unmount_helper(NULL, NULL, hmp);
 		hammer2_lk_unlock(&hammer2_mntlk);
 		hstrfree(devstr);
@@ -3050,6 +3079,10 @@ again:
 	hammer2_print_iostat(&hmp->iostat_read, "read");
 	hammer2_print_iostat(&hmp->iostat_write, "write");
 
+	if (hmp->bdi) {		/* Linux: every sb's reference is dropped */
+		bdi_unregister(hmp->bdi);
+		bdi_put(hmp->bdi);
+	}
 	hfree(hmp, M_HAMMER2, sizeof(*hmp));
 
 #ifdef HAMMER2_MALLOC
