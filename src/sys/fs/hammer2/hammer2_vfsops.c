@@ -2387,22 +2387,25 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
  * Called beside each mount_count increment a mounted PFS makes, which is
  * what keeps the device, and so the list, alive while the slot is linked.
  * The ioctl's PFS create reaches here through hammer2_pfsalloc() without
- * hammer2_mntlk, so the slot is tested and linked under the spin lock.
+ * hammer2_mntlk, so pmp->mp is read under the spin lock: an unmount
+ * clears it before hammer2_bdiuse_unlink() takes the lock, and a slot
+ * linked after that unlink would stay listed for an unmounted PFS.
  */
 static void
 hammer2_bdiuse_link(hammer2_pfs_t *pmp, int j)
 {
 	struct hammer2_bdiuse *u = &pmp->bdiuse[j];
-	struct super_block *sb = pmp->mp;
 	hammer2_dev_t *hmp = pmp->pfs_hmps[j];
+	struct super_block *sb;
 
-	if (sb == NULL || hmp == NULL || hammer2_dev_is_conn(hmp))
+	if (hmp == NULL || hammer2_dev_is_conn(hmp))
 		return;
 	if (pmp->pfs_types[j] != HAMMER2_PFSTYPE_MASTER &&
 	    pmp->pfs_types[j] != HAMMER2_PFSTYPE_SOFT_MASTER)
 		return;
 	spin_lock(&hammer2_bdiuse_spin);
-	if (u->bdi == NULL) {
+	sb = READ_ONCE(pmp->mp);
+	if (sb != NULL && u->bdi == NULL) {
 		u->bdi = sb->s_bdi;
 		list_add_tail_rcu(&u->link, &hmp->bdi_users);
 	}
