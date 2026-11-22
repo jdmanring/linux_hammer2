@@ -460,6 +460,11 @@ continuation indent the file's other wrapped definitions carry, which
 running the recorded checker on both versions of the file shows. No
 category is new.
 
+1,681 to 1,682 when the reserve check came to judge a close admission
+again on the exact sum: `hammer2_bdi_dirty_bytes()` returns a cheap
+read's error bound through a pointer on a second parameter line, with the
+same BSD continuation indent. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the
