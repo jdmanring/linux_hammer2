@@ -26830,15 +26830,14 @@ now halves the distance each step). Driver
 `p7-notes/crash-instrument/inc5/margin-probe.sh`, exerciser `h2burst.c`
 in the same directory, readings in `inc5/readings.md`, the expectation
 in the driver's header written before the first run. On the guest's
-twelve CPUs the control admits the 12-CPU burst whole, 527,564 bytes
-past the measured margin, into root's half reserve, in three rounds.
-With the exact sum the burst is refused at every CPU, one fault and one
-"exact sum refuses" line each, and the three rounds admitted 15,564
-bytes past the margin, 49,972 short of it and 90,932 short of it. The
-first is inside the one-page-per-CPU allowance. The shortfalls refuse
-early, not late; a candidate cause, not measured, is the exact sum
-counting a page under writeback twice, as the comment above
-`hammer2_bdi_dirty_bytes()` states. `test-enospc.sh`, 12 debug and 3
+twelve CPUs the control admits the 12-CPU burst whole in each of
+three rounds, into root's half reserve, round 1 527,564 bytes past its
+measured margin. With the exact sum the burst is refused at every CPU,
+one fault and one "exact sum refuses" line each, and round 1 admitted
+15,564 bytes past its margin, inside the one-page-per-CPU allowance.
+Rounds 2 and 3 of both outputs printed round 1's margins, not their
+own; the correction below says why and reads every round on its own
+margin. `test-enospc.sh`, 12 debug and 3
 KASAN runs on the fix (`p7-notes/crash-instrument/inc5-enospc-{debug,kasan}-aa6ac896`),
 exit 0 in all 15. The commitment above is met.
 
@@ -26861,9 +26860,9 @@ each, and its reader took the first match, so rounds 2 and 3 printed
 round 1's margins and judged their bursts against them. Each round's
 burst count was read after a marker that named the round and stands;
 the margins and the over and short figures of rounds 2 and 3 do not, in
-the fix's output and in the control's. The shortfalls were the
-instrument, not the counter, and the candidate named for them is
-withdrawn. The driver now writes a marker per run and round and
+the fix's output and in the control's; the two rounds of the fix read
+short of the margin against round 1's figure, which was the
+instrument and not the counter. The driver now writes a marker per run and round and
 refuses one seen twice; the stale version is kept as
 `margin-probe.v1-stale-marker.sh`. Rerun with it, each round on its own
 margin, on `9c315b08` (the next section's commit, whose fault path is
