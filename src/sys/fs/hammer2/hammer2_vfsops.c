@@ -77,6 +77,8 @@ static hammer2_pfslist_t hammer2_spmplist;
 hammer2_lk_t hammer2_mntlk;
 static unsigned int hammer2_unmount_gen;	/* Linux: under hammer2_mntlk */
 static atomic_long_t hammer2_bdi_seq;		/* Linux: device bdi names */
+static DEFINE_SPINLOCK(hammer2_bdiuse_spin);	/* Linux: bdi_users writers */
+static void hammer2_bdiuse_link(hammer2_pfs_t *, int);
 
 uma_zone_t hammer2_zone_inode;
 uma_zone_t hammer2_zone_xops;
@@ -548,8 +550,10 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		 * If the PFS is already mounted we must account
 		 * for the mount_count here.
 		 */
-		if (pmp->mp)
+		if (pmp->mp) {
 			++chain->hmp->mount_count;
+			hammer2_bdiuse_link(pmp, j);	/* Linux */
+		}
 		++j;
 	}
 	iroot->cluster.nchains = j;
@@ -1481,6 +1485,7 @@ next_hmp:
 		/* Construct volumes and link with device vnodes. */
 		hmp = hmalloc(sizeof(*hmp), M_HAMMER2, M_WAITOK | M_ZERO);
 		hmp->mmsg = M_HAMMER2_MSG;	/* Linux: was kmalloc_create() */
+		INIT_LIST_HEAD(&hmp->bdi_users);	/* Linux */
 		hmp->bdev_file = NULL;
 		error = hammer2_init_volumes(&devvpl, hmp->volumes,
 		    &hmp->voldata, &hmp->volhdrno, &hmp->bdev_file);
@@ -2367,7 +2372,68 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
 		if (hammer2_dev_is_conn(rchain->hmp))	/* XXX Linux: no mount */
 			continue;
 		++rchain->hmp->mount_count;
+		hammer2_bdiuse_link(pmp, i);	/* Linux */
 	}
+}
+
+/*
+ * Linux: put the mounted PFS's bdi on the list of the device behind its
+ * cluster slot j, if that element is a local master, so the reserve check
+ * on any PFS mastered on that device counts the pages this one will
+ * allocate there.  Every PFS superblock holds the bdi of the device it was
+ * mounted from, while its writeback allocates on every master element's
+ * device: a cluster mounted from one disk and mastered on a second fills
+ * the second, and a PFS on the second counted only the second's bdi.
+ * Called beside each mount_count increment a mounted PFS makes, which is
+ * what keeps the device, and so the list, alive while the slot is linked.
+ * The ioctl's PFS create reaches here through hammer2_pfsalloc() without
+ * hammer2_mntlk, so the slot is tested and linked under the spin lock.
+ */
+static void
+hammer2_bdiuse_link(hammer2_pfs_t *pmp, int j)
+{
+	struct hammer2_bdiuse *u = &pmp->bdiuse[j];
+	struct super_block *sb = pmp->mp;
+	hammer2_dev_t *hmp = pmp->pfs_hmps[j];
+
+	if (sb == NULL || hmp == NULL || hammer2_dev_is_conn(hmp))
+		return;
+	if (pmp->pfs_types[j] != HAMMER2_PFSTYPE_MASTER &&
+	    pmp->pfs_types[j] != HAMMER2_PFSTYPE_SOFT_MASTER)
+		return;
+	spin_lock(&hammer2_bdiuse_spin);
+	if (u->bdi == NULL) {
+		u->bdi = sb->s_bdi;
+		list_add_tail_rcu(&u->link, &hmp->bdi_users);
+	}
+	spin_unlock(&hammer2_bdiuse_spin);
+}
+
+/*
+ * Linux: take every slot of an unmounting PFS off its devices' lists, and
+ * wait out the readers before a device whose mount_count this unmount
+ * drops to zero can be freed, since a reader on another device's list may
+ * hold this PFS's entry and the bdi it names.
+ */
+static void
+hammer2_bdiuse_unlink(hammer2_pfs_t *pmp)
+{
+	bool any = false;
+	int j;
+
+	spin_lock(&hammer2_bdiuse_spin);
+	for (j = 0; j < HAMMER2_MAXCLUSTER; ++j) {
+		if (pmp->bdiuse[j].bdi == NULL)
+			continue;
+		list_del_rcu(&pmp->bdiuse[j].link);
+		any = true;
+	}
+	spin_unlock(&hammer2_bdiuse_spin);
+	if (!any)
+		return;
+	synchronize_rcu();
+	for (j = 0; j < HAMMER2_MAXCLUSTER; ++j)
+		pmp->bdiuse[j].bdi = NULL;
 }
 
 /*
@@ -2929,6 +2995,7 @@ hammer2_unmount_helper(struct super_block *sb, hammer2_pfs_t *pmp,
 		cancel_delayed_work_sync(&pmp->sync_work);	/* Linux */
 		pmp->mp = NULL;
 		sb->s_fs_info = NULL;
+		hammer2_bdiuse_unlink(pmp);	/* Linux */
 
 		/*
 		 * After pmp->mp is cleared we have to account for
@@ -3079,6 +3146,7 @@ again:
 	hammer2_print_iostat(&hmp->iostat_read, "read");
 	hammer2_print_iostat(&hmp->iostat_write, "write");
 
+	WARN_ON_ONCE(!list_empty(&hmp->bdi_users));	/* Linux */
 	if (hmp->bdi) {		/* Linux: every sb's reference is dropped */
 		bdi_unregister(hmp->bdi);
 		bdi_put(hmp->bdi);

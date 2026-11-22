@@ -85,6 +85,18 @@ typedef struct hammer2_chain hammer2_chain_t;
 typedef struct hammer2_depend hammer2_depend_t;
 typedef struct hammer2_inode hammer2_inode_t;
 typedef struct hammer2_dev hammer2_dev_t;
+
+/*
+ * Linux: a mounted PFS's place on the list of a device one of its local
+ * master elements sits on, one per cluster slot, so the reserve check on
+ * any PFS mastered there can count the dirty pages this one will allocate
+ * there (hammer2_pfs_dirty_bytes()).  bdi is the PFS superblock's, NULL
+ * while the slot is not linked.
+ */
+struct hammer2_bdiuse {
+	struct list_head	link;		/* on hammer2_dev's bdi_users */
+	struct backing_dev_info	*bdi;
+};
 typedef struct hammer2_pfs hammer2_pfs_t;
 typedef union hammer2_xop hammer2_xop_t;
 
@@ -1061,6 +1073,7 @@ struct hammer2_dev {
 	hammer2_pfs_t		*spmp;		/* super-root pmp for transactions */
 	struct file		*bdev_file;	/* Linux: root volume; was devvp */
 	struct backing_dev_info	*bdi;		/* Linux: every PFS sb's s_bdi */
+	struct list_head	bdi_users;	/* Linux: hammer2_bdiuse, RCU */
 	hammer2_chain_t		vchain;		/* anchor chain (topology) */
 	hammer2_chain_t		fchain;		/* anchor chain (freemap) */
 	hammer2_volume_data_t	voldata;
@@ -1245,6 +1258,7 @@ struct hammer2_pfs {
 	char			*pfs_names[HAMMER2_MAXCLUSTER];
 	uint8_t			pfs_types[HAMMER2_MAXCLUSTER];
 	uint8_t			pfs_nmasters;	/* masters in this cluster */
+	struct hammer2_bdiuse	bdiuse[HAMMER2_MAXCLUSTER]; /* Linux */
 	/*
 	 * XXX Linux: the slots hammer2_remote_detach() has cleared on this PFS,
 	 * under the root's cluster_spin; read by the synchronization pass's

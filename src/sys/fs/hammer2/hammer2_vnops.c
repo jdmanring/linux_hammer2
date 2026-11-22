@@ -1074,6 +1074,62 @@ hammer2_bdi_dirty_bytes(struct backing_dev_info *bdi, bool exact,
 }
 
 /*
+ * Linux: the dirty bytes that will allocate on the PFS's most loaded local
+ * master device.  For each such device, the bdis on its bdi_users list
+ * (every mounted PFS with a master element there, hammer2_bdiuse_link()),
+ * each counted once, summed; the largest sum is returned, and *errp the
+ * largest of the sums' cheap-read error bounds.  hammer2_vfs_enospace()
+ * sets the result against the smallest free count over the same devices,
+ * so a PFS mastered on two devices is judged as if its fullest device
+ * held its busiest device's dirty pages, which can refuse early and never
+ * late.  A PFS with no local master counts its own superblock's bdi.
+ */
+#define HAMMER2_DIRTY_SEEN	16
+static loff_t
+hammer2_pfs_dirty_bytes(hammer2_pfs_t *pmp, struct inode *inode, bool exact,
+    loff_t *errp)
+{
+	struct backing_dev_info *seen[HAMMER2_DIRTY_SEEN];
+	struct hammer2_bdiuse *u;
+	hammer2_dev_t *hmp;
+	loff_t sum, err, e, best = 0, besterr = 0;
+	bool any = false;
+	int i, k, n;
+
+	rcu_read_lock();
+	for (i = 0; i < pmp->iroot->cluster.nchains; ++i) {
+		hmp = READ_ONCE(pmp->pfs_hmps[i]);
+		if (hmp == NULL || hammer2_dev_is_conn(hmp))
+			continue;
+		if (pmp->pfs_types[i] != HAMMER2_PFSTYPE_MASTER &&
+		    pmp->pfs_types[i] != HAMMER2_PFSTYPE_SOFT_MASTER)
+			continue;
+		sum = err = 0;
+		n = 0;
+		list_for_each_entry_rcu(u, &hmp->bdi_users, link) {
+			for (k = 0; k < n && seen[k] != u->bdi; ++k)
+				;
+			if (k < n)
+				continue;	/* a bdi two PFS share */
+			if (n < HAMMER2_DIRTY_SEEN)	/* else counted twice */
+				seen[n++] = u->bdi;
+			sum += hammer2_bdi_dirty_bytes(u->bdi, exact, &e);
+			err += e;
+			any = true;
+		}
+		best = max(best, sum);
+		besterr = max(besterr, err);
+	}
+	rcu_read_unlock();
+	if (!any)
+		best = hammer2_bdi_dirty_bytes(inode->i_sb->s_bdi, exact,
+		    &besterr);
+	if (errp != NULL)
+		*errp = besterr;
+	return (best);
+}
+
+/*
  * Linux: whether bytes falls under hammer2_vfs_enospace()'s refusal
  * threshold on the free count and reserve it cached this tick: the
  * reserve for a user, half of it for root.  It repeats that function's
@@ -1104,24 +1160,25 @@ hammer2_enospace_under(hammer2_pfs_t *pmp, loff_t bytes)
  * volume under 5.6 GiB, and an admission on it alone could spend the
  * space the commit's flush needs.  On the cheap count alone a user's
  * 64 KiB write after syncfs(2) was also refused while statfs reported
- * three blocks free past the reserve.  The bdi is the device's, which
- * every PFS mounted from it shares, so another PFS's dirty pages are
- * counted too.  *dirtyp is the count the verdict was judged on.
+ * three blocks free past the reserve.  The count is every mounted PFS's
+ * that will allocate on the PFS's master devices
+ * (hammer2_pfs_dirty_bytes()), so another PFS's dirty pages are counted,
+ * a cluster's on each device it masters.  *dirtyp is the count the
+ * verdict was judged on.
  */
 static int
 hammer2_enospace_dirty(hammer2_inode_t *ip, struct inode *inode, loff_t bytes,
     loff_t *dirtyp)
 {
-	struct backing_dev_info *bdi = inode->i_sb->s_bdi;
 	loff_t cheap, exact, err;
 	int r, was;
 
-	cheap = hammer2_bdi_dirty_bytes(bdi, false, &err);
+	cheap = hammer2_pfs_dirty_bytes(ip->pmp, inode, false, &err);
 	*dirtyp = cheap;
 	r = hammer2_vfs_enospace(ip, bytes + cheap, current_cred());
 	if (r < 2 && !hammer2_enospace_under(ip->pmp, bytes + cheap + err))
 		return (r);
-	exact = hammer2_bdi_dirty_bytes(bdi, true, NULL);
+	exact = hammer2_pfs_dirty_bytes(ip->pmp, inode, true, NULL);
 	if (r < 2 ? exact <= cheap : exact >= cheap)
 		return (r);
 	*dirtyp = exact;
