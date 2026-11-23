@@ -580,6 +580,15 @@ for v in c:a d:b e:c; do
 		echo "enospc: COULD-NOT-RUN: could not attach a shared-reserve volume as vd${v%:*}" >&2; exit 2; }
 done
 scp -q -o ConnectTimeout=5 test/hammer2-reserve-share.sh "$GUEST_SSH:/tmp/h2share.sh" >/dev/null 2>&1
+# A hot-added disk appears in the guest when its probe finishes, which on
+# the KASAN build came after the mount below had already looked for vdb.
+i=0
+until ssh "$GUEST_SSH" 'test -b /dev/vdb && test -b /dev/vdc && test -b /dev/vdd && test -b /dev/vde' 2>/dev/null; do
+	i=$((i + 1))
+	[ "$i" -lt 30 ] || {
+		echo "enospc: COULD-NOT-RUN: $GUEST did not show the four attached disks in 60 s" >&2; exit 2; }
+	sleep 2
+done
 # The mapped-write probe: a shared writable mapping written and synced
 # on the full volume, from test/hammer2-mmap-exercise.c, so what a
 # writer that never calls write(2) is told is a reading. Static, since
