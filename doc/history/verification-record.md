@@ -27063,3 +27063,29 @@ entries; and the six multi-PFS harnesses (`pfs-domains`,
 `sync-empty-base`, `cluster-dmsg`, `cluster-sync`, `cluster-wire`,
 `cluster-quorum`) exit 0 (`stream-gates-*-b5ccf1f9.out`). QEMU cores 0
 throughout.
+
+Review found the link read `pmp->mp` before its spin lock. The ioctl
+that creates a PFS reaches the link without `hammer2_mntlk`, so an
+element added to a mounted cluster while it unmounted could read the
+superblock, lose the lock to the unmount's unlink and grace period,
+and then list a slot for the unmounted PFS, where a later check would
+read a bdi whose device may be gone. `3f238de9` reads the superblock
+under the lock; the unmount clears it before its unlink takes the same
+lock. Not driven: no delay knob holds that window, and the fix rests on
+the lock order. The `mount_count` increment beside the link has the
+same unlocked read and predates this change; it is recorded here, not
+fixed.
+
+At `3f238de9`, everything above rerun: debug `same`, `cl-root`,
+`root-cl`, `cl-fill` and `root-fill` read as on `3de12da3`, the control
+`cl-root` again loses 718 blocks with `fsync` 28
+(`inc5/cluster-probe-3f238de9.out`,
+`inc5/cluster-probe-control-r2-9c315b08.out`); KASAN's four fix arms
+refuse with warnings 0 (`inc5/cluster-probe-kasan-3f238de9.out`); the
+two-PFS probe matches every hash on both builds
+(`inc5/pfs-probe-v2-{debug,kasan}-3f238de9.out`). At the tip
+`ecd4a703`: `test-enospc.sh` 12 of 12 and 3 of 3, kernel warnings and
+module faults 0 in every run (`inc6-enospc-{debug,kasan}-ecd4a703.out`);
+`test-fixtures.sh` 0 failures; W=1 0 warnings; the analyzer's 8 and
+smatch's 59 the same sets; the compile database 24; the six multi-PFS
+harnesses exit 0 (`stream-gates-*-ecd4a703.out`). QEMU cores 0.
