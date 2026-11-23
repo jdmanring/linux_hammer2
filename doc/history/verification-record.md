@@ -27089,3 +27089,114 @@ module faults 0 in every run (`inc6-enospc-{debug,kasan}-ecd4a703.out`);
 `test-fixtures.sh` 0 failures; W=1 0 warnings; the analyzer's 8 and
 smatch's 59 the same sets; the compile database 24; the six multi-PFS
 harnesses exit 0 (`stream-gates-*-ecd4a703.out`). QEMU cores 0.
+
+## The full-volume gate reads the shared reserve, 2026-11-23
+
+1.0.107 and 1.0.108 fixed the reserve for two PFS on one volume and for a
+cluster mastered on two volumes, and no gate read either shape. After its
+main fill `test-enospc.sh` now runs `test/hammer2-reserve-share.sh` on
+three fresh 2 GiB volumes, found on the guest by the serials the host
+attached them with (`virtio-h2share-a` to `-c`), since the guest names
+hot-added disks in probe order. The cluster shape is `CL`, a MASTER on
+the first two volumes, mounted from the first, with the second's ROOT
+filled; the pfs shape is ROOT and `P2` on the third, ROOT filled. Each
+fills its volume to root's margin near 4.3 times the reserve, writes X
+= free - 2R - 24 MiB through one PFS and X through the other with no
+sync between, then hashes both files from the page cache and again from
+the media after a remount. `multi_verdicts()` fails a shape that admits
+the second write or whose files read back differing, and holds it void
+where the margin was missed, the first write was refused, or any hammer2
+bdi wrote back before the second write. The selftest drives it with
+eight cases. Six mutants of the function, each removing one branch, fail
+the selftest and the unmutated copy passes
+(`p7-notes/crash-instrument/inc7/verdict-mutants-e3981c65.out`).
+
+The void on early writeback is the reading's guard: a refusal after the
+first file's blocks were allocated came from the free count and says
+nothing about the dirty count. Expected readings were written before the
+first run (`inc7/expected.md`). At `d533dda7` debug read 12 of 12 and
+KASAN two passes and one could-not-run: the pfs shape's bdi wrote 59,392
+kB during the first write, with `pgscan_kswapd` flat and 2.2 GB free
+(`inc7-enospc-kasan-d533dda7/run-1.log`). A probe traced it on
+`h2kasan-7.3tls` (`inc7/window-probe.sh`, its expected readings in
+`window-probe-expected.md`): the writeback and workqueue tracepoints on
+hammer2 bdis and on `hammer2_sync_work()`, a 0 and a 35 s hold after the
+first write (`window-probe-hold{0,35}-d533dda7.out`). The expected file's
+candidate, the port's 30 s syncer alone, was wrong. Two writers act
+inside such a window besides reclaim:
+
+- The flusher. It wakes `dirty_writeback_centisecs` after a bdi's first
+  dirty page (182.04 to 187.13 and 157.66 to 163.06 in the two runs),
+  runs a periodic pass that writes nothing, and then a background pass,
+  which on the hold run wrote 13,312 pages with the global limits at 1.6
+  and 2.4 GB. `wb_over_bg_thresh()` also compares the bdi's own dirty
+  count with its share of the background threshold
+  (`mm/page-writeback.c:2128-2130` in 7.3), and a bdi with no writeout
+  history gets the floor of a dirty margin over eight (`:912-916`),
+  about 167 MB, under one X. The first write lasts about 1.5 s on KASAN,
+  so the wakeup usually lands after it. Run 1 carried no trace; a wakeup
+  inside its first write is the candidate its reading fits.
+- The syncer. `hammer2_sync_work()` runs `sync_filesystem()` 30 s after
+  each PFS's mount and then 30 s after each run, at whatever phase the
+  fill left. All 18 queueings in the two runs came from its timer
+  (`call_timer_fn` in each of the 18 stacks), none from
+  `hammer2_pfs_memory_wait()`.
+
+`c3af8f75` shuts both out: every hammer2 bdi's `min_ratio` is raised for
+the window and read back, and the shape's mounts are remounted just
+before it so the syncer's next run is 30 s out. Probe v2, expected
+readings first (`inc7/window-probe2-expected.md`), on KASAN: with the
+ratio at 40 and a 10 s hold, no background pass inside either window and
+0 kB written before the second write, gate exit 0; with it at 0, a
+background pass 5.3 s after each first write began and 96,896 and
+106,368 kB written, gate exit 2; with it at 40 and a 35 s hold, the
+syncer's first run 30.00 and 30.26 s after the remounts. The expected
+file said the ratio-0 control would write near X; it wrote 37 and 41
+percent, which is the mechanism, since a background pass stops once the
+bdi is back under its share (`inc7/window-probe2-*-d533dda7.out`).
+
+At `c3af8f75` the tip read 12 of 12 and 3 of 3, but `86bb073c`'s cluster
+shape read void, "min_ratio 40 did not take", on both builds: that
+module has a bdi per superblock, three in the cluster, and the kernel
+refuses a sum past 100 (`inc7/at-c3af8f75/control-*-86bb073c.out`).
+`2596a4a6` sets 40, or 90 split among the bdis where that is less.
+Three bdis each hold one X at most, and 30 percent of 1.6 GB is above
+it; the fixed module has two bdis at most and keeps 40.
+
+At `e3981c65`, on `h2debug-7.3tls` and `h2kasan-7.3tls`, the controls
+(`inc7/at-e3981c65/control-{debug,kasan}-*.out`): `9c315b08`, 1.0.107's
+source, exits 1 on the cluster shape, both writes admitted 91,914,240
+bytes past root's margin and "2 before, 1 read back, differ", its pfs
+shape refused and read back the same; `86bb073c`, before the shared bdi,
+exits 1 on both shapes, the pfs files reading "2 before, 2 read back,
+differ". The tip: `test-enospc.sh` 12 of 12 on debug and 3 of 3 on
+KASAN, the shared arm ok in each of the 15, kernel warnings and module
+faults 0 in each (`inc7-enospc-{debug,kasan}-e3981c65.out`); QEMU cores 0
+throughout. `test-fixtures.sh` at the tip: 11 images, 0 failures
+(`inc7/at-e3981c65/fixtures-debug.out`). Nothing under `src/` changed since
+`3f238de9`, so the instrument readings at `ecd4a703` in the entry above
+are this source's.
+
+This corrects the entry "A cluster mastered on two devices was counted
+on one of them" above, which says the KASAN build "cannot hold the window
+this control needs" and leaves reclaim as an unmeasured candidate.
+Reclaim was one writer: on a filled KASAN guest with 110 MB free,
+`pgscan_kswapd` rose by about 145,000 pages during the first write and
+CL's bdi wrote 50,944 kB in it; with clean caches dropped first, 2.5 GB
+free, the scan counters stayed flat, CL's bdi wrote 0 kB, and the control
+lost 718 blocks with `fsync` 28
+(`inc5/cluster-probe-kasan-{nodrop,drop}-control-9c315b08.out`). The
+flusher's background pass and the syncer above were the others. With all
+three shut out the KASAN build holds the window and both controls fail
+on it, so 1.0.108's KASAN readings of the fix read memory safety only,
+and the three KASAN runs here are that build's reading of the refusal.
+
+`e3981c65` also corrects the tallies of `H2_REPEAT` in `test-enospc.sh`,
+`million-tree.sh` and `cluster-wire.sh`, which exited with the status of
+"no failure and no could-not-run": the KASAN batch at `d533dda7` read "3
+run(s), 2 pass, 0 fail, 1 could-not-run" and exited 1
+(`inc7-enospc-kasan-d533dda7.out`). Each now exits 1 on any failure, else
+2 on any could-not-run, else 0. Each script's new lines were driven over
+five pairs of failures and could-not-runs beside the old expression,
+which read the pair with only a could-not-run as 1; the two fleet
+scripts changed only there and have not run on the fleet since.
