@@ -447,8 +447,11 @@ if [ "$repeat" -gt 1 ]; then
 	[ "$CUT" = trail ] && for o in closed silent notproxy kasan other; do
 		echo "  trail-outcome $o $(cat "$logdir"/run-*.log | grep -c "^  trail-outcome $o\$")"
 	done
-	[ "$failed" = 0 ] && [ "$cnr" = 0 ]
-	exit
+	# A failure outranks a run that could not judge; could-not-run alone
+	# is 2, never a failure.
+	[ "$failed" = 0 ] || exit 1
+	[ "$cnr" = 0 ] || exit 2
+	exit 0
 fi
 KDIR=${KDIR:-/lib/modules/$(uname -r)/build}
 NEWFS=${H2_NEWFS:-$(command -v newfs_hammer2 2>/dev/null || echo "$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2")}

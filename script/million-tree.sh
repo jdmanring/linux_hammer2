@@ -118,8 +118,11 @@ if [ "$repeat" -gt 1 ]; then
 	echo "tree: the runs are kept in $logdir"
 	[ "$seen" -eq "$repeat" ] || {
 		echo "tree: FAIL: ran $repeat but tallied $seen" >&2; exit 1; }
-	[ "$failed" -eq 0 ] && [ "$cnr" -eq 0 ]
-	exit $?
+	# A failure outranks a run that could not judge; could-not-run alone
+	# is 2, never a failure.
+	[ "$failed" -eq 0 ] || exit 1
+	[ "$cnr" -eq 0 ] || exit 2
+	exit 0
 fi
 
 make -s clean >/dev/null 2>&1
