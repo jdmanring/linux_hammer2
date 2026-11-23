@@ -74,6 +74,38 @@ fault_verdicts() {
 	fi
 }
 
+# The shared reserve's check, read from test/hammer2-reserve-share.sh's
+# lines on stdin. For each shape it prints "VOID <why>" where the reading
+# cannot judge, why it fails, or nothing. A refusal after writeback had
+# allocated the first file's blocks came from the free count, so it says
+# nothing about the dirty count and is void, not a pass; writeback during
+# the second write is the data-sync write the check makes near the line.
+multi_verdicts() {
+	mv_in=$(cat)
+	for mv_s in cluster pfs; do
+		mv_v=$(printf '%s\n' "$mv_in" | command grep -m1 -e "^multi $mv_s VOID" -e '^multi setup VOID')
+		mv_r=$(printf '%s\n' "$mv_in" | command grep -m1 "^multi $mv_s RESULT ")
+		mv_h=$(printf '%s\n' "$mv_in" | sed -n "s/^multi $mv_s hashes //p")
+		if [ -n "$mv_v" ]; then
+			echo "VOID $mv_v"; continue
+		elif [ -z "$mv_r" ]; then
+			echo "the $mv_s shape printed no result"; continue
+		fi
+		# multi S RESULT margin M free F reserve R X x first B1 E1 second B2 E2 written-before-second W kB
+		set -- $mv_r
+		if [ "${19}" != 0 ]; then
+			echo "VOID the $mv_s window did not hold: ${19} kB written back before the second write"
+		elif [ "${14}" != ok ]; then
+			echo "VOID the $mv_s shape's first write was refused, so its margin was not the one set"
+		else
+			[ "${17}" = ok ] &&
+			    echo "the $mv_s shape admitted both writes, $((${13} + ${16} - $5)) bytes past root's margin"
+			[ "$mv_h" = "2 before, 2 read back, same" ] ||
+			    echo "the $mv_s shape's files did not read back as written: ${mv_h:-no hash line}"
+		fi
+	done
+}
+
 # --selftest: the control this script did not have. Every gate in this
 # tree carries one; the reproducer did not, and its readings are exactly
 # the kind that fail silently. Several have never been observed to take a
@@ -242,6 +274,43 @@ if [ "${1:-}" = "--selftest" ]; then
 	    "$pf refuses 4096 bytes on the dirty count 0, 60000000 free, $r"
 	fcase "root refused above root's threshold" fail "" "$m135" \
 	    "$pf refuses 4096 bytes on the dirty count 0, 60000000 free, $r"
+	# The shared reserve's check, on lines of the shapes runs printed:
+	# pass, fail, or void, which the run reports as COULD-NOT-RUN.
+	mcase() { # label pass|fail|void output-line...
+		nread=$((nread + 1))
+		ml=$1 mw=$2; shift 2
+		got=$(printf '%s\n' "$@" | multi_verdicts)
+		case $mw in
+		pass) [ -z "$got" ] ;;
+		void) [ -n "$got" ] && ! printf '%s\n' "$got" | command grep -qv '^VOID ' ;;
+		fail) [ -n "$got" ] && printf '%s\n' "$got" | command grep -qv '^VOID ' ;;
+		esac && { echo "  ok    the shared-reserve check, $ml: $mw"; return; }
+		echo "  FAIL  the shared-reserve check should $mw $ml, and read: ${got:-nothing}"
+		sfail=$((sfail + 1))
+	}
+	mr='margin 442856244 free 492978176 reserve 100243865 X 267321344 first 267321344 ok'
+	ok2='2 before, 2 read back, same'
+	cr="multi cluster RESULT $mr second 134021120 ENOSPC written-before-second 0 kB"
+	pr="multi pfs RESULT $mr second 133955584 ENOSPC written-before-second 0 kB"
+	mcase "both shapes refusing the second write and reading back" pass \
+	    "$cr" "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
+	mcase "a cluster admitting both writes" fail \
+	    "multi cluster RESULT $mr second 267321344 ok written-before-second 0 kB" \
+	    "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
+	mcase "a refused write whose files read back otherwise" fail \
+	    "$cr" "multi cluster hashes 2 before, 1 read back, differ" \
+	    "$pr" "multi pfs hashes $ok2"
+	mcase "a shape with no result" fail "$cr" "multi cluster hashes $ok2"
+	mcase "a shape with no hash line" fail "$cr" "$pr" "multi pfs hashes $ok2"
+	mcase "a refusal after writeback ran during the first write" void \
+	    "multi cluster RESULT $mr second 173211648 ENOSPC written-before-second 50944 kB" \
+	    "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
+	mcase "a margin the fill did not reach" void \
+	    "multi cluster VOID margin 520000000 after 30 fill steps, outside 410000000 to 452000000" \
+	    "$pr" "multi pfs hashes $ok2"
+	mcase "a refused first write" void \
+	    "multi cluster RESULT margin 442856244 free 492978176 reserve 100243865 X 267321344 first 65536 ENOSPC second 0 ENOSPC written-before-second 0 kB" \
+	    "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
 	[ "$nread" -gt 0 ] || {
 		echo "enospc: FAIL: the selftest checked no reading at all" >&2
 		exit 1; }
@@ -414,6 +483,15 @@ rm -f "$IMG"
 truncate -s "$SIZE" "$IMG" || exit 2
 "$NEWFS" -L "$LABEL" "$IMG" >/dev/null 2>&1 || {
 	echo "enospc: COULD-NOT-RUN: newfs_hammer2 failed" >&2; exit 2; }
+# The shared reserve's three volumes, read by test/hammer2-reserve-share.sh
+# after the fill: two for a cluster mastered on both, one for two PFS.
+# Fixed at 2 GiB whatever H2_ENOSPC_SIZE says, since its margins are.
+for v in a b c; do
+	rm -f "$FIXDIR/enospc-share-$v.img"
+	truncate -s 2G "$FIXDIR/enospc-share-$v.img" &&
+	    "$NEWFS" -L ROOT "$FIXDIR/enospc-share-$v.img" >/dev/null 2>&1 || {
+		echo "enospc: COULD-NOT-RUN: newfs_hammer2 failed on a shared-reserve volume" >&2; exit 2; }
+done
 
 # A guest that answers ssh is usable whatever the domain says. One that is
 # listed running and does not answer is either booting, which a batch
@@ -425,7 +503,10 @@ started=no
 # A guest this script started is shut down on every exit, not only the last
 # line: a COULD-NOT-RUN after the start left it running for the next script
 # to refuse.
-trap '[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1' EXIT
+# The disks are detached on every exit too, so an early one does not leave
+# them on a guest this script did not start.
+trap 'for d in vdb vdc vdd vde; do $VIRSH detach-disk "$GUEST" $d >/dev/null 2>&1; done
+	[ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1' EXIT
 # The wait is five minutes, which is what a boot takes and also what a guest
 # that is up but wedged costs a caller who meant only to check the tree: the
 # pre-push hook runs this gate, so that wait is paid on every push, and two
@@ -494,6 +575,11 @@ fi
 
 $VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio >/dev/null 2>&1 || {
 	echo "enospc: COULD-NOT-RUN: could not attach $IMG" >&2; exit 2; }
+for v in c:a d:b e:c; do
+	$VIRSH attach-disk "$GUEST" "$FIXDIR/enospc-share-${v#*:}.img" "vd${v%:*}" --targetbus virtio >/dev/null 2>&1 || {
+		echo "enospc: COULD-NOT-RUN: could not attach a shared-reserve volume as vd${v%:*}" >&2; exit 2; }
+done
+scp -q -o ConnectTimeout=5 test/hammer2-reserve-share.sh "$GUEST_SSH:/tmp/h2share.sh" >/dev/null 2>&1
 # The mapped-write probe: a shared writable mapping written and synced
 # on the full volume, from test/hammer2-mmap-exercise.c, so what a
 # writer that never calls write(2) is told is a reading. Static, since
@@ -978,6 +1064,9 @@ out=$(ssh "$GUEST_SSH" '
 	# Printed on every run, so a run that does not hang still reports how
 	# close it came rather than nothing at all.
 	echo "umount took $(( $(cut -d. -f1 /proc/uptime) - ustart ))s"
+	# The shared reserve, on its own volumes, before the counts below so
+	# they cover it: test/hammer2-reserve-share.sh, judged on the host.
+	sh /tmp/h2share.sh 2>&1 | command grep "^multi "
 	# Every count below reads after this end marker, so a fault the
 	# unmount printed is in the capture before anything counts it.
 	sh /tmp/kmsg-stream.sh --end /tmp/kmsg.log
@@ -1087,7 +1176,7 @@ out=$(ssh "$GUEST_SSH" '
 ' 2>&1)
 echo "  built from $built"
 printf '%s\n' "$out" | sed 's/^/  /'
-$VIRSH detach-disk "$GUEST" vdb >/dev/null 2>&1
+for d in vdb vdc vdd vde; do $VIRSH detach-disk "$GUEST" $d >/dev/null 2>&1; done
 [ "$started" = yes ] && $VIRSH shutdown "$GUEST" >/dev/null 2>&1
 
 # A guest left wedged by a previous run of this very script cannot load
@@ -1369,6 +1458,23 @@ else
 	echo "  ok    file handles $hc check(s) on a live mount, 0 failed"
 fi
 
+# The reserve shared across PFS: two on one volume, which 1.0.107 fixed,
+# and a cluster mastered on two volumes, which 1.0.108 fixed. In each the
+# second of two writes that together cross root's margin must be refused
+# while the first's pages are still dirty, and both files must read back
+# from the media as written. A reading that cannot judge is held until the
+# end, where it makes an otherwise clean run COULD-NOT-RUN.
+mv=$(printf '%s\n' "$out" | multi_verdicts)
+mvoid=$(printf '%s\n' "$mv" | sed -n 's/^VOID //p')
+mfail=$(printf '%s\n' "$mv" | command grep -v '^VOID ' | command grep .)
+if [ -n "$mfail" ]; then
+	printf '%s\n' "$mfail" | sed 's/^/  FAIL  /'
+	printf '%s\n' "$out" | sed -n 's/^multi /        /p'
+	fail=$((fail + 1))
+elif [ -z "$mvoid" ]; then
+	echo "  ok    the shared reserve refused the second write in both shapes, files read back"
+fi
+
 # The run marker scopes the two fault counts to this run. A capture that
 # holds everything back to boot cannot attribute anything to this run, so
 # the two counts below would be readings of other runs and the exit
@@ -1409,8 +1515,12 @@ make -s clean >/dev/null 2>&1
 # The image of a failed run is kept beside the next run's, since the
 # freemap it holds is the reading a loss is diagnosed from on the host.
 [ "$fail" -eq 0 ] || cp "$IMG" "$IMG.failed"
+[ -z "$mfail" ] || for v in a b c; do cp "$FIXDIR/enospc-share-$v.img" "$FIXDIR/enospc-share-$v.img.failed"; done
 [ "$fail" -gt 0 ] || printf '%s\n' "$out" | command grep -qx 'stream whole' || {
 	echo "enospc: COULD-NOT-READ: the guest's kernel log stream lost records: no stream line" >&2
+	exit 2; }
+[ "$fail" -gt 0 ] || [ -z "$mvoid" ] || {
+	printf '%s\n' "$mvoid" | sed 's/^/enospc: COULD-NOT-RUN: /' >&2
 	exit 2; }
 echo "enospc: filled $SIZE, $fail failure(s)"
 [ "$fail" -eq 0 ]
