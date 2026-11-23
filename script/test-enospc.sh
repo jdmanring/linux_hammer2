@@ -573,17 +573,20 @@ if [ "$s" != 0 ]; then
 	exit 2
 fi
 
-$VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio >/dev/null 2>&1 || {
+$VIRSH attach-disk "$GUEST" "$IMG" vdb --targetbus virtio --serial h2enospc >/dev/null 2>&1 || {
 	echo "enospc: COULD-NOT-RUN: could not attach $IMG" >&2; exit 2; }
 for v in c:a d:b e:c; do
-	$VIRSH attach-disk "$GUEST" "$FIXDIR/enospc-share-${v#*:}.img" "vd${v%:*}" --targetbus virtio >/dev/null 2>&1 || {
+	$VIRSH attach-disk "$GUEST" "$FIXDIR/enospc-share-${v#*:}.img" "vd${v%:*}" --targetbus virtio --serial "h2share-${v#*:}" >/dev/null 2>&1 || {
 		echo "enospc: COULD-NOT-RUN: could not attach a shared-reserve volume as vd${v%:*}" >&2; exit 2; }
 done
 scp -q -o ConnectTimeout=5 test/hammer2-reserve-share.sh "$GUEST_SSH:/tmp/h2share.sh" >/dev/null 2>&1
 # A hot-added disk appears in the guest when its probe finishes, which on
-# the KASAN build came after the mount below had already looked for vdb.
+# the KASAN build came after the mount below had already looked for it,
+# and the guest names the four in the order their probes finish, not the
+# order they were attached: on KASAN vdb was a shared-reserve volume. So
+# each is attached with a serial and found by it.
 i=0
-until ssh "$GUEST_SSH" 'test -b /dev/vdb && test -b /dev/vdc && test -b /dev/vdd && test -b /dev/vde' 2>/dev/null; do
+until ssh "$GUEST_SSH" 'for s in h2enospc h2share-a h2share-b h2share-c; do test -b /dev/disk/by-id/virtio-$s || exit 1; done' 2>/dev/null; do
 	i=$((i + 1))
 	[ "$i" -lt 30 ] || {
 		echo "enospc: COULD-NOT-RUN: $GUEST did not show the four attached disks in 60 s" >&2; exit 2; }
@@ -716,7 +719,9 @@ out=$(ssh "$GUEST_SSH" '
 	insmod /tmp/h2.ko $(cat /tmp/h2modargs) || { echo "SETUP insmod failed"; exit 0; }
 	echo "module io_buf_only $(cat /sys/module/hammer2/parameters/io_buf_only)"
 	mkdir -p /mnt/h2enospc
-	mount -t hammer2 /dev/vdb@ENOSPC /mnt/h2enospc ||
+	dv=$(readlink -f /dev/disk/by-id/virtio-h2enospc); dn=${dv##*/}
+	[ -b "$dv" ] || { echo "SETUP no device with serial h2enospc"; exit 0; }
+	mount -t hammer2 $dv@ENOSPC /mnt/h2enospc ||
 	    { echo "SETUP mount failed"; exit 0; }
 	echo "locks after mount $(sed -n "s/^ *debug_locks: *//p" /proc/lockdep_stats)"
 	# The seek exerciser, on the volume with room. It has to write the
@@ -783,21 +788,21 @@ out=$(ssh "$GUEST_SSH" '
 	exp=$(cat /proc/sys/vm/dirty_expire_centisecs)
 	wbi=$(cat /proc/sys/vm/dirty_writeback_centisecs)
 	/tmp/h2mmaptest /mnt/h2enospc/romapc nosync 2>&1 | tail -1
-	w1=$(awk "{print \$5}" /sys/block/vdb/stat)
+	w1=$(awk "{print \$5}" /sys/block/$dn/stat)
 	echo 100 > /proc/sys/vm/dirty_expire_centisecs
 	echo 100 > /proc/sys/vm/dirty_writeback_centisecs
 	sleep 5
-	w2=$(awk "{print \$5}" /sys/block/vdb/stat)
+	w2=$(awk "{print \$5}" /sys/block/$dn/stat)
 	echo $exp > /proc/sys/vm/dirty_expire_centisecs
 	echo $wbi > /proc/sys/vm/dirty_writeback_centisecs
 	echo "romap control writes with no remount $((w2 - w1))"
 	/tmp/h2mmaptest /mnt/h2enospc/romap nosync 2>&1 | tail -1
 	mount -o remount,ro /mnt/h2enospc; echo "romap remount ro exit $?"
-	w1=$(awk "{print \$5}" /sys/block/vdb/stat)
+	w1=$(awk "{print \$5}" /sys/block/$dn/stat)
 	echo 100 > /proc/sys/vm/dirty_expire_centisecs
 	echo 100 > /proc/sys/vm/dirty_writeback_centisecs
 	sleep 5
-	w2=$(awk "{print \$5}" /sys/block/vdb/stat)
+	w2=$(awk "{print \$5}" /sys/block/$dn/stat)
 	echo $exp > /proc/sys/vm/dirty_expire_centisecs
 	echo $wbi > /proc/sys/vm/dirty_writeback_centisecs
 	echo "romap writes after the remount $((w2 - w1))"

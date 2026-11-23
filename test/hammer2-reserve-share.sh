@@ -33,9 +33,10 @@
 # never counts the other PFS's pages, never reaches that line, and
 # admits the second write whole.
 #
-# Prints lines beginning "multi <shape> "; the host judges them. Devices:
-# vdc and vdd for the cluster, vde for the two PFS, each a fresh volume
-# labelled ROOT.
+# Prints lines beginning "multi <shape> "; the host judges them. Devices,
+# found by the serials the host attached them with since the guest names
+# hot-added disks in probe order: h2share-a and -b for the cluster, -c for
+# the two PFS, each a fresh volume labelled ROOT.
 set -u
 TARGET=431048619 MLO=410000000 MHI=452000000
 h1='' h2='' clid=''
@@ -52,11 +53,14 @@ cleanup() {
 trap cleanup EXIT
 mount -t debugfs none /sys/kernel/debug 2>/dev/null
 mkdir -p /mnt/h2ma /mnt/h2mb /mnt/h2mc /mnt/h2mq /mnt/h2mp
-for d in vdc vdd vde; do
+for d in a b c; do
 	n=0
-	while [ ! -b /dev/$d ] && [ $n -lt 30 ]; do sleep 1; n=$((n + 1)); done
-	[ -b /dev/$d ] || { echo "multi setup VOID no /dev/$d"; exit 0; }
+	while [ ! -b /dev/disk/by-id/virtio-h2share-$d ] && [ $n -lt 30 ]; do sleep 1; n=$((n + 1)); done
+	[ -b /dev/disk/by-id/virtio-h2share-$d ] || { echo "multi setup VOID no disk with serial h2share-$d"; exit 0; }
 done
+A=$(readlink -f /dev/disk/by-id/virtio-h2share-a)
+B=$(readlink -f /dev/disk/by-id/virtio-h2share-b)
+C=$(readlink -f /dev/disk/by-id/virtio-h2share-c)
 
 # Root's margin on a mount, free and reserve, from statfs: f_bfree is the
 # free count and f_bavail the free count less the whole reserve.
@@ -126,35 +130,35 @@ shape() {
 	sync
 }
 
-# The cluster: vdc and vdd, CL a MASTER on both, mounted from vdc; vdd's
+# The cluster: A and B, CL a MASTER on both, mounted from A; B's
 # ROOT is filled, so CL's free count is vdd's.
-mount -t hammer2 /dev/vdc@ROOT /mnt/h2ma &&
+mount -t hammer2 $A@ROOT /mnt/h2ma &&
     hammer2 -s /mnt/h2ma pfs-create CL >/dev/null 2>&1 &&
     clid=$(hammer2 -s /mnt/h2ma pfs-clid CL 2>/dev/null) &&
-    mount -t hammer2 /dev/vdd@ROOT /mnt/h2mb &&
+    mount -t hammer2 $B@ROOT /mnt/h2mb &&
     hammer2 -s /mnt/h2mb -t MASTER -u "$clid" pfs-create CL >/dev/null 2>&1 &&
-    mount -t hammer2 /dev/vdc@CL /mnt/h2mq ||
+    mount -t hammer2 $A@CL /mnt/h2mq ||
     { echo "multi cluster VOID setup failed"; clid=; }
 if [ -n "$clid" ]; then
 	shape cluster /mnt/h2mb /mnt/h2mq/w1 /mnt/h2mb/w2
 	umount /mnt/h2mq; umount /mnt/h2mb; umount /mnt/h2ma
 	echo 3 > /proc/sys/vm/drop_caches
-	mount -t hammer2 /dev/vdc@ROOT /mnt/h2ma && mount -t hammer2 /dev/vdd@ROOT /mnt/h2mb &&
-	    mount -t hammer2 /dev/vdc@CL /mnt/h2mq &&
+	mount -t hammer2 $A@ROOT /mnt/h2ma && mount -t hammer2 $B@ROOT /mnt/h2mb &&
+	    mount -t hammer2 $A@CL /mnt/h2mq &&
 	    h2=$(sha256sum /mnt/h2mq/w1 /mnt/h2mb/w2 2>/dev/null | cut -d" " -f1)
 	echo "multi cluster hashes $(echo "$h1" | grep -c .) before, $(echo "${h2:-}" | grep -c .) read back, $( [ "$h1" = "${h2:-}" ] && echo same || echo differ)"
 	umount /mnt/h2mq; umount /mnt/h2mb; umount /mnt/h2ma
 fi
 
-# Two PFS on one volume: vde's ROOT and P2, ROOT filled.
+# Two PFS on one volume: C's ROOT and P2, ROOT filled.
 h1='' h2=''
-mount -t hammer2 /dev/vde@ROOT /mnt/h2mc &&
+mount -t hammer2 $C@ROOT /mnt/h2mc &&
     hammer2 -s /mnt/h2mc pfs-create P2 >/dev/null 2>&1 &&
-    mount -t hammer2 /dev/vde@P2 /mnt/h2mp ||
+    mount -t hammer2 $C@P2 /mnt/h2mp ||
     { echo "multi pfs VOID setup failed"; exit 0; }
 shape pfs /mnt/h2mc /mnt/h2mp/w1 /mnt/h2mc/w2
 umount /mnt/h2mp; umount /mnt/h2mc
 echo 3 > /proc/sys/vm/drop_caches
-mount -t hammer2 /dev/vde@ROOT /mnt/h2mc && mount -t hammer2 /dev/vde@P2 /mnt/h2mp &&
+mount -t hammer2 $C@ROOT /mnt/h2mc && mount -t hammer2 $C@P2 /mnt/h2mp &&
     h2=$(sha256sum /mnt/h2mp/w1 /mnt/h2mc/w2 2>/dev/null | cut -d" " -f1)
 echo "multi pfs hashes $(echo "$h1" | grep -c .) before, $(echo "${h2:-}" | grep -c .) read back, $( [ "$h1" = "${h2:-}" ] && echo same || echo differ)"
