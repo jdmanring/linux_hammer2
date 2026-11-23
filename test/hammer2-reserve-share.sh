@@ -32,10 +32,10 @@
 #               passes its share of the background threshold
 #               (wb_over_bg_thresh()). A bdi with no writeout history
 #               gets about an eighth of the global threshold, under one X,
-#               so each bdi's min_ratio is set to 40 for the window: a
-#               share of 640 MB, above the two X the unfixed module
-#               leaves on one bdi, and the two bdis of the cluster stay
-#               under the sum of 100 the kernel allows.
+#               so each bdi's min_ratio is raised for the window (ratio()
+#               below): 40, a share of 640 MB, above the two X the
+#               unfixed module leaves on one bdi, and lower where more
+#               bdis would pass the sum of 100 the kernel allows.
 #   the syncer  hammer2_sync_work() runs sync_filesystem() every 30 s from
 #               each PFS's mount, at a phase the fill leaves anywhere,
 #               so the shape's mounts are remounted just before the
@@ -112,16 +112,21 @@ wdiag() {
 }
 # Every hammer2 bdi's min_ratio set to $1, read back; fails on none found
 # or one that did not take, since a write the kernel refuses past the sum
-# of 100 is accepted by the shell either way.
+# of 100 is accepted by the shell either way. "share" is 40, or 90 split
+# among the bdis where that is less: a module with a bdi per superblock
+# (before 1.0.107) gives the cluster three, each holding one X at most,
+# and 30 of 1.6 GB is still above one X.
 ratio() {
-	n=0
-	for r in /sys/class/bdi/hammer2-*/min_ratio; do
-		[ -e "$r" ] || continue
-		echo "$1" > "$r" 2>/dev/null
-		[ "$(cat "$r")" = "$1" ] || return 1
-		n=$((n + 1))
+	v=$1
+	set -- /sys/class/bdi/hammer2-*/min_ratio
+	[ -e "$1" ] || return 1
+	if [ "$v" = share ]; then
+		v=$((90 / $#)); [ $v -gt 40 ] && v=40
+	fi
+	for r; do
+		echo "$v" > "$r" 2>/dev/null
+		[ "$(cat "$r")" = "$v" ] || return 1
 	done
-	[ $n -gt 0 ]
 }
 remount_cluster() {
 	umount /mnt/h2mq; umount /mnt/h2mb; umount /mnt/h2ma
@@ -159,7 +164,7 @@ shape() {
 	x=$(( (free - 2 * res - 25165824) / 65536 ))
 	sysctl -qw vm.dirty_background_bytes=1600000000 vm.dirty_bytes=2400000000
 	$remount || { echo "multi $name VOID remount failed"; return; }
-	ratio 40 || { echo "multi $name VOID min_ratio 40 did not take"; return; }
+	ratio share || { echo "multi $name VOID min_ratio did not take"; return; }
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	w0=$(written)
 	echo "multi $name window go: $(wdiag "$fm")"
