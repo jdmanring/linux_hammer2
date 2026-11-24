@@ -515,3 +515,44 @@ comment at its line 211 and the `HAMMER2_XOP_INODE_STOP` flush at its
 line 257, and Kusumi's three heads at `v1.2.13` carry the same body.
 `bugs.dragonflybsd.org` was not searched, for the proof-of-work reason
 above, so it is not claimed unreported.
+
+## hammer2_ioctl-pfs-create-mntlk
+
+`dragonfly-hammer2_ioctl-pfs-create-mntlk.patch` and
+`ports-hammer2_ioctl-pfs-create-mntlk.patch`.
+
+`hammer2_ioctl_pfs_create()` calls `hammer2_pfsalloc()` without
+`hammer2_mntlk`, which mount, unmount, the delete ioctl and bulkfree
+hold around every other change to `hammer2_pfslist` and `mount_count`.
+The call walks the list for the PFS of the new root's cluster id and
+then joins the root to it, so an unmount that tears down the last device
+of that cluster between the walk and the join frees the PFS through
+`hammer2_pfsfree_scan()` while the create goes on to lock its root inode
+and write its element array. The name lookup before it runs unlocked
+too, so two creates of one name can both find it free. The patches take
+the lock before the lookup and release it after the transaction, the
+order the delete ioctl and the unmount take it in: each of the four
+blocking sites is an entry point that holds no transaction when it takes
+the lock. The ports patch also releases it on the MASTER-only refusal
+the ports carry between the lookup and the transaction.
+
+Still present at head on 2026-11-24, read through the forge API:
+DragonFly `9f0e625c6fca` calls `hammer2_pfsalloc()` at
+`sys/vfs/hammer2/hammer2_ioctl.c:698` with no `hammer2_mntlk` in the
+function and keeps `XXX check locking` above `hammer2_pfsalloc()` at
+`hammer2_vfsops.c:376`; Kusumi's FreeBSD, NetBSD and OpenBSD heads
+(`3df307f7db`, `64095c3947`, `a3747df966`) call it at `:334`, `:335` and
+`:338` of `src/sys/fs/hammer2/hammer2_ioctl.c`, also unlocked. The ports
+patch applies to all three and the DragonFly patch to its head; after
+either, every return between the lock and the transaction's end releases
+it. `bugs.dragonflybsd.org` was not searched, for the proof-of-work
+reason above, so it is not claimed unreported.
+
+The snapshot ioctl reaches `hammer2_pfsalloc()` unlocked as well and is
+not in these patches. In this port its body runs `hammer2_sync()`, which
+takes `s_umount`, and an unmount takes `s_umount` before `hammer2_mntlk`,
+so the lock cannot span that call. DragonFly's body calls
+`hammer2_vfs_sync()` at its `hammer2_ioctl.c:847`, and the order of that
+call against DragonFly's unmount was not read. A snapshot gets a new
+cluster id and joins no PFS, so what remains there is the list insert
+racing the scan's removals.

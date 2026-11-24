@@ -27224,3 +27224,130 @@ checks that abort, fail then abort, and return clean, reads void, the
 failure and ok (`inc7/caller-drive-027e7807.out`). `027e7807` adds the
 case that keeps a void line ahead of a full result, which the new guard
 had left no case distinguishing.
+
+## A PFS create raced an unmount for the PFS it joined, 2026-11-24
+
+The PFS create ioctl called `hammer2_pfsalloc()` without
+`hammer2_mntlk`. Mount, unmount, the delete ioctl and bulkfree hold that
+lock around every other change to `hammer2_pfslist` and to a device's
+`mount_count`, and the synchronization thread, the link work and the
+remote request path try for it. `hammer2_pfsalloc()` walks the list for
+the PFS of the new root's cluster id and then joins the root to it, so an
+unmount that tore down the last device of that cluster between the two
+freed that PFS in `hammer2_pfsfree_scan()`, which frees a PFS left with no
+element, while the create went on to read it. The name lookup before the
+create ran unlocked too, so two creates of one name could both find it
+free. Found on 2026-11-22 reading the second review of the cluster
+reserve's GAP-1, the carried `mount_count` race beside the bdi link that
+the entry above records as not fixed. DragonFly and the three BSD ports
+are the same, and DragonFly keeps `XXX check locking` above
+`hammer2_pfsalloc()`.
+
+`7d92a705` adds `pfsalloc_hold_ms`, a debug-build module parameter beside
+`seek_hold_ms`, which holds `hammer2_pfsalloc()` after its walk and
+prints the hold's start and end. `177c8e1a` has the create take the lock
+before its lookup and release it after its transaction. Every blocking
+holder takes it at an entry point that holds no transaction, and nothing
+waits for it while holding one, so taking it ahead of the super-root's
+flush transaction adds no inversion; read at each site (`hammer2_ioctl.c`
+delete and bulkfree, `hammer2_vfsops.c` mount, remount and unmount) and
+at the four try sites. With the create locked, every caller that can
+join a mounted PFS holds the lock, which closes the unlocked
+`mount_count` increment the entry above left open for the create.
+
+The driver, `p7-notes/crash-instrument/inc8/create-race.sh`, with its
+expectations written before the first run in `create-race-expected.md`
+beside it: two fresh 2 GiB volumes, `ROOT` on each; on `vdc` a MASTER
+`CL` created and `ROOT` unmounted, so `vdc@CL` is the device's one
+mount; on `vdb` `ROOT` mounted and a MASTER of `CL`'s cluster id created,
+which the walk resolves to `CL`'s PFS. The `plain` arm creates, then
+unmounts `vdc@CL`; the `race` arm sets the hold to 5,000 ms, creates in
+the background and unmounts once the hold's start line is in the log.
+Both modules built with `HAMMER2_LOCKDEBUG=1`, one boot per arm, the
+kernel log streamed to the host as it was written.
+
+| arm | `177c8e1a` debug | `177c8e1a` KASAN | `7d92a705` debug | `7d92a705` KASAN |
+|---|---|---|---|---|
+| `plain` | create 0, unmount 0 in 0.04 s, `vdb@CL` mounts, `rmmod` 0, warnings 0 | the same, 0.12 s | the same, 0.48 s | the same, 0.09 s |
+| `race`, order in the log | hold, unmount start, hold end, unmount returned | the same | hold, unmount start, unmount returned, hold end | the same |
+| `race`, unmount | 0 after 5.09 s | 0 after 6.05 s | 0 after 0.04 s | 0 after 0.09 s |
+| `race`, after | create 0, `vdb@CL` mounts with `CL`'s cluster id, `rmmod` 0, warnings 0 | the same | page fault at the hold's end, guest destroyed | KASAN `vmalloc-out-of-bounds` read in `hammer2_pfsalloc+0x1e7d`, then the same page fault |
+
+QEMU cores 0 (`inc8/create-race-{177c8e1a,7d92a705}-{debug,kasan}.out`,
+with each arm's log as `.klog` and from its start marker as `.since`).
+Both faults are the read of `pmp->iroot` at `hammer2_vfsops.c:498` of
+`7d92a705`: `faddr2line` resolves the debug module's
+`hammer2_pfsalloc+0x465` and the KASAN module's `+0x1e7d` to that line,
+and `pahole` places `iroot` at offset 7752, 0x1e48, the low bits of both
+faulting addresses (`ffffd0fd09401e48`, `ffffc9000a201e48`). KASAN names
+it `vmalloc-out-of-bounds` rather than a use after free, which the
+expectation said, because `hmalloc()` is `kvmalloc()` and the structure
+is 5,015,160 bytes on these builds, so it is always vmalloc'd and its
+free unmaps it. 4,980,736 of those bytes are `inumhash[32768]`, the
+inode-number hash DragonFly declares at the same size; its buckets carry
+lockdep state on these builds, and a release build's size was not read.
+Every snapshot allocates one of these structures; that is recorded here
+as found. `HAMMER2_INUMHASH_MASK` is built from `HAMMER2_IOHASH_SIZE` in
+both trees, which is right only while the two sizes are equal, as they
+are.
+
+The snapshot ioctl still calls `hammer2_pfsalloc()` without the lock: its
+body runs `hammer2_sync()`, which takes `s_umount`, and an unmount holds
+`s_umount` before it takes `hammer2_mntlk`, so the lock cannot span that
+call. A snapshot gets a new cluster id (`hammer2_ioctl.c:1146`) and joins
+no PFS, so what remains there is its insert into the list racing the
+scan's removals. Its lock order is the next design.
+
+Staged for upstream: `doc/upstream/dragonfly-hammer2_ioctl-pfs-create-mntlk.patch`
+and `ports-hammer2_ioctl-pfs-create-mntlk.patch`, with the state at each
+head in `doc/upstream/README-provenance.md`.
+
+Found while updating the status page: the paragraph under its `XXX`
+table summed the port's marks to 720 with 190 in `hammer2_synchro.c` and
+72 in `hammer2_vfsops.c`, where the table, which `test-inventory.sh`
+checks, said 724, 193 and 73. The paragraph is prose and no gate reads
+it; it now reads 726, 193, 74 and 55 with this change's two marks. The
+`hammer2_vfsops.c` origin row named `link_hold_ms` and `volconf_hold_ms`
+and not `seek_hold_ms`; it names all four hold parameters now.
+
+At the final source, `177c8e1a`, from a detached worktree
+(`inc8/final.sh`, its log `final.log`): `test-enospc.sh` on
+`h2debug-7.3tls` and on `h2kasan-7.3tls` 0 failures, the shared reserve
+refusing the second write in both shapes on each; `test-fixtures.sh` 11
+images, 110 ioctl results, 0 failures; and the six harnesses that make
+PFS on a cluster or run the threads that try for `hammer2_mntlk` exit 0:
+`pfs-domains` (3 PFS roots, 0 failures), `sync-empty-base` (18 checks),
+`cluster-dmsg` (87), `cluster-sync` (60), `cluster-wire` (36),
+`cluster-quorum` (24) (`inc8/final-*-{debug,kasan}-177c8e1a.out`). QEMU
+cores 0. The host instruments ran first against plain `linux-7.3`, where
+the analyzer read 15 candidates against the record's 8; the 7 added are
+`hammer2_os.h:1664`, `so` never read when `CONFIG_NET_HANDSHAKE` is off,
+once per file that includes the header, the config-only candidate the
+"N10.6 C3" entry records. Against `linux-7.3-tls`, the tree of the readings at
+`ecd4a703`, the analyzer reads the same 8 with line numbers set aside
+(`inc8/final-analyze-tls-177c8e1a.out`); W=1 24 objects, 0 warnings
+(`final-w1-177c8e1a.out`); smatch's 59 are the same set as at
+`ecd4a703` apart from the tree's path and one line number the hold moved
+(`inc8/final-smatch-177c8e1a.out`, plain tree); the compile database 24
+entries.
+
+`8d9a45ad` added `script/pfs-create-race.sh` with its plain arm before its
+race arm, in one boot on the same two volumes. Run against both modules
+on both builds (`inc8/pfs-create-race-*-plain-first.out`), it passed all
+ten checks on `7d92a705` as on `177c8e1a`: the unmount waited 8,224 ms on
+debug and 5,366 ms on KASAN, and nothing faulted. The plain arm leaves a
+PFS mastered on both volumes, and the race's teardown of `vdc` syncs
+every PFS with an element there (`hammer2_pfsfree_scan()`); with that PFS
+present, the unmount waited out the held create without the lock. What
+it waited on inside that sync is not measured. `46981d25` runs the race
+first, on volumes no cluster spans, as the driver's fresh volumes did.
+Run from a frozen copy of that version against the same four modules
+(`inc8/script-runs.sh`, its log `script-runs.log`,
+`inc8/pfs-create-race-{177c8e1a,7d92a705}-{debug,kasan}.out`):
+`177c8e1a` exits 0 on both builds, all ten checks passing, the race's
+unmount returning after 5,072 ms on debug and 4,676 ms on KASAN with the
+create already done; `7d92a705` exits 1 on both, the unmount returning
+after 38 ms and 81 ms with the create still held, the create then killed
+(status 137) and the guest destroyed when it would not shut down, 8 of
+the 9 userland checks failed and the hold's start the one passing. QEMU
+cores 0.

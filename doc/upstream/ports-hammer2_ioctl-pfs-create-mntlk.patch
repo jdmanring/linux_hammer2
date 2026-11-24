@@ -1,0 +1,37 @@
+--- a/src/sys/fs/hammer2/hammer2_ioctl.c
++++ b/src/sys/fs/hammer2/hammer2_ioctl.c
+@@ -272,11 +272,24 @@
+ 	if (hammer2_is_rdonly(ip->pmp->mp))
+ 		return (EROFS);
+ 
+-	if (hammer2_ioctl_pfs_lookup(ip, pfs) == 0)
++	/*
++	 * hammer2_pfsalloc() below walks and inserts into hammer2_pfslist
++	 * and adjusts mount_count, which mount and unmount change under
++	 * hammer2_mntlk; an unmount that tears down the last device of the
++	 * cluster in between frees the pmp the walk found.  The lookup also
++	 * shows the name free only while no other create can insert it.
++	 * Take the lock before the transaction, as pfs_delete does.
++	 */
++	hammer2_lk_ex(&hammer2_mntlk);
++	if (hammer2_ioctl_pfs_lookup(ip, pfs) == 0) {
++		hammer2_lk_unlock(&hammer2_mntlk);
+ 		return (EEXIST);
++	}
+ 
+-	if (pfs->pfs_type != HAMMER2_PFSTYPE_MASTER)
++	if (pfs->pfs_type != HAMMER2_PFSTYPE_MASTER) {
++		hammer2_lk_unlock(&hammer2_mntlk);
+ 		return (EOPNOTSUPP);
++	}
+ 
+ 	hammer2_trans_init(hmp->spmp, HAMMER2_TRANS_ISFLUSH);
+ 	mtid = hammer2_trans_sub(hmp->spmp);
+@@ -338,6 +351,7 @@
+ 	}
+ 	hammer2_trans_done(hmp->spmp,
+ 	    HAMMER2_TRANS_ISFLUSH | HAMMER2_TRANS_SIDEQ);
++	hammer2_lk_unlock(&hammer2_mntlk);
+ 
+ 	return (error);
+ }
