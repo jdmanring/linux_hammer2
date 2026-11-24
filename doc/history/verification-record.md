@@ -27108,9 +27108,11 @@ the second write or whose files read back differing, and holds it void
 where the margin was missed, the first write was refused, or any hammer2
 bdi wrote back before the second write. An arm that printed no line at
 all is void, since it did not run; one shape with lines and one without
-fails. The selftest drives the function with nine cases. Seven mutants
-of it, each removing one branch, fail the selftest and the unmutated
-copy passes (`p7-notes/crash-instrument/inc7/verdict-mutants-b5bc4b32.out`).
+fails, and so does a result line without the twenty fields the arm
+prints. The selftest drives the function with eleven cases. Eight
+mutants of it, each removing one branch, fail the selftest and the
+unmutated copy passes
+(`p7-notes/crash-instrument/inc7/verdict-mutants-027e7807.out`).
 The arm's written-back sum prints nothing where no hammer2 bdi stats
 file is readable, and the shape is then void, since a sum over none
 would read 0 and hold every window.
@@ -27167,18 +27169,19 @@ refuses a sum past 100 (`inc7/at-c3af8f75/control-*-86bb073c.out`).
 Three bdis each hold one X at most, and 30 percent of 1.6 GB is above
 it; the fixed module has two bdis at most and keeps 40.
 
-At `b5bc4b32`, on `h2debug-7.3tls` and `h2kasan-7.3tls`, the controls
-(`inc7/at-b5bc4b32/control-{debug,kasan}-*.out`): `9c315b08`, 1.0.107's
+At `027e7807`, on `h2debug-7.3tls` and `h2kasan-7.3tls`, the controls
+(`inc7/at-027e7807/control-{debug,kasan}-*.out`): `9c315b08`, 1.0.107's
 source, exits 1 on the cluster shape, both writes admitted 91,914,240
 bytes past root's margin and "2 before, 1 read back, differ", its pfs
 shape refused and read back the same; `86bb073c`, before the shared bdi,
 exits 1 on both shapes, the pfs files reading "2 before, 2 read back,
 differ". The tip: `test-enospc.sh` 12 of 12 on debug and 3 of 3 on
 KASAN, the shared arm ok in each of the 15, kernel warnings and module
-faults 0 in each (`inc7-enospc-{debug,kasan}-b5bc4b32.out`); QEMU cores 0
-throughout. The same controls and tip read the same at `e3981c65`, before
-review round 1's fixes (`inc7/at-e3981c65/`, `inc7-enospc-*-e3981c65`). `test-fixtures.sh` at the tip: 11 images, 0 failures
-(`inc7/at-b5bc4b32/fixtures-debug.out`). Nothing under `src/` changed since
+faults 0 in each (`inc7-enospc-{debug,kasan}-027e7807.out`); QEMU cores 0
+throughout. The same controls and tip gave the same verdicts at `e3981c65`
+and at `b5bc4b32`, before each review round's fixes (`inc7/at-e3981c65/`,
+`inc7/at-b5bc4b32/`, and the `inc7-enospc-*` batches of each). `test-fixtures.sh` at the tip: 11 images, 0 failures
+(`inc7/at-027e7807/fixtures-debug.out`). Nothing under `src/` changed since
 `3f238de9`, so the instrument readings at `ecd4a703` in the entry above
 are this source's.
 
@@ -27212,3 +27215,12 @@ beside it) found the empty arm read as two failures, the gate's copy of
 the arm to the guest unchecked, and the written-back sum over no bdi;
 `b5bc4b32` fixes the three, and widens `test-posix.sh` to the `#!/bin/sh`
 scripts under `test/`, which run on the guest and met no parse before.
+Review round 2 (`inc7/review-inc7-round2.md`, FIX-FIRST, dispositions
+beside it) found that a result line cut short ended the check under
+`set -u` with nothing printed, which the gate read as a pass. `464bb20b`
+voids such a line and holds the check void wherever it stops early,
+keeping a failure it had printed; the gate's caller, driven with stand-in
+checks that abort, fail then abort, and return clean, reads void, the
+failure and ok (`inc7/caller-drive-027e7807.out`). `027e7807` adds the
+case that keeps a void line ahead of a full result, which the new guard
+had left no case distinguishing.
