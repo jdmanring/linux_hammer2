@@ -470,6 +470,13 @@ pages on every device it masters: `hammer2_pfs_dirty_bytes()` wraps its
 parameters with the BSD continuation indent and returns `return (best);`,
 as the file's other functions do. No category is new.
 
+1,684 to 1,682 when the PFS create ioctl came to hold `hammer2_mntlk`
+across its lookup and its transaction: its two `return (EINVAL);` and its
+`return (EEXIST);` became assignments followed by `goto unlock;`, three
+rows fewer, and the label returns `return (error);`, one row more. The
+errnos stay positive inside the module, by the core's convention. No
+category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the

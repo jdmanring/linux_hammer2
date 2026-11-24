@@ -320,6 +320,11 @@
 # `return is not a function` 400 -> 401, the second parameter line and the
 # `return (best);` of hammer2_pfs_dirty_bytes(). No category is new. See
 # README.kernel-style.md.
+# 1,684 to 1,682: the PFS create ioctl's early returns under
+# hammer2_mntlk became `error = ...; goto unlock;`, so `return -EINVAL`
+# 73 -> 71 and `return -EEXIST` 4 -> 3, and the label's `return (error);`
+# moved `return is not a function` 401 -> 402. No category is new. See
+# README.kernel-style.md.
 23 Argument 'X' is not used in function-like macro
 1 Avoid logging continuation uses where feasible
 2 Avoid unnecessary line continuations
@@ -350,15 +355,15 @@
 4 please, no space before tabs
 255 please, no spaces at the start of a line
 86 quoted string split across lines
-401 return is not a function, parentheses are not required
+402 return is not a function, parentheses are not required
 4 return of an errno should typically be negative (ie: return -EAGAIN)
 4 return of an errno should typically be negative (ie: return -EBUSY)
 1 return of an errno should typically be negative (ie: return -ECONNRESET)
 2 return of an errno should typically be negative (ie: return -EDOM)
-4 return of an errno should typically be negative (ie: return -EEXIST)
+3 return of an errno should typically be negative (ie: return -EEXIST)
 1 return of an errno should typically be negative (ie: return -EINPROGRESS)
 2 return of an errno should typically be negative (ie: return -EINTR)
-73 return of an errno should typically be negative (ie: return -EINVAL)
+71 return of an errno should typically be negative (ie: return -EINVAL)
 16 return of an errno should typically be negative (ie: return -EIO)
 1 return of an errno should typically be negative (ie: return -EISDIR)
 1 return of an errno should typically be negative (ie: return -EKEYEXPIRED)
