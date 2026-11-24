@@ -241,6 +241,14 @@ module_param_named(volconf_hold_ms, hammer2_volconf_hold_ms, uint, 0644);
  */
 unsigned int hammer2_seek_hold_ms;
 module_param_named(seek_hold_ms, hammer2_seek_hold_ms, uint, 0644);
+/*
+ * XXX Linux: a hold in hammer2_pfsalloc() after its walk of
+ * hammer2_pfslist has found or not found the PFS, before the PFS is
+ * allocated, inserted or joined, so an unmount can be aimed between the
+ * two.  Debug build only; zero holds nothing.
+ */
+unsigned int hammer2_pfsalloc_hold_ms;
+module_param_named(pfsalloc_hold_ms, hammer2_pfsalloc_hold_ms, uint, 0644);
 
 /*
  * Linux: the hold behind every *_hold_ms parameter, so a test can aim
@@ -449,6 +457,8 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 			    (const char *)ripdata->filename) == 0)
 				break;
 		}
+		/* Linux: the control for the callers' hammer2_mntlk */
+		HAMMER2_DEBUG_HOLD(hammer2_pfsalloc_hold_ms, "pfsalloc");
 	}
 
 	if (pmp == NULL) {
