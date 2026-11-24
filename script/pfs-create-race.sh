@@ -9,18 +9,22 @@
 # Two volumes on the guest, ROOT on each. On vdc a MASTER named CLn is
 # created and ROOT unmounted, so vdc's one mount is vdc@CLn; on vdb ROOT is
 # mounted, and a MASTER of CLn's cluster id is created there, which the
-# walk resolves to CLn's PFS. Two arms in one boot, CL1 and CL2:
+# walk resolves to CLn's PFS. Two arms in one boot, the race first, on
+# volumes no cluster spans yet. An arm run before it leaves a PFS mastered
+# on both volumes, and the teardown of vdc syncs every PFS with an element
+# there (hammer2_pfsfree_scan()); with the plain arm first, the unmount on
+# 7d92a705 waited out the held create and the arm passed, on both builds.
 #
-#   plain  the create, then the unmount of vdc@CL1. The baseline: create 0,
-#          unmount 0, vdb@CL1 mounts.
 #   race   pfsalloc_hold_ms=5000 holds the create after its walk; the
-#          unmount of vdc@CL2 is issued once the hold's start line is in
+#          unmount of vdc@CL1 is issued once the hold's start line is in
 #          the log. The unmount must wait: the create has exited by the
 #          time the unmount returns, and the unmount took most of the
 #          hold. Without the lock the unmount returns at once, the create
 #          is still held, and when the hold ends it reads the freed PFS
 #          (a page fault on the debug build, a vmalloc-out-of-bounds read
 #          in hammer2_pfsalloc() on KASAN, at 7d92a705).
+#   plain  the create, then the unmount of vdc@CL2. The baseline: create 0,
+#          unmount 0, vdb@CL2 mounts.
 #
 # The race's reading is taken in userland and does not need the kernel
 # log: a control guest that faults after it still has printed it, and is
@@ -76,8 +80,8 @@ test -w $P || { echo "no pfsalloc_hold_ms: not a HAMMER2_LOCKDEBUG module"; exit
 mkdir -p /mnt/h2a /mnt/h2c /mnt/h2q
 mount -t hammer2 /dev/vdb@ROOT /mnt/h2a || { echo "mount vdb ROOT failed"; exit 9; }
 now() { date +%s%N; }
-for arm in plain race; do
-	n=CL1; [ $arm = race ] && n=CL2
+for arm in race plain; do
+	n=CL2; [ $arm = race ] && n=CL1
 	mount -t hammer2 /dev/vdc@ROOT /mnt/h2c || { echo "$arm mount vdc ROOT failed"; exit 9; }
 	hammer2 -s /mnt/h2c pfs-create $n >/dev/null 2>&1 || { echo "$arm pfs-create on vdc failed"; exit 9; }
 	clid=$(hammer2 -s /mnt/h2c pfs-clid $n 2>/dev/null)
@@ -115,12 +119,12 @@ v=$(grep -E 'guest (insmod failed|no pfsalloc_hold_ms|race no hold within)' "$T"
 	echo "pfs-create-race: COULD-NOT-RUN: ${v#  guest }" >&2; exit 2; }
 want "the plain create returned 0" 'guest plain create 0$'
 want "the plain unmount returned 0" 'guest plain unmount 0 '
-want "vdb@CL1 mounts after the plain arm" 'guest plain mount vdb@CL1 0$'
+want "vdb@CL2 mounts after the plain arm" 'guest plain mount vdb@CL2 0$'
 want "the race's hold started" 'guest race hold started$'
 want "the create was done when the unmount returned" 'guest race create done when the unmount returned$'
 want "the race's unmount waited most of the hold" 'guest race unmount 0 after ([4-9][0-9]{3}|[1-9][0-9]{4,}) ms$'
 want "the race's create returned 0" 'guest race create 0$'
-want "vdb@CL2 mounts after the race" 'guest race mount vdb@CL2 0$'
+want "vdb@CL1 mounts after the race" 'guest race mount vdb@CL1 0$'
 want "rmmod returned 0" 'guest rmmod 0$'
 echo "pfs-create-race: $nc check(s), $nf failed"
 # A failure above is read from userland and stands whether or not the
