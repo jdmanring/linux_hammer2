@@ -27108,8 +27108,8 @@ the second write or whose files read back differing, and holds it void
 where the margin was missed, the first write was refused, or any hammer2
 bdi wrote back before the second write. An arm that printed no line at
 all is void, since it did not run; one shape with lines and one without
-fails, and so does a result line without the twenty fields the arm
-prints. The selftest drives the function with eleven cases. Eight
+fails; a result line without the twenty fields the arm prints is void.
+The selftest drives the function with eleven cases. Eight
 mutants of it, each removing one branch, fail the selftest and the
 unmutated copy passes
 (`p7-notes/crash-instrument/inc7/verdict-mutants-027e7807.out`).
