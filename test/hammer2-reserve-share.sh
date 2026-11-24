@@ -86,13 +86,17 @@ margin() {
 	f=$(($1 * $3)) r=$((($1 - $2) * $3))
 	echo $((f - r / 2)) $f $r
 }
+# The sum of every hammer2 bdi's BdiWritten, or nothing when no stats
+# file is readable (no debugfs, no bdi), since a sum over none reads 0
+# and would pass every window.
 written() {
-	t=0
+	t=0 n=0
 	for s in /sys/kernel/debug/bdi/hammer2-*/stats; do
 		[ -r "$s" ] || continue
 		t=$((t + $(sed -n "s/^BdiWritten: *\([0-9]*\) kB/\1/p" "$s")))
+		n=$((n + 1))
 	done
-	echo $t
+	[ $n -gt 0 ] && echo $t
 }
 # Not judged: each bdi's written count, the filled volume's free blocks,
 # and the page and reclaim counters, for reading a window that did not
@@ -167,9 +171,11 @@ shape() {
 	ratio share || { echo "multi $name VOID min_ratio did not take"; return; }
 	sync; echo 3 > /proc/sys/vm/drop_caches
 	w0=$(written)
+	[ -n "$w0" ] || { echo "multi $name VOID no hammer2 bdi stats readable"; return; }
 	echo "multi $name window go: $(wdiag "$fm")"
 	set -- $(ddw "$f1" $x); b1=$1 e1=$2
 	w1=$(written)
+	[ -n "$w1" ] || { echo "multi $name VOID no hammer2 bdi stats readable"; return; }
 	echo "multi $name window first: $(wdiag "$fm")"
 	set -- $(ddw "$f2" $x); b2=$1 e2=$2
 	echo "multi $name window second: $(wdiag "$fm")"

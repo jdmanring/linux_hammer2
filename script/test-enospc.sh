@@ -82,6 +82,10 @@ fault_verdicts() {
 # the second write is the data-sync write the check makes near the line.
 multi_verdicts() {
 	mv_in=$(cat)
+	# Not one line from the arm: it did not run, which says nothing about
+	# either shape. One shape with lines and one without still fails.
+	printf '%s\n' "$mv_in" | command grep -q '^multi ' || {
+		echo "VOID the shared-reserve arm printed no line"; return; }
 	for mv_s in cluster pfs; do
 		mv_v=$(printf '%s\n' "$mv_in" | command grep -m1 -e "^multi $mv_s VOID" -e '^multi setup VOID')
 		mv_r=$(printf '%s\n' "$mv_in" | command grep -m1 "^multi $mv_s RESULT ")
@@ -302,6 +306,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	    "$pr" "multi pfs hashes $ok2"
 	mcase "a shape with no result" fail "$cr" "multi cluster hashes $ok2"
 	mcase "a shape with no hash line" fail "$cr" "$pr" "multi pfs hashes $ok2"
+	mcase "an arm that printed no line" void ""
 	mcase "a refusal after writeback ran during the first write" void \
 	    "multi cluster RESULT $mr second 173211648 ENOSPC written-before-second 50944 kB" \
 	    "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
@@ -582,7 +587,8 @@ for v in c:a d:b e:c; do
 	$VIRSH attach-disk "$GUEST" "$FIXDIR/enospc-share-${v#*:}.img" "vd${v%:*}" --targetbus virtio --serial "h2share-${v#*:}" >/dev/null 2>&1 || {
 		echo "enospc: COULD-NOT-RUN: could not attach a shared-reserve volume as vd${v%:*}" >&2; exit 2; }
 done
-scp -q -o ConnectTimeout=5 test/hammer2-reserve-share.sh "$GUEST_SSH:/tmp/h2share.sh" >/dev/null 2>&1
+scp -q -o ConnectTimeout=5 test/hammer2-reserve-share.sh "$GUEST_SSH:/tmp/h2share.sh" >/dev/null 2>&1 || {
+	echo "enospc: COULD-NOT-RUN: could not copy the shared-reserve script to the guest" >&2; exit 2; }
 # A hot-added disk appears in the guest when its probe finishes, which on
 # the KASAN build came after the mount below had already looked for it,
 # and the guest names the four in the order their probes finish, not the

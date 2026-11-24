@@ -128,7 +128,7 @@ done
 # a clean count of failures among no files, which is what this gate looks like
 # when it is broken.
 n=0
-for f in script/*.sh; do
+for f in script/*.sh test/*.sh; do
 	case "$(head -1 "$f")" in *bash*) continue ;; esac
 	n=$((n + 1))
 	for sh in $shells; do
