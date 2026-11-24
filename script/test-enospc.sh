@@ -97,7 +97,11 @@ multi_verdicts() {
 		fi
 		# multi S RESULT margin M free F reserve R X x first B1 E1 second B2 E2 written-before-second W kB
 		set -- $mv_r
-		if [ "${19}" != 0 ]; then
+		# A line cut short leaves the fields below unset, which under
+		# set -u ends this function with nothing printed.
+		if [ $# -ne 20 ]; then
+			echo "VOID the $mv_s result line has $# fields, not 20"
+		elif [ "${19}" != 0 ]; then
 			echo "VOID the $mv_s window did not hold: ${19} kB written back before the second write"
 		elif [ "${14}" != ok ]; then
 			echo "VOID the $mv_s shape's first write was refused, so its margin was not the one set"
@@ -307,6 +311,9 @@ if [ "${1:-}" = "--selftest" ]; then
 	mcase "a shape with no result" fail "$cr" "multi cluster hashes $ok2"
 	mcase "a shape with no hash line" fail "$cr" "$pr" "multi pfs hashes $ok2"
 	mcase "an arm that printed no line" void ""
+	mcase "a result line cut short" void \
+	    "multi cluster RESULT margin 442856244 free 492978176 reserve 100243865 X 267321344 first 267321344 ok" \
+	    "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
 	mcase "a refusal after writeback ran during the first write" void \
 	    "multi cluster RESULT $mr second 173211648 ENOSPC written-before-second 50944 kB" \
 	    "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
@@ -1487,7 +1494,11 @@ fi
 # while the first's pages are still dirty, and both files must read back
 # from the media as written. A reading that cannot judge is held until the
 # end, where it makes an otherwise clean run COULD-NOT-RUN.
-mv=$(printf '%s\n' "$out" | multi_verdicts)
+# A check that stopped partway judged nothing after the stop; what it
+# printed before stands, and the rest is held void.
+mv=$(printf '%s\n' "$out" | multi_verdicts) ||
+    mv="$mv
+VOID the shared-reserve check stopped before judging every shape"
 mvoid=$(printf '%s\n' "$mv" | sed -n 's/^VOID //p')
 mfail=$(printf '%s\n' "$mv" | command grep -v '^VOID ' | command grep .)
 if [ -n "$mfail" ]; then
