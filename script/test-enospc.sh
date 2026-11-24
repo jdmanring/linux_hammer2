@@ -311,6 +311,9 @@ if [ "${1:-}" = "--selftest" ]; then
 	mcase "a shape with no result" fail "$cr" "multi cluster hashes $ok2"
 	mcase "a shape with no hash line" fail "$cr" "$pr" "multi pfs hashes $ok2"
 	mcase "an arm that printed no line" void ""
+	mcase "a void line beside a full result" void \
+	    "multi cluster VOID min_ratio did not take" "$cr" "multi cluster hashes $ok2" \
+	    "$pr" "multi pfs hashes $ok2"
 	mcase "a result line cut short" void \
 	    "multi cluster RESULT margin 442856244 free 492978176 reserve 100243865 X 267321344 first 267321344 ok" \
 	    "multi cluster hashes $ok2" "$pr" "multi pfs hashes $ok2"
