@@ -27106,10 +27106,14 @@ sync between, then hashes both files from the page cache and again from
 the media after a remount. `multi_verdicts()` fails a shape that admits
 the second write or whose files read back differing, and holds it void
 where the margin was missed, the first write was refused, or any hammer2
-bdi wrote back before the second write. The selftest drives it with
-eight cases. Six mutants of the function, each removing one branch, fail
-the selftest and the unmutated copy passes
-(`p7-notes/crash-instrument/inc7/verdict-mutants-e3981c65.out`).
+bdi wrote back before the second write. An arm that printed no line at
+all is void, since it did not run; one shape with lines and one without
+fails. The selftest drives the function with nine cases. Seven mutants
+of it, each removing one branch, fail the selftest and the unmutated
+copy passes (`p7-notes/crash-instrument/inc7/verdict-mutants-b5bc4b32.out`).
+The arm's written-back sum prints nothing where no hammer2 bdi stats
+file is readable, and the shape is then void, since a sum over none
+would read 0 and hold every window.
 
 The void on early writeback is the reading's guard: a refusal after the
 first file's blocks were allocated came from the free count and says
@@ -27148,7 +27152,7 @@ before it so the syncer's next run is 30 s out. Probe v2, expected
 readings first (`inc7/window-probe2-expected.md`), on KASAN: with the
 ratio at 40 and a 10 s hold, no background pass inside either window and
 0 kB written before the second write, gate exit 0; with it at 0, a
-background pass 5.3 s after each first write began and 96,896 and
+background pass 5.3 and 5.4 s after the two first writes began and 96,896 and
 106,368 kB written, gate exit 2; with it at 40 and a 35 s hold, the
 syncer's first run 30.00 and 30.26 s after the remounts. The expected
 file said the ratio-0 control would write near X; it wrote 37 and 41
@@ -27163,17 +27167,18 @@ refuses a sum past 100 (`inc7/at-c3af8f75/control-*-86bb073c.out`).
 Three bdis each hold one X at most, and 30 percent of 1.6 GB is above
 it; the fixed module has two bdis at most and keeps 40.
 
-At `e3981c65`, on `h2debug-7.3tls` and `h2kasan-7.3tls`, the controls
-(`inc7/at-e3981c65/control-{debug,kasan}-*.out`): `9c315b08`, 1.0.107's
+At `b5bc4b32`, on `h2debug-7.3tls` and `h2kasan-7.3tls`, the controls
+(`inc7/at-b5bc4b32/control-{debug,kasan}-*.out`): `9c315b08`, 1.0.107's
 source, exits 1 on the cluster shape, both writes admitted 91,914,240
 bytes past root's margin and "2 before, 1 read back, differ", its pfs
 shape refused and read back the same; `86bb073c`, before the shared bdi,
 exits 1 on both shapes, the pfs files reading "2 before, 2 read back,
 differ". The tip: `test-enospc.sh` 12 of 12 on debug and 3 of 3 on
 KASAN, the shared arm ok in each of the 15, kernel warnings and module
-faults 0 in each (`inc7-enospc-{debug,kasan}-e3981c65.out`); QEMU cores 0
-throughout. `test-fixtures.sh` at the tip: 11 images, 0 failures
-(`inc7/at-e3981c65/fixtures-debug.out`). Nothing under `src/` changed since
+faults 0 in each (`inc7-enospc-{debug,kasan}-b5bc4b32.out`); QEMU cores 0
+throughout. The same controls and tip read the same at `e3981c65`, before
+review round 1's fixes (`inc7/at-e3981c65/`, `inc7-enospc-*-e3981c65`). `test-fixtures.sh` at the tip: 11 images, 0 failures
+(`inc7/at-b5bc4b32/fixtures-debug.out`). Nothing under `src/` changed since
 `3f238de9`, so the instrument readings at `ecd4a703` in the entry above
 are this source's.
 
@@ -27198,5 +27203,12 @@ run(s), 2 pass, 0 fail, 1 could-not-run" and exited 1
 (`inc7-enospc-kasan-d533dda7.out`). Each now exits 1 on any failure, else
 2 on any could-not-run, else 0. Each script's new lines were driven over
 five pairs of failures and could-not-runs beside the old expression,
-which read the pair with only a could-not-run as 1; the two fleet
-scripts changed only there and have not run on the fleet since.
+which read the pair with only a could-not-run as 1
+(`inc7/tally-drive-b5bc4b32.out`); the two fleet scripts changed only
+there and have not run on the fleet since.
+
+Review round 1 (`inc7/review-inc7-round1.md`, FIX-FIRST, dispositions
+beside it) found the empty arm read as two failures, the gate's copy of
+the arm to the guest unchecked, and the written-back sum over no bdi;
+`b5bc4b32` fixes the three, and widens `test-posix.sh` to the `#!/bin/sh`
+scripts under `test/`, which run on the guest and met no parse before.
