@@ -526,15 +526,25 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 		return (EROFS);
 
 	/*
+	 * XXX Linux: hammer2_pfsalloc() below walks and inserts into
+	 * hammer2_pfslist and counts the device's mounts, which mount and
+	 * unmount change under hammer2_mntlk, and a lookup shows the name
+	 * free only while no other create can insert it.  Taken before the
+	 * transaction, as every other holder takes it.  Upstream and the
+	 * three BSD ports take no lock here.
+	 */
+	hammer2_lk_ex(&hammer2_mntlk);
+
+	/*
 	 * XXX Linux: a lookup that fails other than by ENOENT has not shown
 	 * the name free, and the create walks the hash range by key alone,
 	 * so it would insert a second PFS of the name.
 	 */
 	error = hammer2_ioctl_pfs_lookup(ip, pfs);
 	if (error == 0)
-		return (EEXIST);
+		error = EEXIST;
 	if (error != ENOENT)
-		return (error);
+		goto unlock;
 
 	/*
 	 * XXX Linux: the three BSD ports refuse every type but MASTER here,
@@ -554,10 +564,13 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 	case HAMMER2_PFSTYPE_MASTER:
 		break;
 	default:
-		return (EINVAL);
+		error = EINVAL;
+		goto unlock;
 	}
-	if (pfs->pfs_subtype > HAMMER2_PFSSUBTYPE_AUTOSNAP)	/* Linux */
-		return (EINVAL);
+	if (pfs->pfs_subtype > HAMMER2_PFSSUBTYPE_AUTOSNAP) {	/* Linux */
+		error = EINVAL;
+		goto unlock;
+	}
 
 	hammer2_trans_init(hmp->spmp, HAMMER2_TRANS_ISFLUSH);
 	mtid = hammer2_trans_sub(hmp->spmp);
@@ -633,13 +646,17 @@ hammer2_ioctl_pfs_create(hammer2_inode_t *ip, void *data)
 	}
 	hammer2_trans_done(hmp->spmp,
 	    HAMMER2_TRANS_ISFLUSH | HAMMER2_TRANS_SIDEQ);
+	hammer2_lk_unlock(&hammer2_mntlk);	/* Linux */
 
 	/*
 	 * XXX Linux: the error here is the core's, from the create or the
-	 * read back, and the boundary only negates; the early returns
-	 * above are errnos already.
+	 * read back, and the boundary only negates; the returns above and
+	 * below are errnos already.
 	 */
 	return (hammer2_error_to_errno(error));
+unlock:					/* Linux */
+	hammer2_lk_unlock(&hammer2_mntlk);
+	return (error);
 }
 
 /*

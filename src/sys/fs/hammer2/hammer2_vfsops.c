@@ -2396,10 +2396,12 @@ hammer2_mount_helper(struct super_block *sb, hammer2_pfs_t *pmp)
  * the second, and a PFS on the second counted only the second's bdi.
  * Called beside each mount_count increment a mounted PFS makes, which is
  * what keeps the device, and so the list, alive while the slot is linked.
- * The ioctl's PFS create reaches here through hammer2_pfsalloc() without
- * hammer2_mntlk, so pmp->mp is read under the spin lock: an unmount
- * clears it before hammer2_bdiuse_unlink() takes the lock, and a slot
- * linked after that unlink would stay listed for an unmounted PFS.
+ * Every caller that can join a mounted PFS holds hammer2_mntlk; the
+ * snapshot ioctl calls hammer2_pfsalloc() without it, but a snapshot has
+ * a new cluster id and joins no PFS.  pmp->mp is read under the spin lock
+ * all the same: an unmount clears it before hammer2_bdiuse_unlink() takes
+ * the lock, and a slot linked after that unlink would stay listed for an
+ * unmounted PFS.
  */
 static void
 hammer2_bdiuse_link(hammer2_pfs_t *pmp, int j)
