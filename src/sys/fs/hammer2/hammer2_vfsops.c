@@ -331,6 +331,41 @@ module_param_named(sync_collapse_parent, hammer2_sync_collapse_parent, int, 0644
  */
 int hammer2_sync_interflush;
 module_param_named(sync_interflush, hammer2_sync_interflush, int, 0644);
+/*
+ * XXX Linux: what stage 2 of hammer2_vfs_sync_pmp() does when the PFS root
+ * went back on the SIDEQ after stage 1 processed it.  2, the default,
+ * restarts stage 1 once and holds the root on the SYNCQ until stage 2 has
+ * flushed it; 1 restarts without the hold, the shorter alternative
+ * measured beside it; 0 flushes the root as upstream does, the control.
+ * rootsync_hold_ms holds stage 2 once per sync before it locks the root,
+ * so a root operation can be aimed inside the window.  The counters are
+ * syncs, stage 1 restarts, the restarts the root caused and the most in
+ * one sync, and the hold's total and longest time from its capture to the
+ * root's unlock; a harness writes 0 to each before a run.  Debug build
+ * only.
+ */
+static int hammer2_rootsync_mode = 2;
+module_param_named(rootsync_mode, hammer2_rootsync_mode, int, 0644);
+static unsigned int hammer2_rootsync_hold_ms;
+module_param_named(rootsync_hold_ms, hammer2_rootsync_hold_ms, uint, 0644);
+static DEFINE_SPINLOCK(hammer2_rootsync_spin);
+static unsigned long hammer2_rootsync_syncs;
+static unsigned long hammer2_rootsync_restarts;
+static unsigned long hammer2_rootsync_root_restarts;
+static unsigned long hammer2_rootsync_root_max;
+static unsigned long hammer2_rootsync_hold_ns;
+static unsigned long hammer2_rootsync_hold_max_ns;
+module_param_named(rootsync_syncs, hammer2_rootsync_syncs, ulong, 0644);
+module_param_named(rootsync_restarts, hammer2_rootsync_restarts, ulong, 0644);
+module_param_named(rootsync_root_restarts, hammer2_rootsync_root_restarts,
+    ulong, 0644);
+module_param_named(rootsync_root_max, hammer2_rootsync_root_max, ulong, 0644);
+module_param_named(rootsync_hold_ns, hammer2_rootsync_hold_ns, ulong, 0644);
+module_param_named(rootsync_hold_max_ns, hammer2_rootsync_hold_max_ns, ulong,
+    0644);
+#define HAMMER2_ROOTSYNC_MODE	READ_ONCE(hammer2_rootsync_mode)
+#else
+#define HAMMER2_ROOTSYNC_MODE	2
 #endif
 
 /*
@@ -3246,6 +3281,12 @@ hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor __maybe_unused)
 	struct inode *vp;	/* XXX Linux: was struct vnode * */
 	uint32_t pass2;
 	int error, dorestart;
+	int roothold = 0;	/* XXX */
+#if defined(HAMMER2_LOCKDEBUG)
+	unsigned long restarts = 0, rootrestarts = 0;
+	ktime_t holdstart = 0;
+	int held = 0;
+#endif
 
 	/*
 	 * Move all inodes on sideq to syncq.  This will clear sideq.
@@ -3323,6 +3364,16 @@ restart:
 	 */
 	hammer2_spin_ex(&pmp->list_spin);
 	while ((ip = TAILQ_FIRST(&pmp->syncq)) != NULL) {
+		/*
+		 * XXX The PFS root is held on the SYNCQ for stage 2, see
+		 * below.  A frontend waiting on it moves it to the head.
+		 */
+		if (roothold && ip == pmp->iroot) {
+			ip = TAILQ_NEXT(ip, qentry);
+			if (ip == NULL)
+				break;
+		}
+
 		/*
 		 * Remove the inode from the SYNCQ, transfer the syncq ref
 		 * to us.  We must clear SYNCQ to allow any potential
@@ -3528,6 +3579,9 @@ restart:
 			tsleep(&dorestart, 0, "h2syndel", 2);
 		debug_hprintf("FILESYSTEM SYNC STAGE 1 RESTART\n");
 		dorestart = 1;
+#if defined(HAMMER2_LOCKDEBUG)
+		++restarts;
+#endif
 		goto restart;
 	}
 	debug_hprintf("FILESYSTEM SYNC STAGE 2 BEGIN\n");
@@ -3542,8 +3596,62 @@ restart:
 	 * for the media making up the cluster.
 	 */
 	if ((ip = pmp->iroot) != NULL) {
+#if defined(HAMMER2_LOCKDEBUG)
+		if (!held && !roothold) {
+			held = 1;
+			hammer2_debug_hold(READ_ONCE(hammer2_rootsync_hold_ms),
+			    "rootsync");
+		}
+#endif
 		hammer2_inode_ref(ip);
 		hammer2_mtx_ex(&ip->lock);
+
+		/*
+		 * XXX The root's directory entries live in the chain this
+		 * flush writes, and a frontend op edits them under the
+		 * root's lock at any time, putting the root and the inodes
+		 * it paired with on a new, non-PASS2 dependency once stage 1
+		 * has processed the root.  Flushed now, the root would carry
+		 * a new entry whose inode is still CREATING, or a link or
+		 * rename whose other inodes wait for the next sync, and the
+		 * volume header written below points at it, as does the
+		 * snapshot that copies pfs_iroot_blocksets.  Every such edit
+		 * leaves the root SIDEQ before it unlocks the root, so with
+		 * the lock held, SIDEQ means one happened.  Mark its group
+		 * PASS2 and restart stage 1, which flushes the group, and
+		 * keep the root on the SYNCQ from that capture to here:
+		 * every frontend lock of the root waits while it is SYNCQ,
+		 * and a SYNCQ inode cannot go SIDEQ, so the check fires at
+		 * most once per sync.
+		 */
+		hammer2_spin_ex(&pmp->list_spin);
+		if (ip->flags & HAMMER2_INODE_SYNCQ) {
+			/* The hold ends; only the restart above puts it here. */
+			TAILQ_REMOVE(&pmp->syncq, ip, qentry);
+			--pmp->sideq_count;
+			atomic_clear_int(&ip->flags, HAMMER2_INODE_SYNCQ);
+			hammer2_spin_unex(&pmp->list_spin);
+			hammer2_inode_drop(ip);		/* the syncq's ref */
+		} else if ((ip->flags & HAMMER2_INODE_SIDEQ) &&
+		    HAMMER2_ROOTSYNC_MODE != 0) {
+			ip->depend->pass2 = 1;
+			hammer2_spin_unex(&pmp->list_spin);
+			hammer2_mtx_unlock(&ip->lock);
+			hammer2_inode_drop(ip);
+			if (HAMMER2_ROOTSYNC_MODE == 2)
+				roothold = 1;
+#if defined(HAMMER2_LOCKDEBUG)
+			++restarts;
+			++rootrestarts;
+			if (roothold)
+				holdstart = ktime_get();
+#endif
+			debug_hprintf("FILESYSTEM SYNC ROOT RESTART\n");
+			dorestart = 1;
+			goto restart;
+		} else {
+			hammer2_spin_unex(&pmp->list_spin);
+		}
 		hammer2_sync_error(pmp, ip,
 		    hammer2_inode_chain_sync(ip));	/* Linux */
 		hammer2_sync_error(pmp, ip, hammer2_inode_chain_flush(ip,
@@ -3552,6 +3660,24 @@ restart:
 		hammer2_inode_unlock(ip); /* unlock+drop */
 	}
 	debug_hprintf("FILESYSTEM SYNC STAGE 2 DONE\n");
+#if defined(HAMMER2_LOCKDEBUG)
+	{
+		unsigned long ns = roothold ?
+		    (unsigned long)ktime_to_ns(ktime_sub(ktime_get(),
+		    holdstart)) : 0;
+
+		spin_lock(&hammer2_rootsync_spin);
+		++hammer2_rootsync_syncs;
+		hammer2_rootsync_restarts += restarts;
+		hammer2_rootsync_root_restarts += rootrestarts;
+		if (rootrestarts > hammer2_rootsync_root_max)
+			hammer2_rootsync_root_max = rootrestarts;
+		hammer2_rootsync_hold_ns += ns;
+		if (ns > hammer2_rootsync_hold_max_ns)
+			hammer2_rootsync_hold_max_ns = ns;
+		spin_unlock(&hammer2_rootsync_spin);
+	}
+#endif
 
 	hammer2_bioq_sync(pmp);
 

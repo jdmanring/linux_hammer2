@@ -477,6 +477,11 @@ rows fewer, and the label returns `return (error);`, one row more. The
 errnos stay positive inside the module, by the core's convention. No
 category is new.
 
+1,682 to 1,684 when the debug build came to count what stage 2 of a PFS
+sync does about the root: two of its `module_param_named()` calls wrap
+onto a second line with the BSD continuation indent, as the file's other
+wrapped parameters do. No category is new.
+
 The count reached 894 first, with twelve hits including one `return of an
 errno should typically be negative`. That hit was read as the recorded
 errno convention arriving at a new call site, which is a claim that the
