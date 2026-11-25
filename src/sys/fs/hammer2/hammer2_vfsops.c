@@ -3617,16 +3617,21 @@ restart:
 		 * volume header written below points at it, as does the
 		 * snapshot that copies pfs_iroot_blocksets.  Every such edit
 		 * leaves the root SIDEQ before it unlocks the root, so with
-		 * the lock held, SIDEQ means one happened.  Mark its group
-		 * PASS2 and restart stage 1, which flushes the group, and
-		 * keep the root on the SYNCQ from that capture to here:
-		 * every frontend lock of the root waits while it is SYNCQ,
-		 * and a SYNCQ inode cannot go SIDEQ, so the check fires at
-		 * most once per sync.
+		 * the lock held, SIDEQ means one happened.  Move its group to
+		 * the SYNCQ here, as stage 1's capture would, and restart
+		 * stage 1, which flushes the group and passes over the root,
+		 * so the root stays SYNCQ until this flush.  The move is made
+		 * before the root's lock is let go: a frontend waiting on
+		 * that lock gets it next, and must find the root SYNCQ and
+		 * wait, or it edits the root after its group has gone to
+		 * the SYNCQ and leaves the inodes it paired with for the next
+		 * sync.  Every frontend lock of the root waits while it is
+		 * SYNCQ, and a SYNCQ inode cannot go SIDEQ, so the check
+		 * fires at most once per sync.
 		 */
 		hammer2_spin_ex(&pmp->list_spin);
 		if (ip->flags & HAMMER2_INODE_SYNCQ) {
-			/* The hold ends; only the restart above puts it here. */
+			/* The hold ends; only the move below puts it here. */
 			TAILQ_REMOVE(&pmp->syncq, ip, qentry);
 			--pmp->sideq_count;
 			atomic_clear_int(&ip->flags, HAMMER2_INODE_SYNCQ);
@@ -3634,12 +3639,28 @@ restart:
 			hammer2_inode_drop(ip);		/* the syncq's ref */
 		} else if ((ip->flags & HAMMER2_INODE_SIDEQ) &&
 		    HAMMER2_ROOTSYNC_MODE != 0) {
-			ip->depend->pass2 = 1;
+			depend = ip->depend;
+			if (HAMMER2_ROOTSYNC_MODE == 2) {
+				hammer2_inode_t *tip;
+
+				TAILQ_FOREACH(tip, &depend->sideq, qentry) {
+					atomic_set_int(&tip->flags,
+					    HAMMER2_INODE_SYNCQ);
+					atomic_clear_int(&tip->flags,
+					    HAMMER2_INODE_SIDEQ);
+					tip->depend = NULL;
+				}
+				TAILQ_CONCAT(&pmp->syncq, &depend->sideq, qentry);
+				depend->count = 0;
+				depend->pass2 = 0;
+				TAILQ_REMOVE(&pmp->depq, depend, entry);
+				roothold = 1;
+			} else {
+				depend->pass2 = 1;
+			}
 			hammer2_spin_unex(&pmp->list_spin);
 			hammer2_mtx_unlock(&ip->lock);
 			hammer2_inode_drop(ip);
-			if (HAMMER2_ROOTSYNC_MODE == 2)
-				roothold = 1;
 #if defined(HAMMER2_LOCKDEBUG)
 			++restarts;
 			++rootrestarts;
