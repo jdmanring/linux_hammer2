@@ -48,6 +48,9 @@
 #
 # Exit 2 without the guest, the tools or a kernel tree.
 set -u
+# make builds the tree it is run in, so the script runs from the
+# repository root wherever it was started.
+cd "$(dirname "$0")/.." || exit 2
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 GUEST=${H2_GUEST:-artix-s6-kde}
 GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
@@ -326,7 +329,7 @@ sh /tmp/kmsg-stream.sh --end $K
 kill $KPID 2>/dev/null
 GUEST
 
-scp -q "$KO" "$W/guest.sh" "$(dirname "$0")/kmsg-stream.sh" "$GUEST_SSH:/tmp/" || { echo "sync-empty: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
+scp -q "$KO" "$W/guest.sh" script/kmsg-stream.sh "$GUEST_SSH:/tmp/" || { echo "sync-empty: COULD-NOT-RUN: copy to $GUEST failed" >&2; exit 2; }
 $RUN "$GUEST_SSH" "N=$N CYCLES=$CYCLES H2DEBUG=$H2DEBUG sh -c 'mv /tmp/guest.sh /tmp/h2empty.sh; . /tmp/h2empty.sh'" > "$W/out" 2>&1
 rc=$?
 # A guest half that REFUSED is not a run that failed, and reporting it as

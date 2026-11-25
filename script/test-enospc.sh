@@ -227,7 +227,7 @@ if [ "${1:-}" = "--selftest" ]; then
 	# The note lives in another file, so the drift check above cannot
 	# see it: a reworded note would leave the verdict matching nothing.
 	nread=$((nread + 1))
-	if command grep -qF "$H2_SEEK_NOTE" "$(dirname "$0")/../test/hammer2-seek.c"; then
+	if command grep -qF "$H2_SEEK_NOTE" test/hammer2-seek.c; then
 		echo "  ok    the seek exerciser's no-LOCKDEBUG note"
 	else
 		echo "  FAIL  test/hammer2-seek.c no longer prints \"$H2_SEEK_NOTE\","

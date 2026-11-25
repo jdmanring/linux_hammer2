@@ -288,7 +288,7 @@ DMESG=${H2_CLOSURE_DMESG:-$W/guest-dmesg.txt}
 scp -q -o ConnectTimeout=5 "$GUEST_SSH:/tmp/closure-dmesg.txt" "$DMESG" 2>/dev/null && echo "  linux   dmesg saved to $DMESG"
 if [ $st = 124 ]; then
 	echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1))
-	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
+	sh script/guest-dmesg.sh "$GUEST" 2>&1 | sed 's/^/  hang    /'
 	$VIRSH destroy "$GUEST" >/dev/null 2>&1
 fi
 down "$GUEST" "$GUEST_SSH"

@@ -15,12 +15,18 @@
 set -u
 # Run from a private copy: the shell reads a script as it goes, so an
 # edit to this file during a run lands in the middle of the run, and did.
+# The copy's name says nothing about the tree, and make builds the tree
+# it is run in, so the root is found from this file's own name, once, and
+# an H2_REPEAT child, which runs a copy of the copy, inherits it.
 if [ -z "${H2_TREE_COPY:-}" ]; then
+	H2_TREE_SRC=${H2_TREE_SRC:-$(cd "$(dirname "$0")/.." && pwd)} || exit 2
+	export H2_TREE_SRC
 	c=$(mktemp) || exit 2
 	cat "$0" > "$c"
 	H2_TREE_COPY=$c exec sh "$c" "$@"
 fi
 trap 'rm -f "$H2_TREE_COPY"' EXIT
+cd "$H2_TREE_SRC" || exit 2
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_TREE_IMAGE:-$FIXDIR/million-tree.img}
 SIZE=${H2_TREE_SIZE:-8G}
@@ -311,7 +317,7 @@ if [ $st = 124 ]; then
 	# is destroyed rather than shut down, a shutdown needing the unmount
 	# that hung.
 	echo "  FAIL  the guest hung: the run exceeded ${H2_RUN_TIMEOUT:-$RUNSECS}s"; fail=$((fail + 1))
-	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
+	sh script/guest-dmesg.sh "$GUEST" 2>&1 | sed 's/^/  hang    /'
 	$VIRSH destroy "$GUEST" >/dev/null 2>&1
 fi
 down "$GUEST" "$GUEST_SSH"

@@ -252,7 +252,7 @@ if [ "$rc" -eq 124 ]; then
 	# CPU time and wait channel tell a spin from a sleep, and the sysrq
 	# dumps say what each is waiting on.
 	echo "storm: FAIL: the guest did not finish within $BOUND s"
-	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
+	sh script/guest-dmesg.sh "$GUEST" 2>&1 | sed 's/^/  hang    /'
 	detach
 	exit 1
 fi
@@ -262,7 +262,7 @@ fi
 # the guest may still hold, which is the ACPI hotplug that wedges it in the
 # port's own sync path. Both are avoided: this is COULD-NOT-RUN.
 if [ "$rc" != 0 ]; then
-	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  drop    /'
+	sh script/guest-dmesg.sh "$GUEST" 2>&1 | sed 's/^/  drop    /'
 	detach
 	echo "storm: COULD-NOT-RUN: the guest session ended rc=$rc without finishing" >&2
 	exit 2

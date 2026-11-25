@@ -21,6 +21,9 @@
 # Exit 2 without the two guests, the tools or a kernel tree. One guest at
 # a time: the Linux guest writes and is shut down, then DragonFly reads.
 set -u
+# make builds the tree it is run in, so the script runs from the
+# repository root wherever it was started.
+cd "$(dirname "$0")/.." || exit 2
 FIXDIR=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 IMG=${H2_BF_IMAGE:-$FIXDIR/bulkfree.img}
 ROOT=${H2_BF_ROOT:-ROOT}

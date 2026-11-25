@@ -178,7 +178,7 @@ if [ "$rc" -eq 124 ]; then
 	# A hang is read through the agent before the disk is detached, or
 	# its checks would be graded on whatever output preceded it.
 	echo "nfsd: FAIL: the guest did not finish within 1200 s"
-	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  hang    /'
+	sh script/guest-dmesg.sh "$GUEST" 2>&1 | sed 's/^/  hang    /'
 	detach
 	exit 1
 fi
@@ -188,7 +188,7 @@ fi
 # the guest may still hold, which is the ACPI hotplug that wedges it in the
 # port's own sync path. Both are avoided: this is COULD-NOT-RUN.
 if [ "$rc" != 0 ]; then
-	sh "$(dirname "$0")/guest-dmesg.sh" "$GUEST" 2>&1 | sed 's/^/  drop    /'
+	sh script/guest-dmesg.sh "$GUEST" 2>&1 | sed 's/^/  drop    /'
 	detach
 	echo "nfsd: COULD-NOT-RUN: the guest session ended rc=$rc without finishing" >&2
 	exit 2
