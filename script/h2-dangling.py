@@ -9,8 +9,10 @@ exit status and keeps every HAMMER2_SHOW_ variable from it.  For each PFS
 under the super-root (all when none is named) prints the count of inodes
 indexed under its root and of directory entries, then every entry whose
 inode number has no inode (dangling) and every inode no entry names
-(orphan).  A PFS root's own inode is not indexed under itself and is not
-counted.  An orphan that is a directory is the top of a subtree: the
+(orphan), and every inode named other than its link count says: a
+directory once, whatever its count (2 and one per subdirectory as this
+port writes it, 1 as DragonFly does), anything else once per link.  A PFS
+root's own inode is not indexed under itself and is not counted.  An orphan that is a directory is the top of a subtree: the
 entries under it name their own inodes, so those read as named, and the
 count of inodes no walk from the PFS root reaches through entries is
 printed beside it: what the orphans hold, and any detached set that no
@@ -27,9 +29,10 @@ its inode number and whether that inode is present.
 Exit 2 when show fails, when the dump holds no PFS (empty, or flattened),
 when a blockref fails its check (show then lists only its direct children
 and exits 0), when a named PFS is not found, or when an entry's name or
-inode number does not parse, since a reading of nothing must not read as
-clean; 1 when anything dangles, is orphaned or is not reached from the root;
-0 otherwise.
+inode number or an inode's link count does not parse, since a reading of
+nothing must not read as clean; 1 when anything dangles, is orphaned, is
+not reached from the root or is named other than its link count; 0
+otherwise.
 """
 import importlib.util
 import os
@@ -55,12 +58,13 @@ def show(image):
 
 
 def parse(text):
-    """{pfs: {"inodes": set, "dirents": [(name, inum, mod, parent)]}} and the
-    count of entries whose fields did not parse.  parent is the inode number
-    of the inode the entry is nested under, None for the PFS root."""
+    """{pfs: {"inodes": set, "dirents": [(name, inum, mod, parent)],
+    "nlinks": {inum: n}, "dirs": set}} and the count of entries and inodes
+    whose fields did not parse.  parent is the inode number of the inode
+    the entry is nested under, None for the PFS root."""
     pfs = {}
     cur = None		# (name, depth of the PFS root inode)
-    pending = None	# ("pfsroot", depth), ("dirent", parent) or ("dirent", parent, name, mod)
+    pending = None	# ("pfsroot", depth), ("dirent", parent), ("dirent", parent, name, mod) or ("inode", inum)
     mod = None
     sroot_depth = None
     stack: list[tuple[int, int | None]] = []	# (depth, inode number) of the inodes enclosing this line in the PFS
@@ -68,7 +72,7 @@ def parse(text):
     for line in text.splitlines():
         m = BREF.match(line)
         if m:
-            if pending and pending[0] == "dirent":
+            if pending and pending[0] in ("dirent", "inode"):
                 unread += 1
             pending = None
             depth, typ, key = len(m.group(1)), m.group(2), int(m.group(3), 16)
@@ -84,6 +88,7 @@ def parse(text):
             elif cur and typ == "inode":
                 pfs[cur[0]]["inodes"].add(key)
                 stack.append((depth, key))
+                pending = ("inode", key)
             elif cur and typ == "dirent":
                 pending = ("dirent", stack[-1][1] if stack else None)
             continue
@@ -93,7 +98,15 @@ def parse(text):
             mod = mm.group(1)
         if pending and pending[0] == "pfsroot" and s.startswith("filename "):
             cur = (s.split('"')[1], pending[1])
-            pfs.setdefault(cur[0], {"inodes": set(), "dirents": []})
+            pfs.setdefault(cur[0], {"inodes": set(), "dirents": [], "nlinks": {}, "dirs": set()})
+            pending = None
+        elif cur and pending and pending[0] == "inode" and s == "type     DIR":
+            pfs[cur[0]]["dirs"].add(pending[1])
+        elif cur and pending and pending[0] == "inode" and s.startswith("nlinks "):
+            try:
+                pfs[cur[0]]["nlinks"][pending[1]] = int(s.split()[1])
+            except (IndexError, ValueError):
+                continue		# left pending, so counted unread
             pending = None
         elif pending and pending[0] == "dirent" and len(pending) == 2 and s.startswith("filename "):
             pending = ("dirent", pending[1], s.split('"')[1], mod)
@@ -104,7 +117,7 @@ def parse(text):
                 continue		# left pending, so counted unread
             pfs[cur[0]]["dirents"].append((pending[2], inum, pending[3], pending[1]))
             pending = None
-    if pending and pending[0] == "dirent":
+    if pending and pending[0] in ("dirent", "inode"):
         unread += 1
     return pfs, unread
 
@@ -137,15 +150,27 @@ def report(pfs, want, out):
                     seen.add(inum)
                     todo.append(inum)
         held = len(d["inodes"] - seen) - len(orph)
-        bad += len(lost) + len(orph) + held
+        names = {}
+        for x in d["dirents"]:
+            names[x[1]] = names.get(x[1], 0) + 1
+        # A directory has one name, and its count is 2 and one more per
+        # subdirectory as this port writes it, or 1 as DragonFly does
+        # (hammer2_inode.c and hammer2_vnops.c leave a count of 1 alone);
+        # anything else has as many names as links.
+        want = {i: 1 if i in d["dirs"] else d["nlinks"][i] for i in d["inodes"]}
+        skew = sorted(i for i in d["inodes"] if i in names and names[i] != want[i])
+        bad += len(lost) + len(orph) + held + len(skew)
         print("%s: %d inode(s), %d dirent(s), %d without an inode, %d inode(s) no entry names, "
-              "%d more no walk from the root reaches"
-              % (n, len(d["inodes"]), len(d["dirents"]), len(lost), len(orph), held), file=out)
+              "%d more no walk from the root reaches, %d named other than their link count"
+              % (n, len(d["inodes"]), len(d["dirents"]), len(lost), len(orph), held, len(skew)), file=out)
         for name, inum, mod, _ in lost[:20]:
             print("  dangling  %s inum %#x dirent mod %s" % (name, inum, mod), file=out)
         for inum in orph[:20]:
             print("  orphan    inum %#x, %d entr%s under it" % (
                 inum, len(under.get(inum, [])), "y" if len(under.get(inum, [])) == 1 else "ies"), file=out)
+        for inum in skew[:20]:
+            print("  links     inum %#x%s, %d name(s), nlinks %d" % (
+                inum, " (directory)" if inum in d["dirs"] else "", names[inum], d["nlinks"][inum]), file=out)
     return 1 if bad else 0
 
 
@@ -170,7 +195,7 @@ def main(argv, out=sys.stdout):
         return 2
     pfs, unread = parse(text)
     if unread:
-        print("dangling: COULD-NOT-READ: %d entr%s without a name and an inode number"
+        print("dangling: COULD-NOT-READ: %d entr%s or inode(s) without a name, an inode number or a link count"
               % (unread, "y" if unread == 1 else "ies"), file=out)
         return 2
     return report(pfs, set(argv[2:]), out)
@@ -194,14 +219,15 @@ def selftest():
         return bref(d, "dirent", 0x8000 + inum) + "%sfilename \"%s\"\n%sinum 0x%016x\n%s} (dirent.0)\n" % (
             "  " * (d + 1), name, "  " * (d + 1), inum, "  " * d)
 
-    def inode(d, inum, name=None):
-        return bref(d, "inode", inum) + "%sfilename \"%s\"\n" % ("  " * (d + 1), name or "%#x" % inum)
+    def inode(d, inum, name=None, nlinks=1, typ="FILE"):
+        return bref(d, "inode", inum) + "%sfilename \"%s\"\n%stype     %s\n%snlinks   %d\n" % (
+            "  " * (d + 1), name or "%#x" % inum, "  " * (d + 1), typ, "  " * (d + 1), nlinks)
 
     # The super-root, a PFS root named A, its index holding a directory and
     # a file, the root's entry for the directory and the directory's for
     # the file, which is the shape `hammer2 -v show` prints.
     clean = (inode(1, 0) + inode(2, 1, "A") + bref(3, "indirect", 0)
-             + inode(4, 0x400) + dirent(5, "f", 0x401) + inode(4, 0x401)
+             + inode(4, 0x400, nlinks=2, typ="DIR") + dirent(5, "f", 0x401) + inode(4, 0x401)
              + dirent(3, "d", 0x400))
 
     def run(text, *want):
@@ -228,11 +254,11 @@ def selftest():
     rc, o = run(clean, "B")
     expect(rc == 2, "a named PFS not found is refused")
     rc, o = run(clean.replace('filename "f"\n', ""))
-    expect(rc == 2 and "1 entry without" in o, "an entry whose name does not parse is refused")
+    expect(rc == 2 and "1 entry or inode(s) without" in o, "an entry whose name does not parse is refused")
     rc, o = run(clean.replace('filename "d"\n', ""))
-    expect(rc == 2 and "1 entry without" in o, "a nameless entry last in the dump is refused")
+    expect(rc == 2 and "1 entry or inode(s) without" in o, "a nameless entry last in the dump is refused")
     rc, o = run(clean.replace("inum 0x0000000000000401", "inum 0xzz"))
-    expect(rc == 2 and "1 entry without" in o, "an entry whose inode number does not parse is refused")
+    expect(rc == 2 and "1 entry or inode(s) without" in o, "an entry whose inode number does not parse is refused")
     rc, o = run(clean.replace(" lfcnt=0 {", " (xxh xxhash64|none:default 0000000000000001/0000000000000002 failed) {", 1))
     expect(rc == 2 and "fail their check" in o, "a blockref that fails its check is refused")
     buf = io.StringIO()
@@ -260,6 +286,23 @@ def selftest():
     rc, o = run(inode(1, 0) + inode(2, 1, "C") + inode(3, 0x500) + dirent(3, "x", 0x500))
     expect(rc == 0 and "C: 1 inode(s), 1 dirent(s), 0 without an inode, 0 inode(s) no entry names, 0 more" in o,
            "an entry beside an inode at its own depth belongs to the root")
+    # A second name for the file in the root, its inode still counting one
+    # link: a rename into the root written without its source's removal, or
+    # a link whose count was not written.
+    rc, o = run(clean + dirent(3, "f2", 0x401))
+    expect(rc == 1 and "links     inum 0x401, 2 name(s), nlinks 1" in o and ", 1 named other than" in o,
+           "two names for an inode counting one link fail")
+    rc, o = run(clean.replace(inode(4, 0x401), inode(4, 0x401, nlinks=2)) + dirent(3, "f2", 0x401))
+    expect(rc == 0 and ", 0 named other than" in o, "a hard link whose count matches its names passes")
+    rc, o = run(clean.replace(inode(4, 0x401), inode(4, 0x401, nlinks=2)))
+    expect(rc == 1 and "links     inum 0x401, 1 name(s), nlinks 2" in o, "a count above the names fails")
+    rc, o = run(clean.replace(inode(4, 0x401), inode(4, 0x401).replace("nlinks   1\n", "")))
+    expect(rc == 2 and "1 entry or inode(s) without" in o, "an inode whose link count does not parse is refused")
+    # A directory counts its subdirectories, not its names: one name and a
+    # count of 2 passes (the clean case), and a second name fails.
+    rc, o = run(clean + dirent(3, "d2", 0x400))
+    expect(rc == 1 and "links     inum 0x400 (directory), 2 name(s), nlinks 2" in o,
+           "a directory with two names fails whatever its count")
     print("dangling selftest: %d failed" % fails)
     return 1 if fails else 0
 
