@@ -1530,7 +1530,7 @@ rather than an estimate; stage 2b builds its snapshot command and its
 write-capable pass in that order because 5 is the direction. One
 measurement can change the order before any code and needs only the
 local fleet, as a new arm of `cluster-sync.sh`, since today it times a
-convergence and an idle window and not one pass (`:388`, `:413`) and
+convergence and an idle window and not one pass (`:847`, `:872`) and
 builds volumes of its own: a volume of the million-tree size, one file
 changed, and one snapshot-form pass (the create, the verify rounds and
 the delete) timed against the thread's cadence of 5.12 s, which a
@@ -1595,11 +1595,11 @@ since `hammer2_vfsops.c:656` skips the thread only at `pfs_nmasters <=
 1`, and the pass for a MASTER target excludes its own slot
 (`hammer2_synchro.c:2156-2157`), reads `EINPROGRESS` with two masters
 and exits (`:2246-2248`), copying nothing today in any tree
-(`cluster-quorum.sh` counts threads at `:150` and has never measured
+(`cluster-quorum.sh` counts threads at `:201` and has never measured
 a pass). **In P8 a MASTER element gets no synchronization thread**: the
 creation at `hammer2_vfsops.c:656`, which today skips a MASTER slot only
 when `pfs_nmasters` is at most one, skips every MASTER slot, one marked line with `DEFER(P9: reintegration of a
-stale master)`, and `cluster-quorum.sh`'s check at `:321`, which asserts
+stale master)`, and `cluster-quorum.sh`'s check at `:795`, which asserts
 two support threads as its only witness that `pfs_nmasters` is 2,
 inverts to assert none and takes a new witness, a `hammer2_debug` print
 of `pfs_nmasters` after `hammer2_pfsalloc()`'s count
@@ -2325,7 +2325,7 @@ The rules, audited before any code:
    so a peer bound to X whose PFS is a SLAVE cannot register as X's
    master where the row says otherwise. Every harness that reaches the
    server adds the row first: `cluster-dmsg.sh`'s HM2 arms add none today
-   and gain one, and `cluster-wire.sh`'s rows (`:650`, `:1214`) take
+   and gain one, and `cluster-wire.sh`'s rows (`:726`, `:1367`) take
    `--type` explicitly.
 5. **The server names a peer's snapshot.** SNAPSHOT is served only from
    a source that passes 3 and 4, is mounted, and whose own `pfs_types[]`
@@ -2346,7 +2346,7 @@ The rules, audited before any code:
    (`hammer2_ioctl.c:1128`). The lines naming what each deleted stay as
    they are (`hammer2_remote.c:676`, `hammer2_synchro.c:1331`, under
    `hammer2_debug` `0x8000`), unlimited, since `cluster-wire.sh` counts
-   them exactly (`:1143`). A PFS of that name of any other subtype is
+   them exactly (`:1133`). A PFS of that name of any other subtype is
    kept, and the SNAPSHOT, or the local pass, is refused with a line
    through the rate-limited `hprintf`, as rule 3's are, since the local
    pass retries every cadence and a peer chooses how many SNAPSHOTs it
@@ -2543,10 +2543,10 @@ below.
   it is served today.
 
 On two guests, `cluster-wire.sh` changes where it reads names,
-enumerated from `grep -n 'h2sync-' script/cluster-wire.sh` (lines 147
-to 2069):
+enumerated from `grep -n 'h2sync-' script/cluster-wire.sh` at
+`a7aba6ea` (lines 147 to 2069):
 - A's image read for the server's snapshot by its exact name, `filename
-  "CL.h2sync-src"` (`:1502`, `:1716`, `:1758`, `:1865`), reads
+  "CL.h2sync-src"` (`:1485`, `:1699`, `:1741`, `:1848`), reads
   `CL.h2sync-peer`, so those checks do not pass on a name no longer
   made; the checks built on those counts (`:1717`, `:1734`, `:1770`,
   `:1870`, `:1878`) move with them. `:715` and `:814` match the prefix
