@@ -336,7 +336,8 @@ module_param_named(sync_interflush, hammer2_sync_interflush, int, 0644);
  * went back on the SIDEQ after stage 1 processed it.  2, the default,
  * restarts stage 1 once and holds the root on the SYNCQ until stage 2 has
  * flushed it; 1 restarts without the hold, the shorter alternative
- * measured beside it; 0 flushes the root as upstream does, the control.
+ * measured beside it; 3 restarts without the hold rootsync_free times and
+ * holds on the next; 0 flushes the root as upstream does, the control.
  * rootsync_hold_ms holds stage 2 once per sync before it locks the root,
  * so a root operation can be aimed inside the window.  The counters are
  * syncs, stage 1 restarts, the restarts the root caused and the most in
@@ -346,6 +347,8 @@ module_param_named(sync_interflush, hammer2_sync_interflush, int, 0644);
  */
 static int hammer2_rootsync_mode = 2;
 module_param_named(rootsync_mode, hammer2_rootsync_mode, int, 0644);
+static unsigned int hammer2_rootsync_free = 3;
+module_param_named(rootsync_free, hammer2_rootsync_free, uint, 0644);
 static unsigned int hammer2_rootsync_hold_ms;
 module_param_named(rootsync_hold_ms, hammer2_rootsync_hold_ms, uint, 0644);
 static DEFINE_SPINLOCK(hammer2_rootsync_spin);
@@ -364,8 +367,10 @@ module_param_named(rootsync_hold_ns, hammer2_rootsync_hold_ns, ulong, 0644);
 module_param_named(rootsync_hold_max_ns, hammer2_rootsync_hold_max_ns, ulong,
     0644);
 #define HAMMER2_ROOTSYNC_MODE	READ_ONCE(hammer2_rootsync_mode)
+#define HAMMER2_ROOTSYNC_FREE	READ_ONCE(hammer2_rootsync_free)
 #else
 #define HAMMER2_ROOTSYNC_MODE	2
+#define HAMMER2_ROOTSYNC_FREE	3
 #endif
 
 /*
@@ -3282,6 +3287,7 @@ hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor __maybe_unused)
 	uint32_t pass2;
 	int error, dorestart;
 	int roothold = 0;	/* XXX */
+	unsigned int rootfree = 0;	/* XXX */
 #if defined(HAMMER2_LOCKDEBUG)
 	unsigned long restarts = 0, rootrestarts = 0;
 	ktime_t holdstart = 0;
@@ -3640,7 +3646,9 @@ restart:
 		} else if ((ip->flags & HAMMER2_INODE_SIDEQ) &&
 		    HAMMER2_ROOTSYNC_MODE != 0) {
 			depend = ip->depend;
-			if (HAMMER2_ROOTSYNC_MODE == 2) {
+			if (HAMMER2_ROOTSYNC_MODE == 2 ||
+			    (HAMMER2_ROOTSYNC_MODE == 3 &&
+			    rootfree++ >= HAMMER2_ROOTSYNC_FREE)) {
 				hammer2_inode_t *tip;
 
 				TAILQ_FOREACH(tip, &depend->sideq, qentry) {
