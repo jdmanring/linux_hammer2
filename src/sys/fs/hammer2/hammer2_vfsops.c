@@ -249,6 +249,15 @@ module_param_named(seek_hold_ms, hammer2_seek_hold_ms, uint, 0644);
  */
 unsigned int hammer2_pfsalloc_hold_ms;
 module_param_named(pfsalloc_hold_ms, hammer2_pfsalloc_hold_ms, uint, 0644);
+/*
+ * XXX Linux: a hold in hammer2_pfs_snapshot() after its flush
+ * transaction opens and before it locks the root, so a root directory
+ * fsync(2), whose normal transaction does not wait for it, can flush
+ * the root between the sync and the copy of pfs_iroot_blocksets.
+ * Debug build only; zero holds nothing.
+ */
+unsigned int hammer2_snapshot_hold_ms;
+module_param_named(snapshot_hold_ms, hammer2_snapshot_hold_ms, uint, 0644);
 
 /*
  * Linux: the hold behind every *_hold_ms parameter, so a test can aim

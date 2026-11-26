@@ -1023,6 +1023,8 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 		}
 #endif
 		hammer2_trans_init(pmp, HAMMER2_TRANS_ISFLUSH);
+		/* Linux: the control for the slot's writer, see hammer2_flush.c */
+		HAMMER2_DEBUG_HOLD(hammer2_snapshot_hold_ms, "snapshot");
 	}
 #if defined(HAMMER2_LOCKDEBUG)
 	if (lever2) {
