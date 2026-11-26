@@ -46,7 +46,9 @@
 # only if every round held (the log's "snapshot held" lines) and blocked
 # an fsync behind the snapshot's flush transaction (calls over 100 ms).
 # The module before the slot's fix fails the fsync kind, which is its
-# control.
+# control. Last, without the hold, one more mkdir and root fsync, then a
+# snapshot, zfinal, which must list the live root's names and keep their
+# inodes: a slot a root fsync left behind would fail it.
 #
 # H2_KO names a module built with HAMMER2_LOCKDEBUG=1 for the guest's
 # kernel, and H2_BOOT (h2debug-7.3tls, h2kasan-7.3tls), when set, the
@@ -185,6 +187,16 @@ elif [ "$ARM" = snapfsync ]; then
 		echo "snapfsync kind $kind snapshots $r failed $f held $(($(dmesg | grep -c 'hammer2: snapshot held') - h0)) churn rc $c [$(cat /tmp/churn.out)]"
 	done
 	echo 0 > $P/snapshot_hold_ms
+	/tmp/rootchurn fsync /mnt/re 9 0.05 > /dev/null 2>&1
+	hammer2 snapshot /mnt/re zfinal >/dev/null 2>&1 || echo "snapfsync final snapshot failed"
+	mkdir -p /mnt/rs
+	if mount -t hammer2 $bd@zfinal /mnt/rs; then
+		a=$(ls /mnt/re | sort | md5sum) b=$(ls /mnt/rs | sort | md5sum)
+		echo "snapfsync final live $(ls /mnt/re | wc -l) snapshot $(ls /mnt/rs | wc -l) same $([ "$a" = "$b" ] && echo 1 || echo 0)"
+		umount /mnt/rs
+	else
+		echo "snapfsync final mount failed"
+	fi
 	umount /mnt/re || { echo "umount failed"; exit 9; }
 else
 	bd=$(byid vdb) || { echo "no disk with serial h2re-vdb"; exit 9; }
@@ -277,6 +289,13 @@ elif [ "$ARM" = snapfsync ]; then
 				[ "${sl:-0}" -ge "$ROUNDS" ] || cnr="the fsync churner waited out ${sl:-no} snapshots of $ROUNDS, so its flushes did not land in the hold"
 			fi
 		done
+		zf=$(awk '$1 == "zfinal:" { print $6 + $10 + $15 + $23 }' "$dg")
+		fl=$(sed -n 's/^  guest snapfsync final live \([0-9]*\) snapshot \([0-9]*\) same \([01]\)$/\1 \2 \3/p' "$T")
+		if [ -z "$zf" ] || [ -z "$fl" ]; then
+			cnr="the final snapshot was not read: ${fl:-no listing}, ${zf:-not on media}"
+		else
+			[ "$zf" = 0 ] && [ "${fl##* }" = 1 ]; check "zfinal: the snapshot after a root fsync lists the live root and keeps its inodes" $? "live and snapshot names ${fl% *}, same ${fl##* }, defects $zf"
+		fi
 	fi
 else
 	for spec in $MSPECS; do
