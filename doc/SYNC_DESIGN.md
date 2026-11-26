@@ -926,7 +926,7 @@ source before it was applied, and no lever-2 code precedes it.
    blockset the copy will take, `pmp->pfs_iroot_blocksets[clindex]`
    (`:1160`), equals the source element's root chain's own blockset,
    both read inside the root chain's lock, which is the lock the flush
-   holds when it refreshes the slot (`hammer2_flush.c:1170-1177`). The
+   holds when it refreshes the slot (`hammer2_flush.c:1170-1184`). The
    slot can still be refreshed between the cut and the copy, by an
    `fsync` of the PFS root directory (`hammer2_vnops.c:1599`) or any
    other flush of the root; what that brings into the copy was written
@@ -989,7 +989,7 @@ source before it was applied, and no lever-2 code precedes it.
      `UPDATE`-pending chains by count would be finer and is not built.
    - flushed, but the copied blockset stale: the copy takes the cached
      slot, which is refreshed when the root's inode flush finds a
-     flush flag on the root chain (`hammer2_flush.c:1158-1178`) and,
+     flush flag on the root chain (`hammer2_flush.c:1158-1185`) and,
      since 1.0.84, when the thread's own flush of the element succeeds;
      a stale slot was a recorded candidate (the 1.0.62 idle-test entry,
      "The idle test on two masters") and was read on the wire's second
@@ -1072,10 +1072,10 @@ source before it was applied, and no lever-2 code precedes it.
    leave the slave device's volume header unwritten, and that dirt would
    sit in the count at the next cut. It does not keep the slave's root
    slot current by itself: the exempt flush refreshes the slot only
-   inside the flush-flag test (`hammer2_flush.c:1161-1178`) and finds the
+   inside the flush-flag test (`hammer2_flush.c:1161-1185`) and finds the
    root clean after the previous pass's `hammer2_sync_flush()`. Since
    1.0.84 that flush refreshes the slot itself on success, ungated, under
-   the root chain's lock as `hammer2_flush.c:1170-1177` does (the
+   the root chain's lock as `hammer2_flush.c:1170-1184` does (the
    paragraph "Two masters" above; the wire had read every target after a
    link's first copied from an older slave). What stays lever 2's first
    increment, under `sync_prune` or the knob armed so that with both off
@@ -1254,7 +1254,7 @@ after the snapshot copy before its flush transaction closes. A pass
 prunes only when both read equal. The pre-snapshot PFS sync can itself
 move the generation (`hammer2_vfs_sync_pmp()` stage 2 flushes with
 `VOLHDR`, `hammer2_vfsops.c:3613-3700`, whose volume-root pass flushes
-fchain and vchain when flagged, `hammer2_flush.c:1249-1275`, executing the
+fchain and vchain when flagged, `hammer2_flush.c:1256-1282`, executing the
 FREEMAP/VOLUME bump arms, `:694`, `:721-723`), which is why no read sits
 before it: the candidate is the post-sync generation, and any inequality
 across the snapshot window proper, from whatever flusher, runs that pass

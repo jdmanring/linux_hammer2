@@ -1170,7 +1170,14 @@ hammer2_xop_inode_flush(hammer2_xop_t *arg, void *scratch, int clindex)
 			hammer2_flush(chain, xflags);
 
 			/* XXX cluster */
-			if (ip == pmp->iroot && pmp != hmp->spmp) {
+			/*
+			 * XXX Linux: only the sync's FSSYNC flush moves the
+			 * slot a snapshot copies.  An fsync(2) of the root
+			 * flushes it without the inodes its new entries name,
+			 * and keeps UPDATE, so the sync still writes the slot.
+			 */
+			if (ip == pmp->iroot && pmp != hmp->spmp &&
+			    (xflags & HAMMER2_FLUSH_FSSYNC)) {
 				hammer2_spin_ex(&pmp->blockset_spin);
 				pmp->pfs_iroot_blocksets[clindex] =
 				    chain->data->ipdata.u.blockset;
