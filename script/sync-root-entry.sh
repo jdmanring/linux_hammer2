@@ -20,7 +20,8 @@
 # Mode 1 (the fix) must leave 0 snapshots failing and no sync with more
 # root restarts than rootsync_free + 1; mode 0 (upstream's flush, the
 # control) must fail, every create round while the gap is nonzero, or the
-# hold is not opening the window and the run could not judge. H2_ROOT_GAP
+# hold is not opening the window and the run could not judge; so must a
+# kind under mode 1 whose root check never fired. H2_ROOT_GAP
 # is the us between a churner's operations; 0, with H2_ROOT_KINDS=link and
 # more rounds, keeps a frontend queued on the root's lock whenever the
 # sync holds it.
@@ -196,6 +197,10 @@ if [ "$ARM" = window ]; then
 				[ "$f" = 0 ]; check "mode $mode, $kind: no snapshot keeps a root entry ahead of its inodes" $? "$f of $n failing"
 				m=$(sed -n "s/^  guest window mode $mode dev $d kind $kind .* root_max \([0-9]*\) .*/\1/p" "$T")
 				[ -n "$m" ] && [ "$m" -le $((free + 1)) ]; check "mode $mode, $kind: no sync restarts for the root more than rootsync_free + 1 times" $? "most ${m:-none}, bound $((free + 1))"
+				# A clean kind whose check never fired was not aimed,
+				# and says nothing about the check.
+				r=$(sed -n "s/^  guest window mode $mode dev $d kind $kind .* root_restarts \([0-9]*\) .*/\1/p" "$T")
+				[ "${r:-0}" -ge 1 ] || cnr="mode $mode kind $kind: the root check never fired, so the arm did not reach it"
 			fi
 		done
 	done
