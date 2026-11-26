@@ -2033,10 +2033,10 @@ The port writes the slot only from a flush carrying `FSSYNC`, marked
 `XXX` in the carried flush. That is the sync's final flush of the root,
 and the sync's own comment already asks that the flush code leave the
 slot alone until then. The change is safe for the slot's other reader,
-the synchronization thread's idle test, because a non-FSSYNC flush of an
-inode skips the parent update before UPDATE is cleared, so a root the
-`fsync` flushed still carries UPDATE and the sync's final flush still
-writes the slot; a snapshot taken after a root `fsync` with no hold
+the synchronization thread's idle test, because the flush an `fsync`
+runs, `INODE_STOP` without `FSSYNC` on a mounted PFS's inode, skips the
+parent update before UPDATE is cleared, so a root the `fsync` flushed
+still carries UPDATE and the sync's final flush still writes the slot; a snapshot taken after a root `fsync` with no hold
 lists every name the live root lists. DragonFly and the three BSD ports
 write the slot as upstream does, so there is no port to follow; the
 change is staged for upstream in `doc/upstream/`, and the verification

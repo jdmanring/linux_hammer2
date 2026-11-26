@@ -628,7 +628,9 @@ sync's FSSYNC flush still writes the slot. The verification record ("A
 root fsync moved the slot a snapshot copies") has the control and the
 fix's readings.
 
-Still present at head on 2026-11-26, read through the forge API:
+Still present at head on 2026-11-26, read through the forge API, the
+responses kept in the port's working notes outside this repository
+(`linux_hammer2-data/p7-notes/crash-instrument/inc10/upstream-flush-20261126.out`):
 DragonFly `e17b9176356e` writes the slot unconditionally at
 `sys/vfs/hammer2/hammer2_flush.c:1334-1338`, and the newest commit to
 that file is `a13468b066d0` (2023-12-21, comments on chain statistics).

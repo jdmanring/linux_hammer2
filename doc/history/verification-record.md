@@ -27583,11 +27583,20 @@ snapshot read by `script/h2-dangling.py`; then, without the hold, one
 more directory, an `fsync` of the root and a snapshot `zfinal`, which
 must list the live root's names and keep their inodes. `d3c86c03`
 writes the slot only from a flush carrying `HAMMER2_FLUSH_FSSYNC`, the
-sync's final flush of the root, marked `XXX`. A non-FSSYNC flush of an
-inode takes `skipupdate` (`hammer2_flush.c:852-859`) before UPDATE is
-cleared (`:873`), so a root an `fsync` flushed keeps UPDATE, which is in
+sync's final flush of the root, marked `XXX`. The flush an `fsync` runs,
+`INODE_STOP` without `FSSYNC` on a mounted PFS's inode, takes
+`skipupdate` (`hammer2_flush.c:852-859`) before UPDATE is cleared
+(`:873`), so a root an `fsync` flushed keeps UPDATE, which is in
 `HAMMER2_CHAIN_FLUSH_MASK`, and the sync's final flush still enters the
-block that writes the slot; `zfinal` is the reading of that.
+block that writes the slot; `zfinal` is the reading of that. Read from
+code, the three other places that clear UPDATE do not reach a mounted
+PFS root's flag: `hammer2_flush.c:839-840` only for a chain with no
+parent, and a mounted PFS root's parent is a chain of the super-root;
+`hammer2_chain.c:3416-3422` when a moved chain is inserted into a new
+parent, which the root is not; `hammer2_chain.c:1656-1662` only to undo
+the bit the same failed `hammer2_chain_modify()` set. If one did, the
+slot would stay at the last root the sync flushed whole, older than the
+live root and not missing an inode; no run reads that path.
 
 Expectations were written before the first run
 (`inc10/snapfsync-expected.md`), each module built with
@@ -27615,6 +27624,32 @@ fix, on debug, `cluster-sync.sh` 60 checks, 0 failed, with 2 idle passes
 and 0 snapshot passes in 9 s after the resume (the same counts as at
 `d33829d2`), and `cluster-quorum.sh` 24 checks, 0 failed
 (`inc10/cluster-{sync,quorum}-d3c86c03-debug.out`). QEMU cores 0.
+
+Review round 1 (`inc10/review-inc10-round1.md`) found the aim reading an
+aggregate: the count of slow `fsync` calls cannot say which rounds were
+aimed, and a clean fix reading did not show that every round was.
+`bcee5ca3` starts each round's snapshot in the background, waits for
+that snapshot's hold line in the log, and then runs the churner for that
+round alone; a round is aimed when its hold was logged and its `fsync`
+took over 100 ms, which it does only by waiting on the snapshot's flush
+transaction, and a run not aimed in every round is could-not-run. Rerun
+against the same four modules, expectations written first
+(`inc10/rerun.sh`, `rerun-bcee5ca3.log`,
+`snapfsync-bcee5ca3-on-{df4d455f,d3c86c03}-{debug,kasan}.out`):
+
+| module | build | `fsync` kind failing | aimed | `create` kind failing | `zfinal` names, defects | exit |
+|---|---|---|---|---|---|---|
+| `df4d455f` | debug | 20 of 20 | 20 | 0 of 20 | 738 each side, 0 | 1 |
+| `df4d455f` | KASAN | 20 of 20 | 18 | 0 of 20 | 245 each side, 0 | 1 |
+| `d3c86c03` | debug | 0 of 20 | 20 | 0 of 20 | 740 each side, 0 | 0 |
+| `d3c86c03` | KASAN | 0 of 20 | 20 | 0 of 20 | 250 each side, 0 | 0 |
+
+Logs 0, QEMU cores 0. Driven per round, the control fails every round on
+both builds. KASAN's control counted 18 aimed and failed 20: two rounds
+whose `fsync` began late enough in the hold to wait 100 ms or less still
+flushed the root inside it, so the threshold undercounts aim, which
+fails toward could-not-run and not toward a pass. On the control,
+`zfinal` is whole too, as expected: nothing races its copy.
 
 At the final source, `d3c86c03`, from a detached worktree
 (`inc10/final.sh`, its log `final.log`): step 3's window arm with modes 1
