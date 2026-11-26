@@ -38,13 +38,16 @@
 # slot a snapshot copies, pfs_iroot_blocksets: any flush of the root. One
 # 2 GiB volume, rootsync_hold_ms 0 and snapshot_hold_ms 200, which holds
 # each snapshot after its flush transaction opens and before it locks the
-# root; per kind, H2_ROOT_ROUNDS snapshots beside one churner:
-#   fsync   mkdir of new names in the root, each followed by fsync(2) of
-#           the root, whose flush a normal transaction runs in the hold
-#   create  the same without the fsync
-# Every snapshot must hold its root's entries with their inodes. Aimed
-# only if every round held (the log's "snapshot held" lines) and blocked
-# an fsync behind the snapshot's flush transaction (calls over 100 ms).
+# root; per kind, H2_ROOT_ROUNDS snapshots, each started in the
+# background, and once its hold's line is in the log, the churner run
+# for that round alone:
+#   fsync   mkdir of a new name in the root, then fsync(2) of the root,
+#           whose flush a normal transaction runs in the hold
+#   create  mkdirs in the root without the fsync
+# Every snapshot must hold its root's entries with their inodes. A round
+# is aimed when its hold was logged and, for fsync, its fsync waited on
+# the snapshot's flush transaction (over 100 ms); the run is aimed only
+# if every round was.
 # The module before the slot's fix fails the fsync kind, which is its
 # control. Last, without the hold, one more mkdir and root fsync, then a
 # snapshot, zfinal, which must list the live root's names and keep their
@@ -172,22 +175,27 @@ elif [ "$ARM" = snapfsync ]; then
 	echo 200 > $P/snapshot_hold_ms
 	bd=$(byid vdb) || { echo "no disk with serial h2re-vdb"; exit 9; }
 	mount -t hammer2 $bd@ROOT /mnt/re || { echo "mount failed"; exit 9; }
+	held() { dmesg | grep -c 'hammer2: snapshot held'; }
 	for kind in $KINDS; do
 		k=$(echo $kind | cut -c1)
-		h0=$(dmesg | grep -c 'hammer2: snapshot held')
-		/tmp/rootchurn $kind /mnt/re 1 1800 $GAP > /tmp/churn.out 2>&1 &
-		cp=$!
-		sleep 1
-		r=0 f=0
+		r=0 f=0 h=0 e=0 a=0
 		while [ $r -lt $ROUNDS ]; do
-			hammer2 snapshot /mnt/re $k$(printf %03d $r) >/dev/null 2>&1 || f=$((f + 1))
+			h0=$(held)
+			hammer2 snapshot /mnt/re $k$(printf %03d $r) >/dev/null 2>&1 &
+			sp=$!
+			n=0; until [ "$(held)" -gt "$h0" ] || [ $n -ge 100 ]; do sleep 0.05; n=$((n + 1)); done
+			[ "$(held)" -gt "$h0" ] && h=$((h + 1))
+			/tmp/rootchurn $kind /mnt/re $r 0.01 > /tmp/churn.out 2>&1 || e=$((e + 1))
+			sl=$(awk '{ for (i = 1; i < NF; i++) if ($i == "slow") print $(i + 1) }' /tmp/churn.out)
+			[ "$kind" = fsync ] && [ "${sl:-0}" -ge 1 ] && a=$((a + 1))
+			wait $sp || f=$((f + 1))
 			r=$((r + 1))
 		done
-		kill $cp; wait $cp; c=$?
-		echo "snapfsync kind $kind snapshots $r failed $f held $(($(dmesg | grep -c 'hammer2: snapshot held') - h0)) churn rc $c [$(cat /tmp/churn.out)]"
+		echo "snapfsync kind $kind snapshots $r failed $f held $h aimed $a churn rc $e [$(cat /tmp/churn.out)]"
 	done
 	echo 0 > $P/snapshot_hold_ms
-	/tmp/rootchurn fsync /mnt/re 9 0.05 > /dev/null 2>&1
+	/tmp/rootchurn fsync /mnt/re 999 0.05 > /tmp/churn.out 2>&1
+	echo "snapfsync final churn rc $? [$(cat /tmp/churn.out)]"
 	hammer2 snapshot /mnt/re zfinal >/dev/null 2>&1 || echo "snapfsync final snapshot failed"
 	mkdir -p /mnt/rs
 	if mount -t hammer2 $bd@zfinal /mnt/rs; then
@@ -231,7 +239,7 @@ free=$(sed -n 's/^  guest free \([0-9]*\)$/\1/p' "$T")
 cnr=
 # A churner that failed or did nothing, in either arm, leaves the run
 # unable to judge its mode.
-c=$(grep -E '^  guest ((window|snapfsync) .* churn rc [^0]|measure .* errors [1-9])' "$T") && cnr="a churner failed: ${c#  guest }"
+c=$(grep -E '^  guest ((window|snapfsync) .*churn rc [^0]|measure .* errors [1-9])' "$T") && cnr="a churner failed: ${c#  guest }"
 if [ "$ARM" = window ]; then
 	for spec in $SPECS; do
 		mode=${spec%:*} d=${spec#*:}
@@ -285,12 +293,13 @@ elif [ "$ARM" = snapfsync ]; then
 			h=$(sed -n "s/^  guest snapfsync kind $kind .* held \([0-9]*\) .*/\1/p" "$T")
 			[ "${h:-0}" -ge "$ROUNDS" ] || cnr="kind $kind: ${h:-no} snapshot holds logged of $ROUNDS rounds, so the hold did not run"
 			if [ "$kind" = fsync ]; then
-				sl=$(sed -n "s/^  guest snapfsync kind fsync .* slow \([0-9]*\)\]$/\1/p" "$T")
-				[ "${sl:-0}" -ge "$ROUNDS" ] || cnr="the fsync churner waited out ${sl:-no} snapshots of $ROUNDS, so its flushes did not land in the hold"
+				am=$(sed -n "s/^  guest snapfsync kind fsync .* aimed \([0-9]*\) .*/\1/p" "$T")
+				[ "${am:-0}" = "$ROUNDS" ] || cnr="the fsync waited on ${am:-no} snapshots of $ROUNDS, so not every round's flush landed in the hold"
 			fi
 		done
 		zf=$(awk '$1 == "zfinal:" { print $6 + $10 + $15 + $23 }' "$dg")
 		fl=$(sed -n 's/^  guest snapfsync final live \([0-9]*\) snapshot \([0-9]*\) same \([01]\)$/\1 \2 \3/p' "$T")
+		grep -q '^  guest snapfsync final snapshot failed' "$T" && cnr="the final snapshot failed"
 		if [ -z "$zf" ] || [ -z "$fl" ]; then
 			cnr="the final snapshot was not read: ${fl:-no listing}, ${zf:-not on media}"
 		else
