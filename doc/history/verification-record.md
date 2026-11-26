@@ -27413,10 +27413,11 @@ control failed `create` 20 of 20 and `unlink` 20 of 20 on both builds,
 (a) 0 of 80 on both, (a+) 0 of 80 on KASAN and 1 of 80 on debug,
 snapshot `l12` holding inode `0x1197` under one name with a link count
 of 2 (`rootsync-expected.md:73-93`; the KASAN run overwrote that image,
-so `l12` is kept as its summary line). The check let go of the root's
-lock before stage 1's restart captured the root's group, and a frontend
-queued on the lock could edit the root in between. `2bc07cb8` moves the
-group to the SYNCQ under the lock.
+so `l12` is kept as its reading,
+`rootsync-window-a2180d48-debug.mode2.dangling:35-36`). The check let go
+of the root's lock before stage 1's restart captured the root's group,
+and a frontend queued on the lock could edit the root in between.
+`2bc07cb8` moves the group to the SYNCQ under the lock.
 `rootsync-window-a2180d48-debug.out:22-37` is that run's media table.
 
 **Batch 3, `2bc07cb8`** (`batch3.log`): on both builds the control

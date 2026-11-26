@@ -584,7 +584,11 @@ DragonFly `d23da7dd7ddf` flushes the root at
 `sys/vfs/hammer2/hammer2_vfsops.c:2783-2791` with no check, and its
 newest commits to `hammer2_vfsops.c` and `hammer2_inode.c` are
 `40e5c5625b09` (2026-09-02, debug dumps at unmount) and `cb7c91339534`
-(2026-11-23, the setgid bit on create, no dependency code). Kusumi's
+(2026-11-23, the setgid bit on create, ten lines in
+`hammer2_inode_create_normal()` and no dependency code), read again on
+2026-11-26 with DragonFly's head at `e17b9176356e` and kept with the
+second commit's diff in
+`p7-notes/crash-instrument/inc9/upstream-commits-20261126.out`. Kusumi's
 FreeBSD, NetBSD and OpenBSD heads (`3df307f7db`, `64095c3947`,
 `a3747df966`, v1.2.13) carry the same stage 2 block, the same bytes in
 all three, at `:1947`, `:2064` and `:1909` of
@@ -592,7 +596,11 @@ all three, at `:1947`, `:2064` and `:1909` of
 the defect on its own media (the record, "A snapshot through a churn
 keeps a new directory's name without its inode"). The DragonFly patch
 applies to its head and the ports patch to all three heads with
-`patch -p1`. Neither has been compiled on a BSD: each transcribes the
-port's compiled code without its debug parameters. `bugs.dragonflybsd.org`
-was not searched, for the proof-of-work reason above, so the defect is
-not claimed unreported.
+`patch -p1`, NetBSD's at offsets of 106 to 117 lines and OpenBSD's at 38
+to 39: `patch --dry-run` over the file read from each head, which
+`inc9/upstream-heads/` keeps with the head commits in its `HEADS`, and
+the output, with each file's hash, is
+`inc9/upstream-apply-bcb667b8.out`. Neither has been compiled on a BSD:
+each transcribes the port's compiled code without its debug parameters.
+`bugs.dragonflybsd.org` was not searched, for the proof-of-work reason
+above, so the defect is not claimed unreported.
