@@ -556,3 +556,43 @@ so the lock cannot span that call. DragonFly's body calls
 call against DragonFly's unmount was not read. A snapshot gets a new
 cluster id and joins no PFS, so what remains there is the list insert
 racing the scan's removals.
+
+## hammer2_vfsops-sync-root-bounded-restart
+
+`dragonfly-hammer2_vfsops-sync-root-bounded-restart.patch` and
+`ports-hammer2_vfsops-sync-root-bounded-restart.patch`.
+
+Stage 2 of `hammer2_vfs_sync_pmp()` flushes the PFS root last, and that
+flush writes the root's directory entries with the inode index. A
+frontend operation that edits the root after stage 1 has processed it
+puts the root and the inodes it paired with on a new dependency that is
+not PASS2, which stage 1 does not take, so stage 2 writes an entry whose
+inode is not yet written, or a link or rename whose other inodes wait
+for the next sync. A snapshot taken from that sync, and from the code a
+crash after it, keep a name that does not open, an inode no name
+reaches, or a name for an inode that counts another number of links. The
+patches check the root for SIDEQ under its lock before that flush. Up to
+eight times in one sync they restart stage 1 with the root's group
+marked PASS2; the next time they move the group to the SYNCQ under the
+lock and keep the root there, passed over by stage 1, until stage 2
+flushes it, so a sync restarts for the root at most nine times. The
+verification record ("A sync wrote the PFS root's entries ahead of their
+inodes") has the measurements the bound was chosen on and its controls.
+
+Still present at head on 2026-11-25, read through the forge API:
+DragonFly `d23da7dd7ddf` flushes the root at
+`sys/vfs/hammer2/hammer2_vfsops.c:2783-2791` with no check, and its
+newest commits to `hammer2_vfsops.c` and `hammer2_inode.c` are
+`40e5c5625b09` (2026-09-02, debug dumps at unmount) and `cb7c91339534`
+(2026-11-23, the setgid bit on create, no dependency code). Kusumi's
+FreeBSD, NetBSD and OpenBSD heads (`3df307f7db`, `64095c3947`,
+`a3747df966`, v1.2.13) carry the same stage 2 block, the same bytes in
+all three, at `:1947`, `:2064` and `:1909` of
+`src/sys/fs/hammer2/hammer2_vfsops.c`. DragonFly 6.4-RELEASE reproduced
+the defect on its own media (the record, "A snapshot through a churn
+keeps a new directory's name without its inode"). The DragonFly patch
+applies to its head and the ports patch to all three heads with
+`patch -p1`. Neither has been compiled on a BSD: each transcribes the
+port's compiled code without its debug parameters. `bugs.dragonflybsd.org`
+was not searched, for the proof-of-work reason above, so the defect is
+not claimed unreported.

@@ -1,0 +1,94 @@
+--- a/src/sys/fs/hammer2/hammer2_vfsops.c
++++ b/src/sys/fs/hammer2/hammer2_vfsops.c
+@@ -1666,6 +1666,7 @@
+ hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor __unused)
+ {
+ 	hammer2_inode_t *ip;
++	int roothold = 0, rootfree = 0;
+ 	hammer2_depend_t *depend, *depend_next;
+ 	struct vnode *vp;
+ 	uint32_t pass2;
+@@ -1741,6 +1742,16 @@
+ 	hammer2_spin_ex(&pmp->list_spin);
+ 	while ((ip = TAILQ_FIRST(&pmp->syncq)) != NULL) {
+ 		/*
++		 * The PFS root is held on the SYNCQ for stage 2, see below.
++		 * A frontend waiting on it moves it to the head.
++		 */
++		if (roothold && ip == pmp->iroot) {
++			ip = TAILQ_NEXT(ip, qentry);
++			if (ip == NULL)
++				break;
++		}
++
++		/*
+ 		 * Remove the inode from the SYNCQ, transfer the syncq ref
+ 		 * to us.  We must clear SYNCQ to allow any potential
+ 		 * front-end deadlock to proceed.  We must set PASS2 so
+@@ -1947,6 +1958,66 @@
+ 	if ((ip = pmp->iroot) != NULL) {
+ 		hammer2_inode_ref(ip);
+ 		hammer2_mtx_ex(&ip->lock);
++		/*
++		 * The root's directory entries live in the chain this flush
++		 * writes, and a frontend op edits them under the root's lock
++		 * at any time, putting the root and the inodes it paired with
++		 * on a new, non-PASS2 dependency once stage 1 has processed
++		 * the root.  Flushed now, the root would carry a new entry
++		 * whose inode is still CREATING, or a link or rename whose
++		 * other inodes wait for the next sync, and the volume header
++		 * written below points at it, as does a snapshot taken from
++		 * this sync.  Every such edit leaves the root SIDEQ before it
++		 * unlocks the root, so with the lock held, SIDEQ means one
++		 * happened.  Mark its group PASS2 and restart stage 1, which
++		 * flushes the group, up to 8 times in one sync: the root stays
++		 * open to frontends meanwhile, and a sync that meets a root
++		 * edit each time could otherwise restart without end.  The
++		 * next time, move its group to the SYNCQ here, as stage 1's
++		 * capture would, and restart stage 1, which flushes the group
++		 * and passes over the root, so the root stays SYNCQ until
++		 * this flush.  The move is made before the root's lock is let
++		 * go: a frontend waiting on that lock gets it next, and must
++		 * find the root SYNCQ and wait.  Every frontend lock of the
++		 * root waits while it is SYNCQ, and a SYNCQ inode cannot go
++		 * SIDEQ, so the check fires at most 9 times per sync.  The
++		 * waiters are woken by the unlock below.
++		 */
++		hammer2_spin_ex(&pmp->list_spin);
++		if (ip->flags & HAMMER2_INODE_SYNCQ) {
++			TAILQ_REMOVE(&pmp->syncq, ip, qentry);
++			--pmp->sideq_count;
++			atomic_clear_int(&ip->flags, HAMMER2_INODE_SYNCQ);
++			hammer2_spin_unex(&pmp->list_spin);
++			hammer2_inode_drop(ip);		/* the syncq's ref */
++		} else if (ip->flags & HAMMER2_INODE_SIDEQ) {
++			depend = ip->depend;
++			if (rootfree++ >= 8) {
++				hammer2_inode_t *tip;
++
++				TAILQ_FOREACH(tip, &depend->sideq, qentry) {
++					atomic_set_int(&tip->flags,
++				    HAMMER2_INODE_SYNCQ);
++					atomic_clear_int(&tip->flags,
++				    HAMMER2_INODE_SIDEQ);
++					tip->depend = NULL;
++				}
++				TAILQ_CONCAT(&pmp->syncq, &depend->sideq, qentry);
++				depend->count = 0;
++				depend->pass2 = 0;
++				TAILQ_REMOVE(&pmp->depq, depend, qentry);
++				roothold = 1;
++			} else {
++				depend->pass2 = 1;
++			}
++			hammer2_spin_unex(&pmp->list_spin);
++			hammer2_mtx_unlock(&ip->lock);
++			hammer2_inode_drop(ip);
++			dorestart = 1;
++			goto restart;
++		} else {
++			hammer2_spin_unex(&pmp->list_spin);
++		}
+ 		hammer2_inode_chain_sync(ip);
+ 		hammer2_inode_chain_flush(ip,
+ 		    HAMMER2_XOP_INODE_STOP | HAMMER2_XOP_FSSYNC |
