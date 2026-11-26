@@ -52,6 +52,10 @@ MODES=${H2_ROOT_MODES:-1 0} KINDS=${H2_ROOT_KINDS:-create unlink rename link}
 ROUNDS=${H2_ROOT_ROUNDS:-20} GAP=${H2_ROOT_GAP:-5000} FREE=${H2_ROOT_FREE:-}
 MSPECS=${H2_ROOT_MSPECS:-1:8 1:0 0}
 case $ROUNDS$GAP$FREE in *[!0-9]*) echo "COULD-NOT-RUN: H2_ROOT_ROUNDS, _GAP and _FREE are numbers"; exit 2 ;; esac
+# The values travel inside the guest's command line, so each is refused
+# here unless it is one the arm knows.
+for k in $KINDS; do case $k in create|unlink|rename|link) ;; *) echo "COULD-NOT-RUN: H2_ROOT_KINDS holds create, unlink, rename or link, not $k"; exit 2 ;; esac; done
+for s in $MSPECS; do case $s in 0|1|1:[0-9]|1:[0-9][0-9]) ;; *) echo "COULD-NOT-RUN: H2_ROOT_MSPECS holds 0, 1 or 1:<free>, not $s"; exit 2 ;; esac; done
 case $ARM in
 window) DISKS='' SPECS='' i=0; SIZE=2G
 	for m in $MODES; do
