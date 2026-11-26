@@ -27351,3 +27351,198 @@ after 38 ms and 81 ms with the create still held, the create then killed
 (status 137) and the guest destroyed when it would not shut down, 8 of
 the 9 userland checks failed and the hold's start the one passing. QEMU
 cores 0.
+
+## A sync wrote the PFS root's entries ahead of their inodes, 2026-11-25
+
+The defect of "A snapshot through a churn keeps a new directory's name
+without its inode" above, carried from DragonFly and reproduced there,
+is fixed in stage 2 of `hammer2_vfs_sync_pmp()`. Stage 2 flushes the PFS
+root last, with `HAMMER2_XOP_VOLHDR`, and that chain holds the root
+directory's own entries beside the inode index. A frontend operation
+that edits the root after stage 1 has processed it leaves the root and
+the inodes it paired with on a new dependency without PASS2, which stage
+1 does not take, so stage 2 wrote the root's new entries while those
+inodes waited for the next sync. The carried entry's candidate mechanism
+(`hammer2_inode_setdepend_locked()` setting no rescan for such an edit)
+held: every reading below is consistent with it, and the check that
+closes it is the one the mechanism predicts.
+
+The check sits after stage 2 takes the root's lock (`hammer2_vfsops.c`
+from `:3604`): a root on the SIDEQ there has been edited since stage 1
+took it. Up to `rootsync_free` times in one sync it marks the root's
+group PASS2 and restarts stage 1, with the root open to frontends; the
+next time it moves the group to the SYNCQ under the root's lock and
+restarts, and stage 1 then flushes the group and passes over the root,
+which stays SYNCQ, and so closed to every frontend lock, until stage 2
+flushes it. A SYNCQ inode cannot go SIDEQ, so a sync restarts for the
+root at most `rootsync_free` + 1 times. The default is 8, set by
+`#define` in the non-debug build; the debug build has `rootsync_mode` (1
+the check, 0 upstream's flush, the control), `rootsync_free`,
+`rootsync_hold_ms`, which holds stage 2 once per sync before it locks
+the root so an edit can be aimed into the window, and counters of syncs,
+restarts, root restarts with the most in one sync, and the hold's total
+and longest time.
+
+The design note, `p7-notes/snapshot-dirent-design.md`, rejected three
+options before any run: (b), root operations that set a rescan or wait
+for the sync, which needs (a)'s check anyway and adds a wait at five or
+more sites; (c), stage 2 inserting the CREATING inodes, which covers
+creates only and would run stage 1's per-inode sequence under the root's
+lock; and (d)'s shapes, each a deep change to the flush or the format.
+It recommended (a+), which holds the root from the first restart, over
+(a), which restarts without a bound, on (a)'s missing termination
+argument, and asked for the cost to be measured first.
+
+**The instrument.** `script/h2-dangling.py` reads, per PFS on an image,
+directory entries whose inode is not indexed, indexed inodes no entry
+names, inodes no walk from the root reaches, and since `3e1474da` an
+inode's link count against the names it has (a directory counted once).
+The arms ran from `p7-notes/crash-instrument/inc9/rootsync.sh`, their
+expectations written before each batch in `rootsync-expected.md` beside
+it; every output named below is in that directory unless a path says
+otherwise. The window arm puts one mode on each fresh 2 GiB volume,
+found on the guest by its virtio serial, holds each sync 200 ms, and
+runs one churner of `test/rootchurn.c` in the root through 20 snapshots
+per kind: `create` (mkdir of new names), `unlink` (a file made, unlinked
+200 creates later), `rename` (a file to `sub/` and back), `link`
+(`sub/l` linked into the root and unlinked). The measure arm runs N root
+loops for 20 s beside a back-to-back `syncfs(2)` loop with no hold.
+
+**Batch 1, `a2180d48`** (`batch.log`; modes 2 (a+), 1 (a), 0): the
+control failed `create` 20 of 20 and `unlink` 20 of 20 on both builds,
+(a) 0 of 80 on both, (a+) 0 of 80 on KASAN and 1 of 80 on debug,
+snapshot `l12` holding inode `0x1197` under one name with a link count
+of 2 (`rootsync-expected.md:73-93`; the KASAN run overwrote that image,
+so `l12` is kept as its summary line). The check let go of the root's
+lock before stage 1's restart captured the root's group, and a frontend
+queued on the lock could edit the root in between. `2bc07cb8` moves the
+group to the SYNCQ under the lock.
+`rootsync-window-a2180d48-debug.out:22-37` is that run's media table.
+
+**Batch 3, `2bc07cb8`** (`batch3.log`): on both builds the control
+failed `create` and `unlink` 20 of 20, `rename` 0 and 2 of 20, `link` 4
+and 6 of 20 (debug, KASAN), and both fixes read 0 of 80, (a+) restarting
+for the root once per sync
+(`rootsync-window-2bc07cb8-{debug,kasan}.out`, lines 4-37 of each). With
+no gap between a churner's operations, so a frontend waits on the root's
+lock whenever stage 2 holds it, 200 `link` rounds on debug failed 17 on
+`a2180d48` and 0 on `2bc07cb8`, every failure a link count
+(`rootsync-straddle200-{a2180d48,2bc07cb8}-debug.out:11`, batch 4).
+
+**The cost, and the ruling.** Under back-to-back syncs the two fixes
+split on cost, not correctness. Batch 3's measure arm at `2bc07cb8`
+(`rootsync-measure-2bc07cb8-debug.out`) read (a+) completing 2,700 to
+4,306 root `mkdir` operations in 20 s against upstream's 8,064 to 8,172,
+since it holds the root through each restart pass (10.6 to 14.6 s of the
+20), and (a) 69,256 to 111,794 with up to 1,709 root restarts in one
+sync and a longest `syncfs` of 882 ms. Since 1.0.102 `fsync` runs the
+PFS sync, so back-to-back syncs are a workload an application makes. A
+third form, restart free `rootsync_free` times and then hold, ran in
+batch 5 at `b7ee8dfb` in one boot beside the other three
+(`rootsync-measure-b7ee8dfb-debug.out:4-21`, debug build):
+
+| form | root ops, N = 1 / 8 / 32 | longest `syncfs`, ms | most root restarts in one sync |
+|---|---|---|---|
+| restart 8, then hold | 42,700 / 31,972 / 32,220 | 110 / 156 / 110 | 9 |
+| restart 3, then hold | 25,130 / 15,952 / 11,142 | 98 / 37 / 185 | 4 |
+| restart 1, then hold | 22,466 / 10,000 / 6,956 | 111 / 69 / 120 | 2 |
+| (a+), hold at once | 7,860 / 2,818 / 5,044 | 57 / 142 / 27 | 1 |
+| (a), no bound | 120,028 / 117,192 / 95,842 | 1,477 / 4,334 / 6,367 | 1,316 / 6,573 / 13,153 |
+| upstream, no check | 5,758 / 10,932 / 8,206 | 297 / 183 / 211 | 0 |
+
+The third form held its bound at every K, and under it the window arm
+read 0 of 80 on both builds with the hold path taken
+(`rootsync-window-b7ee8dfb-{debug,kasan}.out:14-17`). Its rename rows at
+K = 1 and 3 stand (`:22-27`); from K = 8 on the 2 GiB volume had filled
+and every renamer failed, so those rows are void and the measure arm now
+runs on 16 GiB. The prediction that (a)'s most restarts in one sync
+grows with N failed at `2bc07cb8` (1,709, 895, 496) and held at
+`b7ee8dfb` on the same code in another boot (1,316, 6,573, 13,153), so
+(a)'s count has no shape a bound could be argued from.
+
+Ruled on these numbers, the change being measured and reversible: the
+bounded restart with K = 8 is the fix (`0c0dbfb4`). In that boot it
+completed more root operations than upstream and (a+) at every N, with a
+longest `syncfs` below upstream's at every N, and it bounds the restarts
+(a) does not. `rootsync_mode` 1 is the check, 0 upstream's, and
+`rootsync_free` 0 gives (a+).
+
+**The final source** (`batch7.sh`, its log `batch7.log`, expectations
+"The ruling, and batch 6" and "Batch 7"): from a worktree at `d33829d2`,
+whose `src/` is `0c0dbfb4`'s, with the arms run by
+`script/sync-root-entry.sh`, the tree's own form of the driver
+(`91ac86e0`, the fired-check requirement `d33829d2`). The window arm on
+`h2debug-7.3tls` and `h2kasan-7.3tls`, mode 1 0 failing of 80 on each,
+most root restarts in one sync 2 to 4 and 3 to 5, and the check firing
+41 to 133 times per kind; the control `create` and `unlink` 20 of 20 on
+each, `rename` 1 and 3, `link` 1 and 3
+(`sync-root-entry-window-d33829d2-{debug,kasan}.out:3-29`). The
+straddle, `link` with no gap through 200 snapshots on debug: mode 1 0 of
+200, most root restarts in one sync 9, the bound, and the hold path
+taken with its longest hold 98 ms; the control 88 of 200
+(`sync-root-entry-window-straddle200-d33829d2-debug.out:3-11`). The
+window arm with a 5 ms gap never reached the hold, its most restarts in
+a sync being 5, so the straddle is the arm that runs the hold path. The
+measure arm on a 16 GiB volume, no churner failing
+(`sync-root-entry-measure-d33829d2-debug.out:3-20`):
+
+| spec | `mkdir` ops, N = 1 / 8 / 32 | longest `syncfs`, ms | rename ops, N = 1 / 8 / 64 | longest `syncfs`, ms | most root restarts |
+|---|---|---|---|---|---|
+| `1:8`, the default | 30,830 / 33,330 / 24,854 | 133 / 125 / 155 | 22,090 / 15,052 / 9,608 | 79 / 426 / 117 | 9 |
+| `1:0`, (a+) | 4,582 / 4,026 / 3,276 | 139 / 82 / 141 | 2,820 / 5,396 / 4,726 | 205 / 486 / 71 | 1 |
+| `0`, upstream | 5,798 / 11,026 / 6,540 | 328 / 86 / 519 | 2,996 / 5,210 / 3,574 | 191 / 146 / 490 | 0 |
+
+The default completed 3.0 to 5.3 times upstream's `mkdir` operations
+here and 2.9 to 7.4 times in batch 5, and its longest `syncfs` sat under
+160 ms in both boots where upstream's reached 519 ms, though at N = 8
+here upstream's 86 ms was the shorter. The renamer risk the design note
+named, restarts growing with the renamer count, is not there: the root
+restarts under `1:8` fell from 20,787 at one renamer to 6,492 and 7,375
+at 8 and 64. The rename arm's longest `syncfs` at N = 8, 426 ms under
+the default and 486 ms under (a+), is the hold, 422 and 434 ms at its
+longest; upstream's own longest, with no hold, was 490 ms at 64
+renamers.
+
+The final source otherwise: `test-enospc.sh` 0 failures on
+`h2debug-7.3tls` and `h2kasan-7.3tls`, the shared reserve refusing the
+second write in both shapes on each; `test-fixtures.sh` 11 images, 110
+ioctl results, 0 failures; `pfs-domains.sh` 3 PFS roots and a snapshot
+written into, 0 failures; `sync-empty-base.sh` 18 checks; `bulkfree.sh`
+800 MB written, removed, scanned twice and written again, 0 failures;
+`cluster-sync.sh` 60 checks (`final-*-{debug,kasan}-d33829d2.out`). The
+churn exit, `million-tree.sh` under `H2_TREE_CHURN=1` nine times on
+`h2release-7.3tls`, each on its own image: 9 of 9 exit 0 and every
+image's three PFS read 0 by `h2-dangling.py` (`churn9-d33829d2.log`,
+outputs under `churn9-d33829d2/`), where the module before the fix
+failed 5 of 12, so nine clean runs would come by chance under one time
+in a hundred; batch 4 read the same 9 of 9 at `fce7e464`, on the
+`rootsync_mode` 2 form. The note's regression row, a tree written here
+and checked on DragonFly 6.4.2 and back, from a frozen copy at
+`68b902e2`, whose `src/` is `0c0dbfb4`'s: `f4-roundtrip.sh` 0 failures,
+DragonFly checking 305 files with 0 mismatches as in earlier runs, its
+`fsck_hammer2` clean, and the host's refusing the image with one header
+byte changed (`final-f4-roundtrip-debug-68b902e2.out`). QEMU cores 0,
+kernel logs 0 warnings throughout. Instruments against `linux-7.3`: W=1
+24 objects, 0 warnings
+(`p7-notes/crash-instrument/final-w1-d33829d2.out`); the analyzer's 15
+candidates the same set as at `fce7e464`; smatch's 59 the same set but
+one line number, the `ripdata` report in `hammer2_pfsalloc()` six lines
+lower for the parameters above it
+(`final-{analyze,smatch}-d33829d2.out`); the compile database 24
+entries.
+
+**The rows of the note's table.** Each row the note read from code has a
+driver now: `create` covers mkdir in the root, whose path every create
+shares (`hammer2_vop_ncreate()`); `link` the link into the root;
+`rename` both cross-directory directions; `unlink` the unlink in the
+root. The control failed each on media in some round across the batches
+above, and the final form none. The note's root-directory `fsync` route,
+an `fsync` of `/` between the snapshot ioctl's sync and its lock of the
+root, is not closed by this change: it moves `pfs_iroot_blocksets`
+without a volume header, so it reaches a snapshot and not a crash, and
+it goes with the snapshot ioctl's lock order as the next design.
+
+Staged for upstream:
+`doc/upstream/dragonfly-hammer2_vfsops-sync-root-bounded-restart.patch`
+and `ports-hammer2_vfsops-sync-root-bounded-restart.patch`, with the
+state at each head in `doc/upstream/README-provenance.md`.

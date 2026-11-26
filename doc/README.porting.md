@@ -1969,3 +1969,47 @@ holds whole is written as it stands, which heals a dispute with the
 writer's bytes, as a whole-block folio does. `cluster-sync.sh`'s S1 and
 `cluster-quorum.sh`'s S2 are the checks; their fleet run is recorded in
 the verification record when it has been made.
+
+## The sync holds the PFS root's entries until their inodes are written
+
+Stage 2 of upstream's `hammer2_vfs_sync_pmp()` flushes the PFS root with
+`HAMMER2_XOP_VOLHDR`, and that chain holds the root directory's entries
+as well as the inode index. A create, unlink, link or rename that edits
+the root after stage 1 has processed it puts the root and the inodes it
+paired with on a new dependency, which stage 1 does not take, so stage 2
+wrote the root's entries while those inodes waited for the next sync. A
+snapshot taken from that sync, and from the code a crash after it, keep
+a name that does not open, an inode no name reaches, or a link count its
+names disagree with. DragonFly 6.4 does the same on its own media, and
+the three BSD ports carry the same block, so there is no port to follow.
+
+Unlike the defect in "An upstream defect was carried rather than
+fixed", this one is reached by any program that edits the root
+directory during a sync, and since `fsync` runs the PFS sync (the
+section "fsync commits the PFS") a sync is as frequent as an
+application makes it. So the port changes the carried sync, marked
+`XXX` in place. With the root's lock held before that flush, a root on
+the SIDEQ has been edited since stage 1 took it. Up to eight times in
+one sync the check marks the root's group PASS2 and restarts stage 1,
+the root open to frontends meanwhile; the next time it moves the group
+to the SYNCQ under the lock, and the root stays there, closed to
+frontend locks, until stage 2 has flushed it. The move is made before
+the lock is let go, or a frontend queued on the lock edits the root
+between the check and stage 1's capture of the group. A SYNCQ inode
+cannot go SIDEQ, so a sync restarts for the root at most nine times.
+Nothing on the media changes; only the order of one sync's flushes
+does.
+
+The bound of eight was measured, not argued. Under back-to-back syncs,
+holding the root from the first restart, the form the design review
+recommended, completed fewer root `mkdir` operations than upstream's
+flush at 1, 8 and 32 loops in two boots and at 8 and 32 in a third;
+restarting without a bound completed the most and restarted up to
+13,153 times in one sync, with a `syncfs` taking 6.4 s; eight free
+restarts completed 2.9 to 7.4 times upstream's operations at every
+load in two boots, and its longest `syncfs` stayed at or under 156 ms
+where upstream's reached 297 ms in one boot and 519 ms in the other.
+The readings and the controls are in the verification record, "A sync
+wrote the PFS root's entries ahead of their inodes", and
+`script/sync-root-entry.sh` is the check. The change is staged for
+upstream in `doc/upstream/`.

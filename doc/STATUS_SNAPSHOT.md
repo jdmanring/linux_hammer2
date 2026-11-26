@@ -81,19 +81,19 @@ has been read back by DragonFly and the other way round
   state held until the link ends, with no bound found. P7 is closed at
   1.0.84, its closure mapping the pass's reading over TLS and the five
   criteria to their runs.
-- **A directory replaced under a PFS root during a sync**: the root's new
-  entry can reach the media in that sync while the new inode, and the
-  removal of the old directory's inode, wait for the next. A snapshot
-  taken at that sync keeps a name that does not open and, in 4 of the 5
-  snapshots read on media, the replaced directory, named by nothing, with
-  the files it held (up to 1000), holding space no walk of the namespace
-  finds; from
-  the code, a crash after that sync mounts the same. Carried from
-  DragonFly, whose own kernel does the same on its own media (2
-  snapshots of 20 under churn, 2026-11-09); neither tree's
-  `fsck_hammer2` reports it; not fixed (the verification record,
-  "A snapshot through a churn keeps a new directory's name without its
-  inode").
+- **A PFS root edited during a sync, on media written before the fix**:
+  upstream's sync, carried until this fix, wrote the root's new entries
+  ahead of the inodes an edit during the sync paired with them, so a
+  snapshot taken at that sync, or from the code a crash after it, kept a
+  name that does not open, a replaced directory named by nothing with
+  the files it held, or a link count its names disagree with. DragonFly
+  does the same on its own media. The port's sync now holds the root's
+  flush until those inodes are written, and `script/sync-root-entry.sh`
+  checks it against upstream's flush as the control; the verification
+  record has the readings ("A sync wrote the PFS root's entries ahead of
+  their inodes"). What earlier syncs, or DragonFly, already wrote stays
+  on the media: neither tree's `fsck_hammer2` reports it, and
+  `script/h2-dangling.py` reads it from an unmounted image.
 - **Writes through a cluster with a remote master**: refused; such a
   PFS mounts read-only until P8's lease protocol, whose design note is
   not yet written.
