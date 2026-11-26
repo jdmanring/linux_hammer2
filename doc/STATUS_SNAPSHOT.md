@@ -91,7 +91,11 @@ has been read back by DragonFly and the other way round
   flush until those inodes are written, and `script/sync-root-entry.sh`
   checks it against upstream's flush as the control; the verification
   record has the readings ("A sync wrote the PFS root's entries ahead of
-  their inodes"). What earlier syncs, or DragonFly, already wrote stays
+  their inodes"). A snapshot taken while a program `fsync`ed the root
+  directory reached the same name by a second route, the `fsync`'s flush
+  moving the blockset the snapshot copies; the port moves it only on the
+  sync's final flush now ("A root fsync moved the slot a snapshot
+  copies"). What earlier syncs, or DragonFly, already wrote stays
   on the media: neither tree's `fsck_hammer2` reports it, and
   `script/h2-dangling.py` reads it from an unmounted image.
 - **Writes through a cluster with a remote master**: refused; such a

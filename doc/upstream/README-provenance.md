@@ -604,3 +604,42 @@ the output, with each file's hash, is
 each transcribes the port's compiled code without its debug parameters.
 `bugs.dragonflybsd.org` was not searched, for the proof-of-work reason
 above, so the defect is not claimed unreported.
+## hammer2_flush-snapshot-slot-fssync-only
+
+`dragonfly-hammer2_flush-snapshot-slot-fssync-only.patch` and
+`ports-hammer2_flush-snapshot-slot-fssync-only.patch`.
+
+The flush XOP writes `pmp->pfs_iroot_blocksets[clindex]`, the blockset
+the snapshot ioctl copies into a new PFS root, after any flush of the PFS
+root. An `fsync(2)` of the root directory flushes it with
+`HAMMER2_XOP_INODE_STOP` alone, which writes the root's new directory
+entries and stops at the inodes they name. The snapshot ioctl syncs the
+filesystem, opens its flush transaction and then locks the root and
+copies the slot; a normal transaction does not wait for a flush
+transaction, so a root `fsync` that lands between the two leaves the
+slot naming entries whose inodes are not written, and the snapshot keeps
+names that do not open. The patches write the slot only from a flush
+carrying `HAMMER2_FLUSH_FSSYNC`, which is the sync's final flush of the
+root and what the sync's own comment asks for ("we also don't want the
+flush code to update pfs_iroot_blocksets until the final flush later").
+A non-FSSYNC flush of an inode takes `skipupdate` before UPDATE is
+cleared, so the root an `fsync` flushed still carries UPDATE and the
+sync's FSSYNC flush still writes the slot. The verification record ("A
+root fsync moved the slot a snapshot copies") has the control and the
+fix's readings.
+
+Still present at head on 2026-11-26, read through the forge API:
+DragonFly `e17b9176356e` writes the slot unconditionally at
+`sys/vfs/hammer2/hammer2_flush.c:1334-1338`, and the newest commit to
+that file is `a13468b066d0` (2023-12-21, comments on chain statistics).
+Kusumi's FreeBSD, NetBSD and OpenBSD heads (`3df307f7db`, `64095c3947`,
+`a3747df966`) carry the same block at `src/sys/fs/hammer2/hammer2_flush.c`
+`:1130-1134` (FreeBSD `:1133-1137`); each head's file is byte-identical
+to the local clone of that port. The DragonFly patch was generated from
+its head's file and the ports patch from FreeBSD's, and applies to the
+NetBSD and OpenBSD files with `patch -p1` at an offset of three lines.
+Neither has been compiled on a BSD. Whether DragonFly reproduces it was
+not run: its `fsync` runs no sync after the flush, so the window there
+is the same or wider, which is read from code. `bugs.dragonflybsd.org`
+was not searched, for the proof-of-work reason above, so the defect is
+not claimed unreported.

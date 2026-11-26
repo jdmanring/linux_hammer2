@@ -27547,3 +27547,92 @@ Staged for upstream:
 `doc/upstream/dragonfly-hammer2_vfsops-sync-root-bounded-restart.patch`
 and `ports-hammer2_vfsops-sync-root-bounded-restart.patch`, with the
 state at each head in `doc/upstream/README-provenance.md`.
+
+## A root fsync moved the slot a snapshot copies, 2026-11-26
+
+The snapshot ioctl, `hammer2_pfs_snapshot()`, syncs the PFS, opens its
+flush transaction, then locks the root and copies
+`pmp->pfs_iroot_blocksets[clindex]` into the new PFS root. The flush XOP
+wrote that slot after any flush of the PFS root (`hammer2_flush.c`, the
+block under `XXX cluster`), and an `fsync(2)` of the root directory
+flushes it with `HAMMER2_XOP_INODE_STOP` alone (`hammer2_vnops.c:1599`),
+which writes the root's new entries and stops at the inodes they name.
+A normal transaction does not wait for a flush transaction
+(`hammer2_flush.c:117-129`), so a root `fsync` landing between the
+snapshot's sync and its copy left the slot naming entries whose inodes
+were not written, and its commit's PFS sync, which would have repaired
+the slot, waited for the snapshot's transaction. Read from code on
+2026-11-26 after step 3 ("A sync wrote the PFS root's entries ahead of
+their inodes"), whose fix covers the sync's own flush and not this
+writer; the design note and its review are
+`p7-notes/snapshot-ioctl-design.md` and
+`snapshot-ioctl-design-review.md`, with the review's findings answered
+in `snapshot-ioctl-design-review-dispositions.md`. DragonFly's head and
+the three BSD ports write the slot the same way.
+
+`c4cf7f1c` adds `snapshot_hold_ms`, a debug-build module parameter that
+holds the snapshot after its flush transaction opens and before it
+locks the root. Placed before the transaction, as the note first had it,
+the hold let the `fsync`'s commit finish a whole sync inside it and
+leave the slot whole (the review's first finding). `df4d455f` and
+`09de5564` add `H2_ROOT_ARM=snapfsync` to `script/sync-root-entry.sh`:
+one 2 GiB volume, the hold at 200 ms, 20 snapshots per kind beside one
+churner (`test/rootchurn.c`) making directories in the root, each
+followed by an `fsync` of the root (`fsync`) or not (`create`), every
+snapshot read by `script/h2-dangling.py`; then, without the hold, one
+more directory, an `fsync` of the root and a snapshot `zfinal`, which
+must list the live root's names and keep their inodes. `d3c86c03`
+writes the slot only from a flush carrying `HAMMER2_FLUSH_FSSYNC`, the
+sync's final flush of the root, marked `XXX`. A non-FSSYNC flush of an
+inode takes `skipupdate` (`hammer2_flush.c:852-859`) before UPDATE is
+cleared (`:873`), so a root an `fsync` flushed keeps UPDATE, which is in
+`HAMMER2_CHAIN_FLUSH_MASK`, and the sync's final flush still enters the
+block that writes the slot; `zfinal` is the reading of that.
+
+Expectations were written before the first run
+(`inc10/snapfsync-expected.md`), each module built with
+`HAMMER2_LOCKDEBUG=1`:
+
+| module | build | `fsync` kind failing | `create` kind failing | `zfinal` | holds logged | `fsync` calls over 100 ms / all | log |
+|---|---|---|---|---|---|---|---|
+| `df4d455f`, the hold alone | debug | 20 of 20 | 0 of 20 | not taken | 20, 20 | 21 / 121 | 0 |
+| `df4d455f` | KASAN | 19 of 20 | 0 of 20 | not taken | 20, 20 | 20 / 48 | 0 |
+| `d3c86c03`, the fix | debug | 0 of 20 | 0 of 20 | 1090 names each side, 0 defects | 20, 20 | 21 / 70 | 0 |
+| `d3c86c03` | KASAN | 0 of 20 | 0 of 20 | 1158 names each side, 0 defects | 20, 20 | 20 / 135 | 0 |
+
+(`inc10/snapfsync-{df4d455f,d3c86c03}-{debug,kasan}.out`, logs
+`control-df4d455f.log` and `fix-d3c86c03.log`; the control's driver ran
+before `09de5564` and so took no `zfinal`.) The control exits 1 on both
+builds and the fix 0. The expectation was 20 of 20 on the control on
+both builds; KASAN read 19. Its `fsync` took up to 1.75 s, so a round can
+open and close its 200 ms hold while the churner is still in the
+previous round's commit, and no flush of the root lands in it. The count
+of `fsync` calls over 100 ms, which the expectation took for a per-round
+proof of aim, is therefore a count of rounds that blocked an `fsync`,
+not of rounds an `fsync` flushed inside. The `create` kind reading 0 on
+the control shows no other writer moves the slot in the window. On the
+fix, on debug, `cluster-sync.sh` 60 checks, 0 failed, with 2 idle passes
+and 0 snapshot passes in 9 s after the resume (the same counts as at
+`d33829d2`), and `cluster-quorum.sh` 24 checks, 0 failed
+(`inc10/cluster-{sync,quorum}-d3c86c03-debug.out`). QEMU cores 0.
+
+At the final source, `d3c86c03`, from a detached worktree
+(`inc10/final.sh`, its log `final.log`): step 3's window arm with modes 1
+and 0 on debug and on KASAN exits 0 on both, mode 1 0 of 20 failing for
+every kind and mode 0, the control, 20 of 20 for create and unlink (and
+4 and 0 of 20 for rename and link on debug, 3 and 3 on KASAN), which is
+step 3's reading on a module whose snapshots copy only the slot the
+sync's final flush writes (`inc10/sync-root-entry-window-d3c86c03-{debug,kasan}.out`);
+`test-enospc.sh` 0 failures on both builds; `test-fixtures.sh` 11
+images, 110 ioctl results, 0 failures; `pfs-domains.sh` 3 PFS roots and
+a snapshot written into, 0 failures; `sync-empty-base.sh` 18 checks, 0
+failed; `bulkfree.sh` 0 failures (`inc10/final-*-d3c86c03.out`). QEMU
+cores 0. W=1 24 objects, 0 warnings (`final-w1-d3c86c03.out`); the
+analyzer against `linux-7.3-tls` the same 8 candidates as at `177c8e1a`
+and smatch the same 59 as at `d33829d2`, with line numbers and paths set
+aside; the compile database 24 entries.
+
+Staged for upstream: `doc/upstream/dragonfly-hammer2_flush-snapshot-slot-fssync-only.patch`
+and `ports-hammer2_flush-snapshot-slot-fssync-only.patch`, with the state
+at each head in `doc/upstream/README-provenance.md`. Whether DragonFly
+reproduces it was not run.

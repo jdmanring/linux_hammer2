@@ -2013,3 +2013,32 @@ The readings and the controls are in the verification record, "A sync
 wrote the PFS root's entries ahead of their inodes", and
 `script/sync-root-entry.sh` is the check. The change is staged for
 upstream in `doc/upstream/`.
+
+## A root fsync no longer moves the slot a snapshot copies
+
+The snapshot ioctl syncs the PFS, opens its flush transaction, then
+locks the root and copies `pfs_iroot_blocksets`, the root's blockset as
+the flush XOP last left it. Upstream's flush XOP writes that slot after
+any flush of the root, and an `fsync(2)` of the root directory flushes
+it with `HAMMER2_XOP_INODE_STOP` alone, which writes the root's new
+entries and stops at the inodes they name. A normal transaction does
+not wait for a flush transaction, so a root `fsync` between the
+snapshot's sync and its copy left the slot naming entries without
+their inodes, and the snapshot kept them: 20 of 20 rounds on the debug
+build and 19 of 20 on KASAN under `snapshot_hold_ms`, with a churner
+fsyncing the root. Programs that rename a file into place and `fsync`
+the directory do exactly this in a PFS root.
+
+The port writes the slot only from a flush carrying `FSSYNC`, marked
+`XXX` in the carried flush. That is the sync's final flush of the root,
+and the sync's own comment already asks that the flush code leave the
+slot alone until then. The change is safe for the slot's other reader,
+the synchronization thread's idle test, because a non-FSSYNC flush of an
+inode skips the parent update before UPDATE is cleared, so a root the
+`fsync` flushed still carries UPDATE and the sync's final flush still
+writes the slot; a snapshot taken after a root `fsync` with no hold
+lists every name the live root lists. DragonFly and the three BSD ports
+write the slot as upstream does, so there is no port to follow; the
+change is staged for upstream in `doc/upstream/`, and the verification
+record has the readings ("A root fsync moved the slot a snapshot
+copies").

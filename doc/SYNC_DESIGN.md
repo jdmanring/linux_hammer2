@@ -494,8 +494,10 @@ would have deferred and re-stamped the whole slave tree per round; the
 root-level compare by tid is what the rescan set already makes sound.
 
 **The idle test is the master root's flushed blockset and copied
-fields, not its tid.** The flush rewrites `pfs_iroot_blocksets[m]` for
-any change it writes back under the root and nothing else does; the
+fields, not its tid.** The sync's final flush of the root rewrites
+`pfs_iroot_blocksets[m]` for any change written back under the root,
+and since the slot stopped moving on an `fsync` of the root, no other
+flush does; the
 fourteen root fields the PFSROOT arm copies are compared beside it, from
 the snapshot that last verified, which carries the source root's fields
 rather than a new PFS's defaults. The root's own `modify_tid` moves with
@@ -926,11 +928,14 @@ source before it was applied, and no lever-2 code precedes it.
    blockset the copy will take, `pmp->pfs_iroot_blocksets[clindex]`
    (`:1160`), equals the source element's root chain's own blockset,
    both read inside the root chain's lock, which is the lock the flush
-   holds when it refreshes the slot (`hammer2_flush.c:1170-1184`). The
-   slot can still be refreshed between the cut and the copy, by an
-   `fsync` of the PFS root directory (`hammer2_vnops.c:1599`) or any
-   other flush of the root; what that brings into the copy was written
-   after the cut, stamped `G + 1`, and harmless to the proof. These are
+   holds when it refreshes the slot (`hammer2_flush.c:1170-1184`).
+   Since that flush writes the slot only under `FSSYNC`, an `fsync` of
+   the PFS root directory (`hammer2_vnops.c:1599`) no longer refreshes
+   it between the cut and the copy, and the sync whose final flush does
+   cannot open its flush transaction until the snapshot closes its own.
+   Before that change such an `fsync` could, and the copy then held
+   entries whose inodes were not written (the verification record, "A
+   root fsync moved the slot a snapshot copies"). These are
    absolute readings, not deltas. The body's own work all follows the cut (the source root's
    `hammer2_inode_modify()` at `hammer2_ioctl.c:1043`, which touches no
    chain, and the snapshot root's create at `:1084`), so no leg can see it and no
