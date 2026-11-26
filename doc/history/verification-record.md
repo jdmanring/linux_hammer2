@@ -27632,7 +27632,9 @@ aimed, and a clean fix reading did not show that every round was.
 that snapshot's hold line in the log, and then runs the churner for that
 round alone; a round is aimed when its hold was logged and its `fsync`
 took over 100 ms, which it does only by waiting on the snapshot's flush
-transaction, and a run not aimed in every round is could-not-run. Rerun
+transaction, and a run not aimed in every round is could-not-run
+unless a media check has already failed it, which exits 1 first, as
+on the KASAN control below. Rerun
 against the same four modules, expectations written first
 (`inc10/rerun.sh`, `rerun-bcee5ca3.log`,
 `snapfsync-bcee5ca3-on-{df4d455f,d3c86c03}-{debug,kasan}.out`):
