@@ -34,6 +34,20 @@
 # bound and that no churner failed. Nothing runs bulkfree, so the volume
 # is sized for the specs.
 #
+# The snapfsync arm (H2_ROOT_ARM=snapfsync) reads the other writer of the
+# slot a snapshot copies, pfs_iroot_blocksets: any flush of the root. One
+# 2 GiB volume, rootsync_hold_ms 0 and snapshot_hold_ms 200, which holds
+# each snapshot after its flush transaction opens and before it locks the
+# root; per kind, H2_ROOT_ROUNDS snapshots beside one churner:
+#   fsync   mkdir of new names in the root, each followed by fsync(2) of
+#           the root, whose flush a normal transaction runs in the hold
+#   create  the same without the fsync
+# Every snapshot must hold its root's entries with their inodes. Aimed
+# only if every round held (the log's "snapshot held" lines) and blocked
+# an fsync behind the snapshot's flush transaction (calls over 100 ms).
+# The module before the slot's fix fails the fsync kind, which is its
+# control.
+#
 # H2_KO names a module built with HAMMER2_LOCKDEBUG=1 for the guest's
 # kernel, and H2_BOOT (h2debug-7.3tls, h2kasan-7.3tls), when set, the
 # kernel the guest must have booted. Needs the fleet; exits 2 without it,
@@ -48,13 +62,15 @@ GUEST=${H2_GUEST:-artix-s6-kde}; GUEST_SSH=${H2_GUEST_SSH:-root@192.168.122.16}
 FIX=${H2_FIXTURE_DIR:-$HOME/Projects/linux_hammer2-data/fixtures}
 NEWFS=${H2_NEWFS:-$HOME/Projects/hammer2-utils-upstream/target/release/newfs_hammer2}
 ARM=${H2_ROOT_ARM:-window}
-MODES=${H2_ROOT_MODES:-1 0} KINDS=${H2_ROOT_KINDS:-create unlink rename link}
+MODES=${H2_ROOT_MODES:-1 0}
+case $ARM in snapfsync) KINDS=${H2_ROOT_KINDS:-fsync create} KOK='fsync create' ;;
+*) KINDS=${H2_ROOT_KINDS:-create unlink rename link} KOK='create unlink rename link' ;; esac
 ROUNDS=${H2_ROOT_ROUNDS:-20} GAP=${H2_ROOT_GAP:-5000} FREE=${H2_ROOT_FREE:-}
 MSPECS=${H2_ROOT_MSPECS:-1:8 1:0 0}
 case $ROUNDS$GAP$FREE in *[!0-9]*) echo "COULD-NOT-RUN: H2_ROOT_ROUNDS, _GAP and _FREE are numbers"; exit 2 ;; esac
 # The values travel inside the guest's command line, so each is refused
 # here unless it is one the arm knows.
-for k in $KINDS; do case $k in create|unlink|rename|link) ;; *) echo "COULD-NOT-RUN: H2_ROOT_KINDS holds create, unlink, rename or link, not $k"; exit 2 ;; esac; done
+for k in $KINDS; do case " $KOK " in *" $k "*) ;; *) echo "COULD-NOT-RUN: H2_ROOT_KINDS holds $KOK under $ARM, not $k"; exit 2 ;; esac; done
 for s in $MSPECS; do case $s in 0|1|1:[0-9]|1:[0-9][0-9]) ;; *) echo "COULD-NOT-RUN: H2_ROOT_MSPECS holds 0, 1 or 1:<free>, not $s"; exit 2 ;; esac; done
 case $ARM in
 window) DISKS='' SPECS='' i=0; SIZE=2G
@@ -64,7 +80,8 @@ window) DISKS='' SPECS='' i=0; SIZE=2G
 		DISKS="$DISKS $d" SPECS="$SPECS $m:$d" i=$((i + 1))
 	done ;;
 measure) DISKS=vdb SPECS='' SIZE=16G ;;
-*) echo "COULD-NOT-RUN: H2_ROOT_ARM is window or measure"; exit 2 ;;
+snapfsync) DISKS=vdb SPECS='' SIZE=2G ;;
+*) echo "COULD-NOT-RUN: H2_ROOT_ARM is window, measure or snapfsync"; exit 2 ;;
 esac
 [ -n "$DISKS" ] && [ -n "$KINDS" ] || { echo "COULD-NOT-RUN: no modes or kinds"; exit 2; }
 SSH="ssh -o ServerAliveInterval=5 -o ServerAliveCountMax=6 -o ConnectTimeout=5 -o BatchMode=yes"
@@ -147,6 +164,28 @@ if [ "$ARM" = window ]; then
 		umount /mnt/re || { echo "umount $dev failed"; exit 9; }
 	done
 	echo 0 > $P/rootsync_hold_ms
+elif [ "$ARM" = snapfsync ]; then
+	test -w $P/snapshot_hold_ms || { echo "no snapshot_hold_ms: a module before the hold"; exit 9; }
+	echo 0 > $P/rootsync_hold_ms
+	echo 200 > $P/snapshot_hold_ms
+	bd=$(byid vdb) || { echo "no disk with serial h2re-vdb"; exit 9; }
+	mount -t hammer2 $bd@ROOT /mnt/re || { echo "mount failed"; exit 9; }
+	for kind in $KINDS; do
+		k=$(echo $kind | cut -c1)
+		h0=$(dmesg | grep -c 'hammer2: snapshot held')
+		/tmp/rootchurn $kind /mnt/re 1 1800 $GAP > /tmp/churn.out 2>&1 &
+		cp=$!
+		sleep 1
+		r=0 f=0
+		while [ $r -lt $ROUNDS ]; do
+			hammer2 snapshot /mnt/re $k$(printf %03d $r) >/dev/null 2>&1 || f=$((f + 1))
+			r=$((r + 1))
+		done
+		kill $cp; wait $cp; c=$?
+		echo "snapfsync kind $kind snapshots $r failed $f held $(($(dmesg | grep -c 'hammer2: snapshot held') - h0)) churn rc $c [$(cat /tmp/churn.out)]"
+	done
+	echo 0 > $P/snapshot_hold_ms
+	umount /mnt/re || { echo "umount failed"; exit 9; }
 else
 	bd=$(byid vdb) || { echo "no disk with serial h2re-vdb"; exit 9; }
 	mount -t hammer2 $bd@ROOT /mnt/re || { echo "mount failed"; exit 9; }
@@ -172,7 +211,7 @@ test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-s
 echo "log: warn $(dmesg | grep -c "WARNING:") bug $(dmesg | grep -c "BUG:") kasan $(dmesg | grep -c "KASAN") ubsan $(dmesg | grep -c "UBSAN") circular $(dmesg | grep -c "circular") hung $(dmesg | grep -c "INFO: task") cut $(dmesg | grep -c "cut here")"
 REMOTE
 down
-v=$(grep -E 'guest (insmod failed|no rootsync_mode|no disk with serial|mount .*failed|mount failed)' "$T") && {
+v=$(grep -E 'guest (insmod failed|no rootsync_mode|no snapshot_hold_ms|no disk with serial|mount .*failed|mount failed)' "$T") && {
 	echo "sync-root-entry: COULD-NOT-RUN: ${v#  guest }" >&2; exit 2; }
 grep -q 'guest rmmod ' "$T" || { echo "sync-root-entry: COULD-NOT-RUN: the guest's run did not finish" >&2; exit 2; }
 free=$(sed -n 's/^  guest free \([0-9]*\)$/\1/p' "$T")
@@ -180,7 +219,7 @@ free=$(sed -n 's/^  guest free \([0-9]*\)$/\1/p' "$T")
 cnr=
 # A churner that failed or did nothing, in either arm, leaves the run
 # unable to judge its mode.
-c=$(grep -E '^  guest (window .* churn rc [^0]|measure .* errors [1-9])' "$T") && cnr="a churner failed: ${c#  guest }"
+c=$(grep -E '^  guest ((window|snapfsync) .* churn rc [^0]|measure .* errors [1-9])' "$T") && cnr="a churner failed: ${c#  guest }"
 if [ "$ARM" = window ]; then
 	for spec in $SPECS; do
 		mode=${spec%:*} d=${spec#*:}
@@ -218,6 +257,27 @@ if [ "$ARM" = window ]; then
 			[ "$GAP" = 0 ] || [ "${ctl_c:-0}" = "$ROUNDS" ] || cnr="the control failed ${ctl_c:-0} of $ROUNDS create rounds, so the hold is not opening the window" ;;
 		esac ;;
 	esac
+elif [ "$ARM" = snapfsync ]; then
+	dg=$W/dangling-vdb
+	python3 -I script/h2-dangling.py "$FIX/root-entry-$ARM-vdb.img" > "$dg" 2>&1; dr=$?
+	if [ $dr = 2 ]; then
+		cnr="h2-dangling.py could not read vdb: $(head -1 "$dg")"
+	else
+		for kind in $KINDS; do
+			k=$(echo $kind | cut -c1)
+			set -- $(awk -v k=$k '$1 ~ "^" k "[0-9][0-9][0-9]:$" { n++; if ($6 + $10 + $15 + $23) f++ } END { print n + 0, f + 0 }' "$dg")
+			n=$1 f=$2
+			echo "  read  kind $kind: $f of $n snapshots failing on media"
+			[ "$n" = "$ROUNDS" ] || { cnr="kind $kind: $n snapshots on media of $ROUNDS taken"; continue; }
+			[ "$f" = 0 ]; check "$kind: no snapshot keeps a root entry ahead of its inodes" $? "$f of $n failing"
+			h=$(sed -n "s/^  guest snapfsync kind $kind .* held \([0-9]*\) .*/\1/p" "$T")
+			[ "${h:-0}" -ge "$ROUNDS" ] || cnr="kind $kind: ${h:-no} snapshot holds logged of $ROUNDS rounds, so the hold did not run"
+			if [ "$kind" = fsync ]; then
+				sl=$(sed -n "s/^  guest snapfsync kind fsync .* slow \([0-9]*\)\]$/\1/p" "$T")
+				[ "${sl:-0}" -ge "$ROUNDS" ] || cnr="the fsync churner waited out ${sl:-no} snapshots of $ROUNDS, so its flushes did not land in the hold"
+			fi
+		done
+	fi
 else
 	for spec in $MSPECS; do
 		case $spec in 0) continue ;; esac

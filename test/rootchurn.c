@@ -5,6 +5,7 @@
  *
  *   rootchurn mkdir  <dir> <id> <secs>   mkdir then rmdir <dir>/m<id>, repeated
  *   rootchurn create <dir> <id> <secs>   mkdir <dir>/d<id>.<k>, k = 0, 1, ...
+ *   rootchurn fsync  <dir> <id> <secs>   mkdir <dir>/f<id>.<k>, then fsync(2) <dir>
  *   rootchurn rename <dir> <id> <secs>   <dir>/r<id> to <dir>/sub/r<id> and back
  *   rootchurn link   <dir> <id> <secs>   link <dir>/sub/l<id> as <dir>/l<id>, unlink it
  *   rootchurn unlink <dir> <id> <secs>   create <dir>/u<id>.<k>, unlink the one
@@ -15,7 +16,8 @@
  * through many snapshots leaves a tree a dump can still be read from.
  *
  * Prints one line: the mode, the id, the operations done, the errors and the
- * first errno; sync prints the count and the longest and mean call in us.
+ * first errno; sync prints the count and the longest and mean call in us,
+ * and fsync the longest round in us and how many took over SLOW_US.
  * Exits 1 on any error, so a run that did nothing is not read as quiet.
  * SIGTERM ends the loop early and the line still prints.
  */
@@ -31,6 +33,7 @@
 #include <unistd.h>
 
 #define LAG	200
+#define SLOW_US	100000
 
 static volatile sig_atomic_t stop;
 
@@ -110,6 +113,37 @@ main(int argc, char **argv)
 			if (gap)
 				usleep(gap);
 		}
+	} else if (strcmp(argv[1], "fsync") == 0) {
+		unsigned long slow = 0;
+
+		while (now() < end && !stop) {
+			snprintf(a, sizeof(a), "%s/f%d.%lu", argv[2], id, n);
+			t = now();
+			if (mkdir(a, 0755) != 0 ||
+			    (fd = open(argv[2], O_RDONLY | O_DIRECTORY)) < 0) {
+				if (errs++ == 0)
+					first = errno;
+				break;
+			}
+			if (fsync(fd) != 0) {
+				if (errs++ == 0)
+					first = errno;
+				close(fd);
+				break;
+			}
+			close(fd);
+			d = now() - t;
+			if (d > max)
+				max = d;
+			if (d * 1e6 > SLOW_US)
+				++slow;
+			++n;
+			if (gap)
+				usleep(gap);
+		}
+		printf("fsync %d ops %lu errors %lu errno %d max_us %.0f slow %lu\n",
+		    id, n, errs, first, max * 1e6, slow);
+		return (errs != 0 || n == 0);
 	} else if (strcmp(argv[1], "rename") == 0) {
 		snprintf(a, sizeof(a), "%s/r%d", argv[2], id);
 		snprintf(b, sizeof(b), "%s/sub/r%d", argv[2], id);
@@ -174,7 +208,7 @@ main(int argc, char **argv)
 	printf("%s %d ops %lu errors %lu errno %d\n", argv[1], id, n, errs, first);
 	return (errs != 0 || n == 0);
 usage:
-	fprintf(stderr, "usage: rootchurn mkdir|create|rename|link|unlink <dir> <id> <secs> [gap_us]\n"
+	fprintf(stderr, "usage: rootchurn mkdir|create|fsync|rename|link|unlink <dir> <id> <secs> [gap_us]\n"
 	    "       rootchurn sync <dir> <secs>\n");
 	return (2);
 }
