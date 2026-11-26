@@ -333,11 +333,12 @@ int hammer2_sync_interflush;
 module_param_named(sync_interflush, hammer2_sync_interflush, int, 0644);
 /*
  * XXX Linux: what stage 2 of hammer2_vfs_sync_pmp() does when the PFS root
- * went back on the SIDEQ after stage 1 processed it.  2, the default,
- * restarts stage 1 once and holds the root on the SYNCQ until stage 2 has
- * flushed it; 1 restarts without the hold, the shorter alternative
- * measured beside it; 3 restarts without the hold rootsync_free times and
- * holds on the next; 0 flushes the root as upstream does, the control.
+ * went back on the SIDEQ after stage 1 processed it.  1, the default,
+ * restarts stage 1 rootsync_free times without holding the root and, on
+ * the next restart, holds the root on the SYNCQ until stage 2 has flushed
+ * it; 0 flushes the root as upstream does, the control.  rootsync_free 0
+ * holds at the first restart, and a value past any sync's restarts never
+ * holds, the two forms the bound was measured against.
  * rootsync_hold_ms holds stage 2 once per sync before it locks the root,
  * so a root operation can be aimed inside the window.  The counters are
  * syncs, stage 1 restarts, the restarts the root caused and the most in
@@ -345,10 +346,10 @@ module_param_named(sync_interflush, hammer2_sync_interflush, int, 0644);
  * root's unlock; a harness writes 0 to each before a run.  Debug build
  * only.
  */
-static int hammer2_rootsync_mode = 2;
+static int hammer2_rootsync_mode = 1;
 module_param_named(rootsync_mode, hammer2_rootsync_mode, int, 0644);
-static unsigned int hammer2_rootsync_free = 3;
-module_param_named(rootsync_free, hammer2_rootsync_free, uint, 0644);
+static int hammer2_rootsync_free = 8;
+module_param_named(rootsync_free, hammer2_rootsync_free, int, 0644);
 static unsigned int hammer2_rootsync_hold_ms;
 module_param_named(rootsync_hold_ms, hammer2_rootsync_hold_ms, uint, 0644);
 static DEFINE_SPINLOCK(hammer2_rootsync_spin);
@@ -369,8 +370,8 @@ module_param_named(rootsync_hold_max_ns, hammer2_rootsync_hold_max_ns, ulong,
 #define HAMMER2_ROOTSYNC_MODE	READ_ONCE(hammer2_rootsync_mode)
 #define HAMMER2_ROOTSYNC_FREE	READ_ONCE(hammer2_rootsync_free)
 #else
-#define HAMMER2_ROOTSYNC_MODE	2
-#define HAMMER2_ROOTSYNC_FREE	3
+#define HAMMER2_ROOTSYNC_MODE	1
+#define HAMMER2_ROOTSYNC_FREE	8
 #endif
 
 /*
@@ -3286,8 +3287,7 @@ hammer2_vfs_sync_pmp(hammer2_pfs_t *pmp, int waitfor __maybe_unused)
 	struct inode *vp;	/* XXX Linux: was struct vnode * */
 	uint32_t pass2;
 	int error, dorestart;
-	int roothold = 0;	/* XXX */
-	unsigned int rootfree = 0;	/* XXX */
+	int roothold = 0, rootfree = 0;	/* XXX */
 #if defined(HAMMER2_LOCKDEBUG)
 	unsigned long restarts = 0, rootrestarts = 0;
 	ktime_t holdstart = 0;
@@ -3623,17 +3623,22 @@ restart:
 		 * volume header written below points at it, as does the
 		 * snapshot that copies pfs_iroot_blocksets.  Every such edit
 		 * leaves the root SIDEQ before it unlocks the root, so with
-		 * the lock held, SIDEQ means one happened.  Move its group to
-		 * the SYNCQ here, as stage 1's capture would, and restart
-		 * stage 1, which flushes the group and passes over the root,
-		 * so the root stays SYNCQ until this flush.  The move is made
-		 * before the root's lock is let go: a frontend waiting on
-		 * that lock gets it next, and must find the root SYNCQ and
-		 * wait, or it edits the root after its group has gone to
-		 * the SYNCQ and leaves the inodes it paired with for the next
-		 * sync.  Every frontend lock of the root waits while it is
-		 * SYNCQ, and a SYNCQ inode cannot go SIDEQ, so the check
-		 * fires at most once per sync.
+		 * the lock held, SIDEQ means one happened.  Mark its group
+		 * PASS2 and restart stage 1, which flushes the group, up to
+		 * HAMMER2_ROOTSYNC_FREE times in one sync: the root stays
+		 * open to frontends meanwhile, and a sync that meets a root
+		 * edit each time could otherwise restart without end.  The
+		 * next time, move its group to the SYNCQ here, as stage 1's
+		 * capture would, and restart stage 1, which flushes the group
+		 * and passes over the root, so the root stays SYNCQ until
+		 * this flush.  The move is made before the root's lock is let
+		 * go: a frontend waiting on that lock gets it next, and must
+		 * find the root SYNCQ and wait, or it edits the root after
+		 * its group has gone to the SYNCQ and leaves the inodes it
+		 * paired with for the next sync.  Every frontend lock of the
+		 * root waits while it is SYNCQ, and a SYNCQ inode cannot go
+		 * SIDEQ, so the check fires at most HAMMER2_ROOTSYNC_FREE + 1
+		 * times per sync.
 		 */
 		hammer2_spin_ex(&pmp->list_spin);
 		if (ip->flags & HAMMER2_INODE_SYNCQ) {
@@ -3646,9 +3651,7 @@ restart:
 		} else if ((ip->flags & HAMMER2_INODE_SIDEQ) &&
 		    HAMMER2_ROOTSYNC_MODE != 0) {
 			depend = ip->depend;
-			if (HAMMER2_ROOTSYNC_MODE == 2 ||
-			    (HAMMER2_ROOTSYNC_MODE == 3 &&
-			    rootfree++ >= HAMMER2_ROOTSYNC_FREE)) {
+			if (rootfree++ >= HAMMER2_ROOTSYNC_FREE) {
 				hammer2_inode_t *tip;
 
 				TAILQ_FOREACH(tip, &depend->sideq, qentry) {
