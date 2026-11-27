@@ -250,6 +250,14 @@ module_param_named(seek_hold_ms, hammer2_seek_hold_ms, uint, 0644);
 unsigned int hammer2_pfsalloc_hold_ms;
 module_param_named(pfsalloc_hold_ms, hammer2_pfsalloc_hold_ms, uint, 0644);
 /*
+ * XXX Linux: a hold inside hammer2_pfsalloc()'s walk of hammer2_pfslist,
+ * after one entry is read and before the next, so an unmount freeing that
+ * entry can be aimed at the walk. Debug build only; zero holds nothing.
+ */
+unsigned int hammer2_pfsalloc_walk_hold_ms;
+module_param_named(pfsalloc_walk_hold_ms, hammer2_pfsalloc_walk_hold_ms,
+    uint, 0644);
+/*
  * XXX Linux: a hold in hammer2_pfs_snapshot() after its flush
  * transaction opens and before it locks the root, so a root directory
  * fsync(2), whose normal transaction does not wait for it, can flush
@@ -506,6 +514,9 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 			    strcmp(pmp->pfs_names[0],
 			    (const char *)ripdata->filename) == 0)
 				break;
+			/* Linux: the control for an unmount inside the walk */
+			HAMMER2_DEBUG_HOLD(hammer2_pfsalloc_walk_hold_ms,
+			    "pfsalloc walk");
 		}
 		/* Linux: the control for the callers' hammer2_mntlk */
 		HAMMER2_DEBUG_HOLD(hammer2_pfsalloc_hold_ms, "pfsalloc");
