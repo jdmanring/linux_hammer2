@@ -149,7 +149,8 @@ if [ "$SNAP_ARM" = 1 ]; then
 	umount /mnt/h2q 2>/dev/null
 fi
 umount /mnt/h2a; echo "umount vdb ROOT $?"
-echo "h2 threads after the last unmount $(ps -eo comm= | grep -c '^h2')"
+# A process list that cannot be read prints "unread", not a 0 that passes.
+echo "h2 threads after the last unmount $(ps -eo comm= > /tmp/h2ps && test -s /tmp/h2ps && { grep -c '^h2' /tmp/h2ps; true; } || echo unread)"
 rmmod hammer2; echo "rmmod $?"
 test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "log: warn $(dmesg | grep -c "WARNING:") bug $(dmesg | grep -c "BUG:") kasan $(dmesg | grep -c "KASAN") circular $(dmesg | grep -c "circular") cut $(dmesg | grep -c "cut here")"

@@ -27858,3 +27858,13 @@ also ran (`final-analyze-8a1d4ec1.out`), 16: those 9 and seven of the
 `so` initialization in `hammer2_fp_tlsrec()`, whose only read is behind
 `IS_ENABLED(CONFIG_NET_HANDSHAKE)`, unset in that tree. The compile
 database held 24 entries.
+
+The thread count as `8a1d4ec1` wrote it, `$(ps -eo comm= | grep -c
+'^h2')`, printed 0 when `ps` failed or listed nothing, a pass with
+nothing read. It now prints `unread` then, which the check's `0$` does
+not match; under bash with `ps` real, failing, empty and listing two
+`h2` names the line read 0, unread, unread and 2. The debug pair was
+rerun on the edited script (`inc11/gates-psline.log`, script
+`1147d227`): the module built at `8a1d4ec1` (`ad58ab64`) read 17 checks,
+0 failed, with 0 threads, and `7477eba8` 17 checks, 1 failed, with 2;
+QEMU cores 0.
