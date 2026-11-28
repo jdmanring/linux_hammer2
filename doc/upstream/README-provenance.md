@@ -587,6 +587,42 @@ proof-of-work reason above, so it is not claimed unreported. Whether
 DragonFly reproduces the race was not run; the control here is on Linux
 with a hold inside the carried list walk.
 
+## hammer2_vfsops-hole-sync-thread
+
+`dragonfly-hammer2_vfsops-hole-sync-thread.patch`.
+
+A cluster element whose device leaves empties its slot, and an element
+that rejoins takes a new slot at `nchains`, so the slot stays empty below
+it. `hammer2_pfsalloc()` starts a synchronization thread for every slot
+below `nchains` that is not a lone MASTER, the empty one included, since
+its type was cleared to none. Each teardown stops the thread of the slot
+it empties, so none stops that one, and `hammer2_pfsfree()`'s own loop is
+bounded by an `nchains` that `hammer2_pfsfree_scan()` has already
+trimmed to 0. The PFS is freed under the running thread. The patch
+starts no thread for a slot with no element and has `hammer2_pfsfree()`
+stop the threads of the slots past `nchains`.
+
+Still present at head on 2026-11-28, read through the forge API:
+DragonFly `98c93bc10417d9695300a4e359c9862265dc720e` starts the thread at
+`sys/vfs/hammer2/hammer2_vfsops.c:557-579` with no test of the slot's
+chain, trims `nchains` at `:838-844` and frees the PFS at `:850` only when
+it reaches 0, and bounds `hammer2_pfsfree()`'s thread loop by `nchains`
+at `:693-694`. `patch --dry-run -p1` applies the staged patch to that
+file. Its XOP helper threads have the same shape and the patch does not
+touch them: `hammer2_xop_helper_create()` starts one per slot below
+`nchains` (`sys/vfs/hammer2/hammer2_admin.c:437-446`) and
+`hammer2_pfsfree()` deletes them in the same bounded loop. This port
+carries no XOP helper threads, so nothing here ran them. Kusumi's
+FreeBSD, NetBSD and OpenBSD heads (`3df307f7db`, `64095c3947`,
+`a3747df966`) carry no synchronization thread: their
+`src/sys/fs/hammer2/hammer2_vfsops.c` holds neither `h2nod` nor
+`sync_thrs`, read from each file, since the forge's code search returned
+0 for all three and a search returning nothing is not a reading. No ports
+patch is staged. `bugs.dragonflybsd.org` was not searched, for the
+proof-of-work reason above, so it is not claimed unreported. Whether
+DragonFly reproduces the freed thread was not run; the readings are on
+Linux, in `doc/history/verification-record.md`.
+
 ## hammer2_vfsops-sync-root-bounded-restart
 
 `dragonfly-hammer2_vfsops-sync-root-bounded-restart.patch` and

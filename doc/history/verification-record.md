@@ -27739,3 +27739,97 @@ through the forge API on 2026-11-28, registers the snapshot's chain at
 no `hammer2_mntlk` in the function. The staged patch moves only that
 registration and its two dependent lines. Whether DragonFly reproduces
 this was not run.
+
+## A synchronization thread outlived the PFS it was started for, 2026-11-28
+
+The snapshot arm's final debug run (module `7477eba8`, `cc27e344` with
+the two source edits `50695aca` commits) printed every guest line, then
+the guest neither shut down nor answered ssh. The wrapper was stopped
+and the guest read before it was destroyed
+(`p7-notes/crash-instrument/inc11/hang/`). QEMU's CPU 0 thread had used
+1:47:48 of 1:48:05, the others 2 to 4 s each (`threads.txt`), and every
+vCPU's RIP sat in `delay_tsc()` once the low 21 bits were matched to
+`System.map` (`rips.txt`, `bytes.txt`). The panic's own variables, read
+through the monitor at that slide, were `panic_cpu` 0, `oops_in_progress`
+1 and `panic_timeout` 0, and the printk ring saved with `memsave`
+(`ring.bin`, `ring-strings.txt:1068-1110`) holds an `int3` Oops in
+`h2nod-(null)`, PID 1202, on a `Code:` line of `cc` bytes with
+`Unloaded tainted modules: hammer2`, then `Fatal exception in
+interrupt`. RBX was `0x1388`, 5000 jiffies, the synchronization thread's
+`h2idle` poll (`hammer2_synchro.c:1778`): a sync thread woke into the
+module's freed text after `rmmod` had returned 0.
+
+The thread's name says its slot had no name. A cluster element whose
+device leaves empties its slot and an element that rejoins takes a new
+one at `nchains`, so the empty slot stays below it. `hammer2_pfsalloc()`
+started a thread for every slot below `nchains` but a lone MASTER, and
+the empty slot's type is none. `hammer2_pfsfree_scan()` stops the
+threads of the slots naming the departing device and
+`hammer2_pfsdealloc()` the one it empties, so no teardown stopped this
+one, and `hammer2_pfsfree()`'s loop is bounded by an `nchains` the scan
+has trimmed to 0 before it frees the PFS. The harness reaches it on
+every run: the race arm's unmount of vdc leaves CL1's first slot empty,
+the plain arm's mount of vdc rejoins CL1 past it, and the last unmount
+frees CL1 with the thread polling it. DragonFly's head has the same loop;
+Kusumi's ports carry no synchronization thread.
+
+A probe drove the shape alone and listed the `h2` kernel threads after
+each step, expectations written first
+(`inc11/hole-probe-expected.md`, driver `hole-probe.sh`):
+
+| module | after the hole | after the rejoin | after the last unmount | 12 s later | log |
+|---|---|---|---|---|---|
+| `7477eba8`, before the fix | `h2nod-CL1` | `h2nod-(null)`, two `h2nod-CL1` | `h2nod-(null)` | none | page fault in `hammer2_primary_sync_thread+0x117`, `Comm: h2nod-(null)` |
+| `f25d3d20`, the fix | `h2nod-CL1` | two `h2nod-CL1` | none | none | clean |
+| `d9bc4570`, the `hammer2_pfsfree()` sweep alone | `h2nod-CL1` | `h2nod-(null)`, two `h2nod-CL1` | none | none | clean |
+
+With the module loaded the thread's next poll read the freed PFS; after
+an `rmmod` it ran freed text. Each probe is one run on `h2debug-7.3tls`
+(`hole-probe-*-debug.out`).
+
+The fix starts no thread for a slot with no element, and
+`hammer2_pfsfree()` stops the thread of every slot past `nchains` as well
+as below it, two `XXX` lines in `hammer2_vfsops.c`. The third row is the
+second half's own control: with the first half removed the thread is
+started and the free stops it. `hammer2_remote_detach()` empties a
+remote element's slot and stops no thread; a remote slot is given one
+only by a later local join on a PFS with two or more masters, and no run
+reads that shape, so the sweep covers it and the detach is a candidate,
+not a reading.
+
+The gate, `pfs-create-race.sh` with `H2_SNAP_RACE=1` at the final
+source, one run each (`inc11/gates-holefix.log`, `gate-*.log`), QEMU
+cores 0 before and after:
+
+| module | build | snapshot's unmount | `h2` threads after the last unmount | guest shut down | verdict |
+|---|---|---|---|---|---|
+| `f25d3d20`, the fix | debug | 0 after 35765 ms | 0 | yes | 17 checks, 0 failed |
+| `7477eba8`, before it | debug | 0 after 35452 ms | 2 | yes | 17 checks, 1 failed |
+| `b72eb3c3`, the fix | KASAN | 0 after 35291 ms | 0 | yes | 17 checks, 0 failed |
+| `2a7066ae`, before it | KASAN | 0 after 35537 ms | 2 | destroyed | 17 checks, 2 failed |
+
+The gate counts the threads and does not name them; read from code, the
+two are one each for CL1 and CL2, whose arms both leave a slot empty that
+the snapshot arm's mount of vdc rejoins past. Whether the guest shuts down depends on whether a thread
+polls before power-off, so the debug control shut down this time; the
+thread count is the reading that does not depend on timing, and the
+shutdown check is its backstop. Both fix runs read every snapshot check
+of the previous entry: the walk held, the snapshot done when the unmount
+returned, `created snapshot SNAP1`, and `SNAP1` mounted.
+
+`pfs-create-race.sh` now counts the `h2` threads after the last unmount,
+which must be 0, and fails a run whose guest had to be destroyed. Its
+shutdown fallback had destroyed and passed the earlier ones: the inc8
+KASAN plain-first runs on `177c8e1a` and `7d92a705` and this increment's KASAN
+rerun (`inc11/gate-rerun.log`) each print `guest did not shut down,
+destroyed` after `rmmod 0`. `sync-root-entry.sh:105` has the same
+fallback, printed and not read. No other fleet script reads the thread
+count, so a thread one of them leaves is seen only where its fault lands
+before the guest stops.
+
+The could-not-run filter `50695aca` committed listed the snapshot's
+success line, `snap walk held`, and two of the control's own readings,
+so every run of the first batch at `50695aca` voided
+(`inc11/superseded/gates-holefix-filter-cnr.log`). The filter now
+matches the setup failures alone; read against those four logs it
+matches none, and a planted `snap no walk within` line matches.

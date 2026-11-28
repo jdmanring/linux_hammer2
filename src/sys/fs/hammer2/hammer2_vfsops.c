@@ -685,6 +685,18 @@ hammer2_pfsalloc(hammer2_chain_t *chain, const hammer2_inode_data_t *ripdata,
 		}
 
 		/*
+		 * XXX Linux: a slot with no element is a hole a departure left,
+		 * and an element that rejoins takes a new slot at nchains, so
+		 * the hole stays.  Upstream starts a thread for it here.  Every
+		 * teardown stops the thread of the slot it empties, none stops
+		 * a thread started on a slot already empty, and the PFS was
+		 * freed under it: the thread's next poll ran freed memory, and
+		 * after an rmmod freed text.
+		 */
+		if (iroot->cluster.array[i].chain == NULL)
+			continue;
+
+		/*
 		 * Sync support thread
 		 */
 		if (pmp->sync_thrs[i].td == NULL) {
@@ -830,6 +842,15 @@ hammer2_pfsfree(hammer2_pfs_t *pmp)
 			if (chain && !RB_EMPTY(&chain->core.rbtree))
 				chains_still_present = 1;
 		}
+		/*
+		 * XXX Linux: and every slot past nchains.  hammer2_pfsfree_scan()
+		 * trims nchains to 0 before calling here, so the loop above
+		 * stops nothing on that path, and a thread left on a slot that
+		 * is no longer counted (hammer2_remote_detach() stops none)
+		 * would outlive the PFS it reads.  An empty slot returns at once.
+		 */
+		for (i = iroot->cluster.nchains; i < HAMMER2_MAXCLUSTER; ++i)
+			hammer2_thr_delete(&pmp->sync_thrs[i]);
 		KASSERTMSG(iroot->refs == 1,
 		    "iroot inum %016llx refs %d not 1",
 		    (long long)iroot->meta.inum, iroot->refs);

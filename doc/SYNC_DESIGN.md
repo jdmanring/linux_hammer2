@@ -702,14 +702,14 @@ The last is C_N, the condition that nothing but this thread writes a
 root key of the slave element between the rounds, made structural
 rather than detected. While a remote element is registered no frontend
 can write the PFS: a read-write mount and a read-write remount are
-refused (`hammer2_vfsops.c:2007-2013`, `:2999`), the vnode operations
+refused (`hammer2_vfsops.c:2028-2034`, `:3020`), the vnode operations
 refuse a write on a read-only PFS (`hammer2_vnops.c:405`, `:531`,
 `:1675`), and the registration itself refuses a PFS mounted read-write
 (`hammer2_remote.c:2648-2652`). A mapping a read-write mount dirtied before a read-only remount leaves no
 gap: the write fault stamps the inode through `->update_time`, which
 queues it (`hammer2_vnops.c:3399`), so the remount's sync walks it, and
 since 1.0.65 the remount also calls `sync_filesystem()`
-(`hammer2_vfsops.c:2978`), as ext4 does on that transition. The fifth
+(`hammer2_vfsops.c:2999`), as ext4 does on that transition. The fifth
 candidate is refuted on its path, with its probe kept in
 `script/test-enospc.sh`. A slot can also be detached while the link stays up, when the
 peer's span goes, and the pass's reads of its source snapshot continue
@@ -753,7 +753,7 @@ snapshot is taken on the peer by the peer's server
 The refusal is built by name rather than by the server's list of the
 snapshots it holds: a PFS whose name carries the pass's suffix,
 `<pfs>.h2sync-src`, is refused any mount (`hammer2_remote_is_source()`,
-`hammer2_remote.c:2775`, tested at `hammer2_vfsops.c:2022` under
+`hammer2_remote.c:2775`, tested at `hammer2_vfsops.c:2043` under
 `hammer2_mntlk`). The name covers the local pass's own source, which 1a's
 resume and 1b's narrowing also take as immutable, and a crash's leftover,
 which the next pass deletes by that name; a list would cover only a
@@ -855,7 +855,7 @@ change executes:
   peer's span with its link left up, but at the close of a `scanall`
   call and not at a hold between the rounds, and Linux has no
   single-element `local` mount to write the slave alone from a local
-  cluster (`hammer2_vfsops.c:1217`).
+  cluster (`hammer2_vfsops.c:1238`).
   `DEFER(3.2.7, the first increment where an acknowledgment rests on a
   narrowed pass)`: until then the local control reads the verdict's
   count on the path the wire form would reach, and 1.0.70 read the walks
@@ -978,8 +978,8 @@ source before it was applied, and no lever-2 code precedes it.
      re-flagging (`:501-516`). The chain then waits until its inode is
      next dirtied, while later syncs move the generation past its stamp,
      and the sync still returns 0, unconditionally
-     (`hammer2_vfsops.c:3736`), its errors going only to
-     `hammer2_sync_error()` (`:3289-3300`). The latch sees it: any
+     (`hammer2_vfsops.c:3757`), its errors going only to
+     `hammer2_sync_error()` (`:3310-3321`). The latch sees it: any
      `hammer2_flush()` that ends with an error for a chain of a device
      sets a flag in that device's `hammer2_dev_t`, set inside
      `hammer2_flush()` itself, since the lastdrop caller discards its
@@ -1042,7 +1042,7 @@ source before it was applied, and no lever-2 code precedes it.
    (beside `thr->snap_cut = 0`, `hammer2_synchro.c:1678`). A volume
    cannot be replaced under a mounted device, so an older image swapped
    in for either element, flushed past `last_gen` or not, arrives
-   through a detach (`hammer2_vfsops.c:1020`, `hammer2_remote.c:2726`)
+   through a detach (`hammer2_vfsops.c:1041`, `hammer2_remote.c:2726`)
    and a new join, and a new value. A field every attach initializes
    alike, or the `hmp` pointer, which a later allocation can reuse,
    would match across that detach. The below-`last_gen` test is kept as
@@ -1071,7 +1071,7 @@ source before it was applied, and no lever-2 code precedes it.
    `HAMMER2_XOP_MODIFYING` skips every element whose `pfs_types[]` is
    `SLAVE` when its element set is built (`hammer2_admin.c:639-642`),
    with one exception: the PFS root's own inode flush in the sync's
-   second stage, the `VOLHDR` call (`hammer2_vfsops.c:3709-3711`), runs
+   second stage, the `VOLHDR` call (`hammer2_vfsops.c:3730-3732`), runs
    on every element when the sync is the snapshot body's on the thread
    (`hammer2_ioctl.c:1020`). Without it the target call's sync would
    leave the slave device's volume header unwritten, and that dirt would
@@ -1107,7 +1107,7 @@ source before it was applied, and no lever-2 code precedes it.
    first stage on the thread drains the frontend's queued inodes
    through the insert, destroy, sync and flush XOPs
    (`hammer2_inode.c:1957, 1995, 1900, 2025`;
-   `hammer2_vfsops.c:3532-3567`), and run on the slave those would put
+   `hammer2_vfsops.c:3553-3588`), and run on the slave those would put
    a frontend change's metadata, at the master's transaction id, on a
    slave whose data the knob withheld, an inode the pass would then
    skip by its tid. Under the knob they skip the slave whoever starts
@@ -1258,7 +1258,7 @@ takes the cut (`:1019-1039`), and
 after the snapshot copy before its flush transaction closes. A pass
 prunes only when both read equal. The pre-snapshot PFS sync can itself
 move the generation (`hammer2_vfs_sync_pmp()` stage 2 flushes with
-`VOLHDR`, `hammer2_vfsops.c:3624-3711`, whose volume-root pass flushes
+`VOLHDR`, `hammer2_vfsops.c:3645-3732`, whose volume-root pass flushes
 fchain and vchain when flagged, `hammer2_flush.c:1256-1282`, executing the
 FREEMAP/VOLUME bump arms, `:694`, `:721-723`), which is why no read sits
 before it: the candidate is the post-sync generation, and any inequality
@@ -1295,8 +1295,8 @@ What the residue veto excludes is dirt from before the cut that the sync
 left out of the copied blockset, with four legs (amendment, item 1): the
 PFS queues, the module-wide dirty-chain count, the device's flush-error
 latch and the root slot's equality. An inode the sync requeues on a failed
-vget (`hammer2_vfsops.c:3449-3475`, setting `dorestart`) or finds
-re-dirtied mid-flush (`:3508-3516`) restarts the flush (`:3594-3611`), and
+vget (`hammer2_vfsops.c:3470-3496`, setting `dorestart`) or finds
+re-dirtied mid-flush (`:3529-3537`) restarts the flush (`:3615-3632`), and
 anything still queued or requeued when the sync returns leaves observable
 residue in the PFS queues; anything dirtied with no queue entry still
 keeps the module-wide `hammer2_count_chain_modified` above zero

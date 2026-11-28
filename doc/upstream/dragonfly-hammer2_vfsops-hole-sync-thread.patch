@@ -1,0 +1,32 @@
+--- a/sys/vfs/hammer2/hammer2_vfsops.c
++++ b/sys/vfs/hammer2/hammer2_vfsops.c
+@@ -569,6 +569,15 @@
+ 		}
+ 
+ 		/*
++		 * A slot with no element is a hole left by a departure.  An
++		 * element that rejoins takes a new slot at nchains, so the
++		 * hole stays, and a thread started for it is stopped by no
++		 * teardown: each stops the thread of the slot it empties.
++		 */
++		if (iroot->cluster.array[i].chain == NULL)
++			continue;
++
++		/*
+ 		 * Sync support thread
+ 		 */
+ 		if (pmp->sync_thrs[i].td == NULL) {
+@@ -690,6 +699,13 @@
+ 	 */
+ 	iroot = pmp->iroot;
+ 	if (iroot) {
++		/*
++		 * Every slot, not the nchains the caller left:
++		 * hammer2_pfsfree_scan() trims nchains to 0 before calling
++		 * here, so a loop bounded by it stops no thread on that path.
++		 */
++		for (i = iroot->cluster.nchains; i < HAMMER2_MAXCLUSTER; ++i)
++			hammer2_thr_delete(&pmp->sync_thrs[i]);
+ 		for (i = 0; i < iroot->cluster.nchains; ++i) {
+ 			hammer2_thr_delete(&pmp->sync_thrs[i]);
+ 			if (pmp->xop_groups) {

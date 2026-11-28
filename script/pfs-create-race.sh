@@ -62,8 +62,9 @@ down() {
 	virsh detach-disk $GUEST vdc >/dev/null 2>&1; virsh detach-disk $GUEST vdb >/dev/null 2>&1
 	virsh shutdown $GUEST >/dev/null 2>&1
 	i=0; while [ "$(virsh domstate $GUEST)" != "shut off" ] && [ $i -lt 45 ]; do sleep 2; i=$((i+1)); done
-	[ "$(virsh domstate $GUEST)" = "shut off" ] || { echo "guest did not shut down, destroyed"; virsh destroy $GUEST >/dev/null 2>&1; }
+	[ "$(virsh domstate $GUEST)" = "shut off" ] || { echo "guest did not shut down, destroyed"; virsh destroy $GUEST >/dev/null 2>&1; destroyed=1; }
 }
+destroyed=0
 for img in "$IA" "$IB"; do
 	rm -f "$img"; truncate -s $([ "$SNAP_ARM" = 1 ] && echo 2G || echo 1G) "$img" &&
 	    "$NEWFS" -L ROOT "$img" >/dev/null 2>&1 ||
@@ -148,6 +149,7 @@ if [ "$SNAP_ARM" = 1 ]; then
 	umount /mnt/h2q 2>/dev/null
 fi
 umount /mnt/h2a; echo "umount vdb ROOT $?"
+echo "h2 threads after the last unmount $(ps -eo comm= | grep -c '^h2')"
 rmmod hammer2; echo "rmmod $?"
 test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-start && echo ring whole || echo ring COULD-NOT-READ
 echo "log: warn $(dmesg | grep -c "WARNING:") bug $(dmesg | grep -c "BUG:") kasan $(dmesg | grep -c "KASAN") circular $(dmesg | grep -c "circular") cut $(dmesg | grep -c "cut here")"
@@ -171,7 +173,13 @@ if [ "$SNAP_ARM" = 1 ]; then
 	want "SNAP1 mounts" 'guest snap mount vdb@SNAP1 0$'
 	want "the walk repeated while the unmount waited" 'guest snap walk repeated under the unmount$'
 fi
+want "no hammer2 thread outlived the last unmount" 'guest h2 threads after the last unmount 0$'
 want "rmmod returned 0" 'guest rmmod 0$'
+# A guest that has to be destroyed hung on the way down, and the module's
+# freed text is one cause: a thread left running panics when it next wakes.
+nc=$((nc + 1))
+[ $destroyed = 0 ] && echo "  ok    the guest shut down by itself" ||
+    { echo "  FAIL  the guest shut down by itself"; nf=$((nf + 1)); }
 echo "pfs-create-race: $nc check(s), $nf failed"
 # A failure above is read from userland and stands whether or not the
 # ring survived; the warning count below is the ring's and needs it.
