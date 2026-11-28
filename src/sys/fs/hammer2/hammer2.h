@@ -1602,6 +1602,7 @@ int hammer2_ioctl_impl(struct inode *, unsigned int, void *, int,
  * hammer2_pfs_snapshot() beside the ioctl's HAMMER2_PFSFLAGS_* bits.
  */
 #define HAMMER2_PFSSNAP_PMPSYNC		0x40000000
+#define HAMMER2_PFSSNAP_MNTLOCKED	0x20000000
 #define HAMMER2_PFSDEL_TRYLOCK		0x00000001
 #define HAMMER2_PFSDEL_LOCKED		0x00000002
 #define HAMMER2_PFSDEL_SNAPONLY		0x00000004	/* a stale delete: snapshots only */

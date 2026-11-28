@@ -1341,7 +1341,8 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 			kprintf("syncsnap: busy clindex %d\n", idx);
 		return (0);
 	}
-	error = hammer2_pfs_snapshot(pmp, m, name, HAMMER2_PFSSNAP_PMPSYNC,
+	error = hammer2_pfs_snapshot(pmp, m, name,
+	    HAMMER2_PFSSNAP_PMPSYNC | HAMMER2_PFSSNAP_MNTLOCKED,
 	    &root_tid, &snap_pmp);
 	if (error || snap_pmp == NULL) {
 		hammer2_lk_unlock(&hammer2_mntlk);
@@ -1377,7 +1378,8 @@ hammer2_sync_pass_snap(hammer2_thread_t *thr, hammer2_deferred_list_t *list)
 			derror = EEXIST;
 		} else {
 			derror = hammer2_pfs_snapshot(pmp, idx, tname,
-			    HAMMER2_PFSSNAP_PMPSYNC, NULL, NULL);
+			    HAMMER2_PFSSNAP_PMPSYNC | HAMMER2_PFSSNAP_MNTLOCKED,
+			    NULL, NULL);
 		}
 		if (derror == 0 || derror == EEXIST) {
 			thr->tgt_valid = 1;

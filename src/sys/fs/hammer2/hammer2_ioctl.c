@@ -946,9 +946,11 @@ hammer2_snap_queues(hammer2_pfs_t *pmp, const char *name)
  * the snapshot represents, and *pmpp the PFS the snapshot
  * was registered as, so the thread need not walk hammer2_pfslist for it.
  * The caller has checked the name and the mount's writability; the thread
- * holds hammer2_mntlk across the call, since hammer2_pfsalloc() inserts
- * into a list the unmount walks under it, and the ioctl does not, which is
- * upstream's own exposure left as it stands.
+ * holds hammer2_mntlk across the call and passes HAMMER2_PFSSNAP_MNTLOCKED,
+ * since hammer2_pfsalloc() inserts into a list the unmount walks under it.
+ * XXX Linux: the ioctl registers after releasing the transaction and bulklk,
+ * then takes the lock for the registration alone.  Upstream registers inside
+ * both, where the lock would deadlock against unmount.
  */
 int
 hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
@@ -958,6 +960,8 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 	hammer2_inode_t *ip;
 	hammer2_chain_t *chain, *nchain;
 	hammer2_inode_t *nip;
+	hammer2_chain_t *regchain = NULL;
+	int mntlocked;
 	hammer2_inode_data_t *wipdata;
 	hammer2_tid_t mtid, starting_inum;
 	int error;
@@ -1206,10 +1210,8 @@ hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
 			wipdata = &nchain->data->ipdata;
 			debug_hprintf("SNAPSHOT LOCAL PFS (IOCTL): %s\n",
 			    wipdata->filename);
-			hammer2_pfsalloc(nchain, wipdata, force_local);
-			nchain->pmp->inode_tid = starting_inum;
-			if (pmpp)		/* Linux */
-				*pmpp = nchain->pmp;
+			hammer2_chain_ref(nchain);
+			regchain = nchain;
 		}
 
 		hammer2_chain_unlock(nchain);
@@ -1250,6 +1252,32 @@ done:
 		    HAMMER2_TRANS_ISFLUSH | HAMMER2_TRANS_SIDEQ);
 
 	hammer2_lk_unlock(&hmp->bulklk);
+
+	/*
+	 * XXX Linux: upstream registers above, inside the flush transaction
+	 * and bulklk.  Unmount holds hammer2_mntlk while it waits for the
+	 * transaction, and the sync thread holds the lock while it waits for
+	 * bulklk, so the take belongs after both are released.  The caller
+	 * that already holds the lock skips it.  The chain is still held by
+	 * the reference pfsalloc takes below, as upstream assumes.
+	 */
+	mntlocked = (flags & HAMMER2_PFSSNAP_MNTLOCKED) != 0;
+	if (!mntlocked)
+		hammer2_lk_ex(&hammer2_mntlk);
+	if (regchain != NULL) {
+		hammer2_chain_lock(regchain, HAMMER2_RESOLVE_ALWAYS);
+		if (regchain->data != NULL) {
+			hammer2_pfsalloc(regchain, &regchain->data->ipdata,
+			    force_local);
+			regchain->pmp->inode_tid = starting_inum;
+			if (pmpp)		/* Linux */
+				*pmpp = regchain->pmp;
+		}
+		hammer2_chain_unlock(regchain);
+		hammer2_chain_drop(regchain);
+	}
+	if (!mntlocked)
+		hammer2_lk_unlock(&hammer2_mntlk);
 
 	return (hammer2_error_to_errno(error));
 }

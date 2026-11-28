@@ -688,7 +688,8 @@ hammer2_remote_snapshot(struct hammer2_remote_req *req, hammer2_pfs_t *pmp,
 		return (HAMMER2_ERROR_ENOSPC);
 	strscpy(snap->name, name, sizeof(snap->name));
 	error = hammer2_pfs_snapshot(pmp, clindex, name,
-	    HAMMER2_PFSSNAP_PMPSYNC, tidp, &spmp);
+	    HAMMER2_PFSSNAP_PMPSYNC | HAMMER2_PFSSNAP_MNTLOCKED,
+	    tidp, &spmp);
 	if (error || spmp == NULL || spmp->iroot == NULL) {
 		kfree(snap);
 		kprintf("syncsnap: snapshot %s for a peer error %d\n", name,
