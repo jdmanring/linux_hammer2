@@ -153,7 +153,7 @@ test -x /var/lib/h2ring-flood && /var/lib/h2ring-flood; dmesg | grep -q h2ring-s
 echo "log: warn $(dmesg | grep -c "WARNING:") bug $(dmesg | grep -c "BUG:") kasan $(dmesg | grep -c "KASAN") circular $(dmesg | grep -c "circular") cut $(dmesg | grep -c "cut here")"
 REMOTE
 down
-v=$(grep -E 'guest (insmod failed|no pfsalloc_hold_ms|no pfsalloc_walk_hold_ms|race no hold within|snap no walk within|snap (pfs-create failed|mount vdc|remount|snapshot running|still running)|snap walk held$)' "$T") && {
+v=$(grep -E 'guest (insmod failed|no pfsalloc_hold_ms|no pfsalloc_walk_hold_ms|race no hold within|snap no walk within|snap (pfs-create failed|mount vdc ROOT failed|remount))' "$T") && {
 	echo "pfs-create-race: COULD-NOT-RUN: ${v#  guest }" >&2; exit 2; }
 want "the plain create returned 0" 'guest plain create 0$'
 want "the plain unmount returned 0" 'guest plain unmount 0 '
