@@ -27833,3 +27833,28 @@ so every run of the first batch at `50695aca` voided
 (`inc11/superseded/gates-holefix-filter-cnr.log`). The filter now
 matches the setup failures alone; read against those four logs it
 matches none, and a planted `snap no walk within` line matches.
+
+The final source, `8a1d4ec1`, was read from a detached worktree in one
+batch (`inc11/final.sh`, `final.log`, outputs `final-*-8a1d4ec1.out`),
+QEMU cores 0 throughout and the guest left on `h2debug-7.3tls`, shut
+off. `pfs-create-race.sh` with the snapshot arm, on a `HAMMER2_LOCKDEBUG`
+module built there, read 17 checks, 0 failed, on both builds: the
+snapshot's unmount waited 35417 ms on debug (module `ad58ab64`) and 35528
+ms on KASAN (`f0481266`), and no `h2` thread was left after the last
+unmount. `test-enospc.sh` exited 0 on both builds, and `test-fixtures.sh`,
+`pfs-domains.sh`, `sync-empty-base.sh`, `cluster-dmsg.sh`,
+`cluster-sync.sh`, `cluster-wire.sh` and `cluster-quorum.sh` exited 0 on
+debug. W=1 compiled 24 objects with 0 warnings. smatch printed 59
+candidates, the set `d3c86c03` printed with two of its messages' line
+references moved by this range. The analyzer, run against
+`linux-7.3-tls` as `d3c86c03`'s was (`final-analyze-tls-8a1d4ec1.out`),
+printed 9: those 8 and a store to `wipdata` in `hammer2_pfs_snapshot()`
+that only a `debug_hprintf()` reads, which a build without the debug
+print compiles out. The store and its print are upstream's, which prints
+with `kprintf()`; its other reader was the `hammer2_pfsalloc()` argument
+`8eea1022` moved to the late registration, so it is triaged as a dead
+store and left as upstream's text. Against the non-TLS tree the batch
+also ran (`final-analyze-8a1d4ec1.out`), 16: those 9 and seven of the
+`so` initialization in `hammer2_fp_tlsrec()`, whose only read is behind
+`IS_ENABLED(CONFIG_NET_HANDSHAKE)`, unset in that tree. The compile
+database held 24 entries.
