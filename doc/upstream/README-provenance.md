@@ -557,6 +557,36 @@ call against DragonFly's unmount was not read. A snapshot gets a new
 cluster id and joins no PFS, so what remains there is the list insert
 racing the scan's removals.
 
+## hammer2_ioctl-snapshot-mntlk
+
+`dragonfly-hammer2_ioctl-snapshot-mntlk.patch`.
+
+`hammer2_ioctl_pfs_snapshot()` calls `hammer2_pfsalloc()` inside its
+flush transaction and `bulklk`, which makes a blocking take of
+`hammer2_mntlk` there deadlock: unmount holds the lock while it waits for
+the transaction, and the sync thread holds it while it waits for
+`bulklk`. The patch keeps the chain's reference until both are released,
+takes the lock for the registration alone, and moves the new PFS's
+`inode_tid` write with the registration. The port's sync thread and
+remote server pass a flag because they already hold the lock and skip
+the take; neither DragonFly nor the ports call this function from a
+thread, so the patch needs no such flag.
+
+Still present at head on 2026-11-28, read through the forge API:
+DragonFly `98c93bc10417d9695300a4e359c9862265dc720e` registers at
+`sys/vfs/hammer2/hammer2_ioctl.c:942` with no mount lock in the function.
+`patch --dry-run -p1` applies the staged patch to that file. Kusumi's
+FreeBSD, NetBSD and OpenBSD heads (`3df307f7db`, `64095c3947`,
+`a3747df966`) register at `:547`, `:568` and `:565` of
+`src/sys/fs/hammer2/hammer2_ioctl.c`, also with no mount lock in the
+function; no ports patch is staged here, because the ports carry no
+sync thread that calls `hammer2_pfs_snapshot()`: the only call in each
+head is the ioctl's own. The DragonFly patch is generated from its
+head's file. `bugs.dragonflybsd.org` was not searched for this term, for the
+proof-of-work reason above, so it is not claimed unreported. Whether
+DragonFly reproduces the race was not run; the control here is on Linux
+with a hold inside the carried list walk.
+
 ## hammer2_vfsops-sync-root-bounded-restart
 
 `dragonfly-hammer2_vfsops-sync-root-bounded-restart.patch` and

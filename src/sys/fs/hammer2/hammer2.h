@@ -1334,6 +1334,7 @@ extern unsigned int hammer2_link_hold_ms;	/* Linux */
 extern unsigned int hammer2_volconf_hold_ms;	/* Linux */
 extern unsigned int hammer2_seek_hold_ms;	/* Linux */
 extern unsigned int hammer2_pfsalloc_hold_ms;	/* Linux */
+extern unsigned int hammer2_pfsalloc_walk_hold_ms;	/* Linux */
 extern unsigned int hammer2_snapshot_hold_ms;	/* Linux */
 extern int hammer2_alloc_count;		/* Linux */
 extern int hammer2_fail_alloc_count;	/* Linux */

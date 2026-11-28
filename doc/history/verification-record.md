@@ -27673,3 +27673,69 @@ Staged for upstream: `doc/upstream/dragonfly-hammer2_flush-snapshot-slot-fssync-
 and `ports-hammer2_flush-snapshot-slot-fssync-only.patch`, with the state
 at each head in `doc/upstream/README-provenance.md`. Whether DragonFly
 reproduces it was not run.
+
+## The snapshot registered its PFS without the mount lock, 2026-11-28
+
+The snapshot ioctl, `hammer2_pfs_snapshot()` (`hammer2_ioctl.c`), calls
+`hammer2_pfsalloc()`, which walks `hammer2_pfslist` and inserts into it
+while unmount, mount, the create and delete ioctls, bulkfree and the sync
+thread change that list and a device's `mount_count` under
+`hammer2_mntlk`. The ioctl called it inside the source PFS's flush
+transaction and `bulklk`, with no mount lock. An unmount freeing another
+PFS in `hammer2_pfsfree_scan()` during that walk reads freed memory, and
+an insert concurrent with the scan's removal corrupts the list. 1.0.110
+fixed the create ioctl's call and left this one, since taking the lock
+where the call sat deadlocks: unmount holds the lock while it waits for
+the transaction, and the sync thread holds it while it waits for
+`bulklk`. Read from code at `09c130bf`; item 2 of
+`p7-notes/snapshot-ioctl-design.md`, whose review findings F3 to F5 are
+answered in `snapshot-ioctl-design-review-dispositions.md`.
+
+The fix keeps upstream's body order. It releases the transaction and
+`bulklk`, then takes `hammer2_mntlk` unless the caller already holds it,
+and registers the chain it created with a reference taken before the
+release. The sync thread and the remote server hold the lock across the
+body and pass `HAMMER2_PFSSNAP_MNTLOCKED`; the ioctl does not. The
+registration and the two lines that depend on it, the new PFS's
+`inode_tid` and the thread's out-parameter, move together. A reference
+that holds the chain's data across the release was tried first and made
+unmount drop an inode chain that still had data; a plain reference with
+a resolve on the relock reads clean. Three `XXX` lines in carried files
+mark the change, including the debug hold inside the list walk.
+
+`24d892c4` adds `pfsalloc_walk_hold_ms`, a debug-build hold inside the
+`hammer2_pfsalloc()` walk, after one entry is read and before the next.
+The expectations were written first
+(`p7-notes/crash-instrument/inc11/expected.md`). The arm takes a `NOSYNC`
+snapshot of one volume's `ROOT` while an unmount of the other volume's
+PFS starts at the hold. The control's first run
+(`inc11/snap-race-24d892c4-kasan.race.klog`) prints `pfsalloc walk held`
+at 37.250629 s, the unmount's return at 37.376265 s, the hold's end at
+42.592702 s, then `BUG: KASAN: vmalloc-out-of-bounds in
+hammer2_pfsalloc+0x1873/0x2030`, called from `hammer2_pfs_snapshot()`
+through `hammer2_ioctl`. Later control runs on both builds reached the
+hold and the unmount returned in 46 ms and 97 ms, confirming the window;
+the guest died before the host copied the report, so those runs are aim
+readings and not separate reports of the fault.
+
+| module | build | unmount | snapshot | `SNAP1` mounts | warnings | log |
+|---|---|---|---|---|---|---|
+| `24d892c4`, the walk hold alone | KASAN | 0 in 97 ms | faulted in `hammer2_pfsalloc` | not reached | KASAN report | `control-24d892c4-kasan-final.log` |
+| `8eea1022`, the fix | debug | 0 in 25.6996 s | 0 | 0 | 0 | `fix-8eea1022-debug2.log` |
+| `8eea1022`, the fix | KASAN | 0 in 25.4051 s | 0 | 0 | 0 | `fix-8eea1022-kasan.log` |
+
+Both fix runs show five complete 5 s walk holds while the unmount waits;
+their streams are whole, QEMU cores 0. The control's unmount returned in
+the first 2 percent of the hold, so it freed the entry the walk held.
+The driver is kept as `p7-notes/crash-instrument/inc11/snap-race.sh`; its
+own readings and the earlier failed fix attempts are in
+`inc11/expected.md`. No run reads a snapshot taken by the remote server
+under the new flag; that path is read from code at
+`hammer2_remote.c:581`, `:690`, where the lock is held.
+
+DragonFly's head `98c93bc10417d9695300a4e359c9862265dc720e`, read
+through the forge API on 2026-11-28, registers the snapshot's chain at
+`sys/vfs/hammer2/hammer2_ioctl.c:942` inside its flush transaction, with
+no `hammer2_mntlk` in the function. The staged patch moves only that
+registration and its two dependent lines. Whether DragonFly reproduces
+this was not run.

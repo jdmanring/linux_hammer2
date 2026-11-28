@@ -954,7 +954,7 @@ hammer2_snap_queues(hammer2_pfs_t *pmp, const char *name)
  */
 int
 hammer2_pfs_snapshot(hammer2_pfs_t *pmp, int clindex, const char *name,
-    int flags, hammer2_tid_t *mtidp, hammer2_pfs_t **pmpp)
+	int flags, hammer2_tid_t *mtidp, hammer2_pfs_t **pmpp)
 {
 	hammer2_dev_t *hmp, *force_local;
 	hammer2_inode_t *ip;

@@ -1,0 +1,43 @@
+--- a/sys/vfs/hammer2/hammer2_ioctl.c
++++ b/sys/vfs/hammer2/hammer2_ioctl.c
+@@ -813,6 +813,7 @@
+ 	hammer2_pfs_t	*pmp;
+ 	hammer2_chain_t	*chain;
+ 	hammer2_inode_t *nip;
++	hammer2_chain_t *regchain = NULL;
+ 	hammer2_tid_t	mtid;
+ 	size_t name_len;
+ 	int error;
+@@ -937,10 +938,8 @@
+ 		force_local = (hmp->hflags & HMNT2_LOCAL) ? hmp : NULL;
+ 
+ 		hammer2_chain_lock(nchain, HAMMER2_RESOLVE_ALWAYS);
+-		wipdata = &nchain->data->ipdata;
+-		kprintf("SNAPSHOT LOCAL PFS (IOCTL): %s\n", wipdata->filename);
+-		hammer2_pfsalloc(nchain, wipdata, force_local);
+-		nchain->pmp->inode_tid = starting_inum;
++		hammer2_chain_ref(nchain);
++		regchain = nchain;
+ 
+ 		hammer2_chain_unlock(nchain);
+ 		hammer2_chain_drop(nchain);
+@@ -959,6 +958,19 @@
+ 
+ 	lockmgr(&hmp->bulklk, LK_RELEASE);
+ 
++	lockmgr(&hammer2_mntlk, LK_EXCLUSIVE);
++	if (regchain != NULL) {
++		hammer2_chain_lock(regchain, HAMMER2_RESOLVE_ALWAYS);
++		if (regchain->data != NULL) {
++			hammer2_pfsalloc(regchain, &regchain->data->ipdata,
++			    force_local);
++			regchain->pmp->inode_tid = starting_inum;
++		}
++		hammer2_chain_unlock(regchain);
++		hammer2_chain_drop(regchain);
++	}
++	lockmgr(&hammer2_mntlk, LK_RELEASE);
++
+ 	return (hammer2_error_to_errno(error));
+ }
+ 
